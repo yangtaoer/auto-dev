@@ -1,0 +1,45 @@
+services:
+  permissions:
+    image: alpine:3.22
+    restart: "no"
+    command: ["sh", "-c", "chown -R 10001:10001 /app/data"]
+    volumes:
+      - ./data/app:/app/data
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/cloud/Dockerfile
+    image: autodev-backend:0.2.8
+    restart: unless-stopped
+    depends_on:
+      permissions:
+        condition: service_completed_successfully
+    env_file:
+      - .env.backend
+    environment:
+      AUTODEV_SECRET_KEY_FILE: /run/secrets/autodev_secret_key
+      BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/bootstrap_admin_password
+      AUTODEV_RUNNER_TOKEN_FILE: /run/secrets/runner_token
+    secrets:
+      - autodev_secret_key
+      - bootstrap_admin_password
+      - runner_token
+    ports:
+      - "${AUTODEV_BIND_ADDRESS:-0.0.0.0}:${AUTODEV_BACKEND_PORT:-28765}:8765"
+    volumes:
+      - ./data/app:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+secrets:
+  autodev_secret_key:
+    file: ./secrets/autodev_secret_key.txt
+  bootstrap_admin_password:
+    file: ./secrets/bootstrap_admin_password.txt
+  runner_token:
+    file: ./secrets/runner_token.txt

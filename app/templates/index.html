@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>全自助需求研发交付</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="logo"><div class="logo-glyph">自</div><div><b>AUTODEV</b><span>全自助研发交付</span></div></div>
+      <nav>
+        <button class="nav-item active" data-view="dashboard"><span class="nav-index">01</span><span>任务总览</span></button>
+        <button class="nav-item" data-view="requests"><span class="nav-index">02</span><span>交付记录</span></button>
+        {% if user.role == 'admin' %}<button class="nav-item" data-view="projects"><span class="nav-index">03</span><span>项目策略</span></button><button class="nav-item" data-view="users"><span class="nav-index">04</span><span>账号管理</span></button>{% endif %}
+      </nav>
+      <div class="sidebar-foot">
+        <div class="system-status offline" id="runner-status"><i></i><span>本机执行器未连接</span></div>
+        <div class="profile"><div class="avatar">{{ user.display_name[0] }}</div><div><b>{{ user.display_name }}</b><span>{{ '管理员' if user.role == 'admin' else '项目经理' }}</span></div><button id="logout" title="退出">↪</button></div>
+      </div>
+    </aside>
+
+    <main class="main-stage">
+      <header class="topbar">
+        <div><p class="eyebrow" id="view-code">CONTROL ROOM / 01</p><h1 id="view-title">任务总览</h1></div>
+        <div class="top-actions"><span class="clock" id="clock"></span><button class="btn btn-primary" id="open-request">＋ 发起自动研发</button></div>
+      </header>
+
+      <section class="view active" id="view-dashboard">
+        <div class="metrics" id="metrics"></div>
+        <div class="section-heading"><div><p class="eyebrow">LIVE PIPELINE</p><h2>正在运行</h2></div><span class="muted">状态每 5 秒刷新</span></div>
+        <div class="run-grid" id="active-runs"></div>
+        <div class="section-heading compact"><div><p class="eyebrow">RECENT SIGNALS</p><h2>最近任务</h2></div><button class="text-button" data-view-link="requests">查看全部 →</button></div>
+        <div class="table-card"><table><thead><tr><th>需求</th><th>项目</th><th>交付方式</th><th>状态</th><th>进度</th><th>更新时间</th></tr></thead><tbody id="recent-table"></tbody></table></div>
+      </section>
+
+      <section class="view" id="view-requests">
+        <div class="section-heading"><div><p class="eyebrow">DELIVERY LEDGER</p><h2>全部交付记录</h2></div><div class="filter-chips"><button class="chip active" data-filter="all">全部</button><button class="chip" data-filter="waiting_merge">等待合并</button><button class="chip" data-filter="delivered">已交付</button><button class="chip" data-filter="failed">失败</button></div></div>
+        <div class="table-card"><table><thead><tr><th>需求</th><th>项目 / 发起人</th><th>交付策略</th><th>当前状态</th><th>PR</th><th>发起时间</th></tr></thead><tbody id="all-table"></tbody></table></div>
+      </section>
+
+      {% if user.role == 'admin' %}
+      <section class="view" id="view-projects">
+        <div class="section-heading"><div><p class="eyebrow">POLICY REGISTRY</p><h2>自动研发项目策略</h2></div><button class="btn btn-secondary" id="new-project">＋ 新建项目策略</button></div>
+        <div class="policy-note"><b>准入边界</b><span>项目、代码仓库、保护路径和交付方式共同决定 Codex 可以做什么。</span></div>
+        <div class="project-grid" id="project-grid"></div>
+      </section>
+      <section class="view" id="view-users">
+        <div class="section-heading"><div><p class="eyebrow">ACCESS REGISTRY</p><h2>项目经理账号</h2></div><button class="btn btn-secondary" id="new-user">＋ 新建账号</button></div>
+        <div class="policy-note"><b>邮件身份</b><span>项目经理发起需求后，交付邮件将发送到其账号绑定的邮箱。</span></div>
+        <div class="table-card"><table><thead><tr><th>登录账号</th><th>姓名</th><th>邮箱</th><th>角色</th><th>状态</th></tr></thead><tbody id="users-table"></tbody></table></div>
+      </section>
+      {% endif %}
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="request-modal" hidden>
+    <section class="modal request-modal"><button class="modal-close" data-close>×</button><p class="eyebrow">NEW DEVELOPMENT RUN</p><h2>发起自动研发</h2><p class="muted">输入已在 TFS 录入且符合所选项目准入策略的需求编号。</p>
+      <form id="request-form" class="form-grid">
+        <label class="span-2"><span>TFS 用户情景编号</span><input type="number" name="work_item_id" min="1" placeholder="例如：1551572" required></label>
+        <label class="span-2"><span>自动研发项目</span><select name="project_id" id="request-project" required></select></label>
+        <label class="span-2" id="request-mode-row" hidden><span>本需求交付方式（管理员覆盖）</span><select name="delivery_mode" id="request-mode"><option value="">继承项目默认方式</option><option value="local_package">本地打包交付</option><option value="sichuan_auto_review">四川审核后交付</option><option value="product_manual_review">产品审核后交付</option></select></label>
+        <div class="strategy-preview span-2" id="strategy-preview"></div>
+        <p class="form-error span-2" id="request-error" hidden></p>
+        <div class="modal-actions span-2"><button type="button" class="btn btn-ghost" data-close>取消</button><button type="submit" class="btn btn-primary">确认并进入队列 ↗</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div class="drawer-backdrop" id="detail-backdrop" hidden></div>
+  <aside class="detail-drawer" id="detail-drawer" aria-hidden="true"><button class="modal-close" id="close-detail">×</button><div id="detail-content"></div></aside>
+
+  {% if user.role == 'admin' %}
+  <div class="modal-backdrop" id="project-modal" hidden>
+    <section class="modal project-modal"><button class="modal-close" data-close>×</button><p class="eyebrow">PROJECT POLICY</p><h2 id="project-modal-title">新建项目策略</h2>
+      <form id="project-form" class="form-grid dense">
+        <input type="hidden" name="id">
+        <label><span>项目标识</span><input name="project_key" placeholder="sichuan-portal" required></label><label><span>项目名称</span><input name="name" required></label>
+        <label><span>TFS Collection</span><input name="tfs_collection_url" value="http://dev.tellhowsoft.com/DefaultCollection" required></label><label><span>TFS 项目</span><input name="tfs_project" value="XiNanArea-New" required></label>
+        <label class="span-2"><span>允许的 Area Path</span><input name="tfs_area_path" placeholder="XiNanArea-New\四川省区团队"></label>
+        <label><span>允许的需求类型（一行一个）</span><textarea name="allowed_work_item_types">用户情景</textarea></label><label><span>允许的需求状态（一行一个）</span><textarea name="allowed_states">已评审</textarea></label>
+        <label class="span-2"><span>本机代码仓库绝对路径</span><input name="repository_path" placeholder="C:\workspace\project"></label>
+        <label class="span-2"><span>本机执行器 ID</span><input name="runner_id" value="yangtao-pc" placeholder="yangtao-pc" required></label>
+        <label><span>基础分支</span><input name="base_branch" value="dev"></label><label><span>默认交付方式</span><select name="delivery_mode"><option value="local_package">本地打包交付</option><option value="sichuan_auto_review">四川审核后交付</option><option value="product_manual_review">产品审核后交付</option></select></label>
+        <label class="span-2"><span>构建/校验命令</span><input name="build_command" placeholder="mvn clean test package（四川自动审核模式必填）"></label>
+        <label class="span-2"><span>包产物匹配（一行一个）</span><textarea name="package_patterns" placeholder="target/*.jar&#10;dist/**/*"></textarea></label>
+        <label><span>SQL 匹配</span><textarea name="sql_patterns">**/*.sql</textarea></label><label><span>配置文件匹配</span><textarea name="config_patterns">**/*.yml&#10;**/*.yaml&#10;**/*.properties&#10;**/*.xml</textarea></label>
+        <label class="span-2"><span>受保护路径（一行一个）</span><textarea name="protected_patterns">**/common/**&#10;**/shared/**&#10;**/production/**</textarea></label>
+        <label class="span-2"><span>邮件抄送（逗号分隔）</span><input name="notification_cc"></label>
+        <label class="toggle-line"><input type="checkbox" name="enabled" checked><span>启用项目</span></label><label class="toggle-line"><input type="checkbox" name="simulation_mode" checked><span>演示模式</span></label>
+        <label class="toggle-line span-2"><input type="checkbox" name="allow_requirement_override"><span>允许管理员按需求覆盖默认交付方式</span></label>
+        <p class="form-error span-2" id="project-error" hidden></p>
+        <div class="modal-actions span-2"><button type="button" class="btn btn-ghost" data-close>取消</button><button type="submit" class="btn btn-primary">保存项目策略</button></div>
+      </form>
+    </section>
+  </div>
+  <div class="modal-backdrop" id="user-modal" hidden>
+    <section class="modal"><button class="modal-close" data-close>×</button><p class="eyebrow">ACCESS REGISTRY</p><h2>新建内部账号</h2>
+      <form id="user-form" class="form-grid">
+        <label><span>登录账号</span><input name="username" required placeholder="zhangsan"></label><label><span>姓名</span><input name="display_name" required placeholder="张三"></label>
+        <label class="span-2"><span>交付邮箱</span><input name="email" type="email" required placeholder="zhangsan@example.com"></label>
+        <label><span>初始密码</span><input name="password" type="password" minlength="8" required></label><label><span>角色</span><select name="role"><option value="pm">项目经理</option><option value="admin">管理员</option></select></label>
+        <p class="form-error span-2" id="user-error" hidden></p>
+        <div class="modal-actions span-2"><button type="button" class="btn btn-ghost" data-close>取消</button><button type="submit" class="btn btn-primary">创建账号</button></div>
+      </form>
+    </section>
+  </div>
+  {% endif %}
+
+  <div class="toast" id="toast"></div>
+  <script>window.__USER__ = {{ user | tojson }};</script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

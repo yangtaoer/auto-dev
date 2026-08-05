@@ -1,0 +1,33 @@
+# 把整个站点块合并到 162.14.113.130 现有的 /etc/caddy/Caddyfile。
+# 121.4.77.6 的安全组/防火墙必须只允许 162.14.113.130/32 访问 TCP 28765。
+
+auto.yangtaoer.com.cn {
+    encode zstd gzip
+
+    reverse_proxy http://121.4.77.6:28765 {
+        health_uri /healthz
+        health_interval 30s
+        health_timeout 5s
+        health_headers {
+            Host auto.yangtaoer.com.cn
+        }
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+
+    log {
+        output file /var/log/caddy/autodev-access.log {
+            roll_size 20MiB
+            roll_keep 10
+            roll_keep_for 720h
+        }
+        format json
+    }
+}

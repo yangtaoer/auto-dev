@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>登录 · 全自助研发交付</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="login-body">
+  <main class="login-shell">
+    <section class="login-brand">
+      <div class="brand-mark"><span></span><span></span><span></span></div>
+      <p class="eyebrow">AUTONOMOUS DELIVERY / 01</p>
+      <h1>让需求从编号<br>走到交付。</h1>
+      <p class="login-lead">运行在本机的 Codex 研发控制台。每次分析、变更、审核与交付都有迹可循。</p>
+      <div class="signal-grid">
+        <div><b>03</b><span>交付策略</span></div>
+        <div><b>∞</b><span>合并轮询</span></div>
+        <div><b>100%</b><span>本机执行</span></div>
+      </div>
+    </section>
+    <section class="login-panel">
+      <div>
+        <p class="eyebrow">SECURE ENTRY</p>
+        <h2>进入研发控制台</h2>
+        <p class="muted">使用分配给你的内部账号登录</p>
+      </div>
+      <form id="login-form" class="form-stack">
+        <label><span>用户名</span><input name="username" autocomplete="username" placeholder="请输入用户名" required autofocus></label>
+        <label><span>密码</span><input name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required></label>
+        <p id="login-error" class="form-error" hidden></p>
+        <button class="btn btn-primary btn-large" type="submit"><span>登录系统</span><i>↗</i></button>
+      </form>
+      {% if demo_enabled %}
+      <div class="demo-credential"><span>首次体验</span><code>admin / admin123</code><code>pm / pm123</code></div>
+      {% endif %}
+    </section>
+  </main>
+  <script>
+    document.querySelector('#login-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = event.currentTarget.querySelector('button');
+      const error = document.querySelector('#login-error');
+      button.disabled = true; error.hidden = true;
+      const payload = Object.fromEntries(new FormData(event.currentTarget));
+      const response = await fetch('/api/auth/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      if (response.ok) location.href = '/';
+      else { const data = await response.json(); error.textContent = data.detail || '登录失败'; error.hidden = false; button.disabled = false; }
+    });
+  </script>
+</body>
+</html>

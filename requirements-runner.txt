@@ -1,0 +1,4 @@
+-r requirements-cloud.txt
+openai-codex==0.144.4
+playwright==1.62.0
+alibabacloud-oss-v2==1.3.2

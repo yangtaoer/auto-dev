@@ -1,0 +1,65 @@
+services:
+  permissions:
+    image: alpine:3.22
+    restart: "no"
+    command: ["sh", "-c", "chown -R 10001:10001 /app/data"]
+    volumes:
+      - ./data/app:/app/data
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/cloud/Dockerfile
+    image: autodev-cloud:0.2.8
+    restart: unless-stopped
+    depends_on:
+      permissions:
+        condition: service_completed_successfully
+    env_file:
+      - .env.production
+    environment:
+      AUTODEV_SECRET_KEY_FILE: /run/secrets/autodev_secret_key
+      BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/bootstrap_admin_password
+      AUTODEV_RUNNER_TOKEN_FILE: /run/secrets/runner_token
+      SMTP_PASSWORD_FILE: /run/secrets/smtp_password
+    secrets:
+      - autodev_secret_key
+      - bootstrap_admin_password
+      - runner_token
+      - smtp_password
+    volumes:
+      - ./data/app:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+    env_file:
+      - .env.production
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy-data:/data
+      - ./data/caddy-config:/config
+      - ./data/caddy-logs:/var/log/caddy
+
+secrets:
+  autodev_secret_key:
+    file: ./secrets/autodev_secret_key.txt
+  bootstrap_admin_password:
+    file: ./secrets/bootstrap_admin_password.txt
+  runner_token:
+    file: ./secrets/runner_token.txt
+  smtp_password:
+    file: ./secrets/smtp_password.txt
