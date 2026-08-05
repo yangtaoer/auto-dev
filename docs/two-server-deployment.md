@@ -17,7 +17,7 @@ auto.yangtaoer.com.cn
 
 ## 一、在 121.4.77.6 部署应用
 
-上传并解压 `autodev-hybrid-0.2.8.zip`，例如放到 `/opt/autodev`：
+上传并解压 `autodev-hybrid-0.2.9.zip`，例如放到 `/opt/autodev`：
 
 ```sh
 cd /opt/autodev/deploy/backend

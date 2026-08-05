@@ -98,7 +98,7 @@ OSS 参数配置在本机 `local-runner/.env.runner`，包括 AccessKey、Region
 
 ## 从 GitHub 一键更新
 
-`main` 每次推送后，GitHub Actions 会运行测试并覆盖发布固定名称的 `autodev-hybrid-latest.zip`。服务器首次安装包含更新脚本的版本后，以后只需：
+每次代码改动完成后，本机发布流程会运行测试、推送 `main`，并通过 `scripts/publish-github.ps1` 覆盖发布固定名称的 `autodev-hybrid-latest.zip`。GitHub Actions 也保留了手工触发入口。服务器首次安装包含更新脚本的版本后，以后只需：
 
 ```sh
 cd /opt/autodev/deploy/backend
