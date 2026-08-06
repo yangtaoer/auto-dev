@@ -268,7 +268,7 @@ class WorkflowTests(unittest.TestCase):
             json={
                 "runner_id": "quota-test-runner",
                 "hostname": "quota-pc",
-                "version": "0.3.3",
+                "version": "0.3.4",
                 "state": "idle",
                 "codex_usage": {
                     "available": True,

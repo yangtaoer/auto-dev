@@ -4,6 +4,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $RepositoryRoot = [System.IO.Path]::GetFullPath($RepositoryRoot)
 $GitDir = Join-Path $RepositoryRoot ".git"
 if (-not (Test-Path -LiteralPath $GitDir)) {
@@ -77,7 +79,15 @@ if (-not (Test-Path -LiteralPath $JarSource -PathType Leaf)) { throw "后端 JAR
 if (-not (Test-Path -LiteralPath $FrontendDist -PathType Container)) { throw "前端 dist 未生成：$FrontendDist" }
 
 $Branch = (& git -C $RepositoryRoot branch --show-current).Trim()
-$WorkItemId = if ($Branch -match "feature/(\d+)-") { $Matches[1] } else { "unknown" }
+$WorkItemId = "unknown"
+$FeaturePrefix = "feature/"
+if ($Branch.StartsWith($FeaturePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $CandidateWorkItemId = $Branch.Substring($FeaturePrefix.Length).Split("-")[0]
+    $ParsedWorkItemId = 0
+    if ([int]::TryParse($CandidateWorkItemId, [ref]$ParsedWorkItemId)) {
+        $WorkItemId = $ParsedWorkItemId.ToString()
+    }
+}
 $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $ReleaseRoot = Join-Path $RepositoryRoot "release"
 $ReleaseName = "bazhong-$WorkItemId-$Timestamp"

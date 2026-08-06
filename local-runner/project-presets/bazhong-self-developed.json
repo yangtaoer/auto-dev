@@ -17,7 +17,7 @@
   ],
   "repository_path": "C:\\work\\workSpaceTellHow\\th-dc-biz-bazhong",
   "base_branch": "dev",
-  "build_command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\yangt\\Documents\\全自助需求研发交付\\local-runner\\project-scripts\\bazhong-package.ps1\"",
+  "build_command": "pwsh.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\yangt\\Documents\\全自助需求研发交付\\local-runner\\project-scripts\\bazhong-package.ps1\"",
   "package_patterns": [
     "release/bazhong-*.zip"
   ],
