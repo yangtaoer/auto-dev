@@ -102,6 +102,27 @@
   </div>
   {% endif %}
 
+  <div class="artifact-preview-overlay" id="artifact-preview" hidden>
+    <section class="artifact-preview-shell" role="dialog" aria-modal="true" aria-labelledby="artifact-preview-title">
+      <header class="artifact-preview-head">
+        <div>
+          <p class="eyebrow">合并截图 / MERGE SCREENSHOT</p>
+          <h2 id="artifact-preview-title">PR 合并截图</h2>
+          <span id="artifact-preview-repository">代码仓库</span>
+        </div>
+        <button type="button" class="modal-close" id="close-artifact-preview" aria-label="关闭截图预览">×</button>
+      </header>
+      <div class="artifact-preview-canvas">
+        <div class="preview-loading"><i></i><span>正在加载真实 PR 页面截图</span></div>
+        <img id="artifact-preview-image" alt="PR 合并截图">
+      </div>
+      <footer class="artifact-preview-foot">
+        <span>截图由本机执行器在 PR 已合并页面生成</span>
+        <a class="btn btn-secondary" id="artifact-preview-original" href="#" target="_blank" rel="noopener">打开原图 ↗</a>
+      </footer>
+    </section>
+  </div>
+
   <div class="toast" id="toast"></div>
   <script>window.__USER__ = {{ user | tojson }};</script>
   <script src="/static/app.js"></script>

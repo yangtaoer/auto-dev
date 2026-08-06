@@ -56,19 +56,22 @@ class OssArtifactStorage:
         object_key = self._object_key(request_id, kind, name)
         content_type = mimetypes.guess_type(local_path.name)[0] or "application/octet-stream"
         filename = quote(local_path.name, safe="")
+        inline = content_type.startswith("image/")
+        disposition_type = "inline" if inline else "attachment"
         request = self.oss.PutObjectRequest(
             bucket=self.bucket,
             key=object_key,
             content_type=content_type,
-            content_disposition=f"attachment; filename*=UTF-8''{filename}",
+            content_disposition=f"{disposition_type}; filename*=UTF-8''{filename}",
         )
         self.client.put_object_from_file(request, str(local_path))
-        url = self.signed_download_url(object_key, local_path.name)
+        url = self.signed_download_url(object_key, local_path.name, inline=inline)
         logger.info("交付物已上传 OSS key=%s size=%s", object_key, local_path.stat().st_size)
         return object_key, url
 
-    def signed_download_url(self, object_key: str, filename: str) -> str:
-        disposition = f"attachment; filename*=UTF-8''{quote(filename, safe='')}"
+    def signed_download_url(self, object_key: str, filename: str, *, inline: bool = False) -> str:
+        disposition_type = "inline" if inline else "attachment"
+        disposition = f"{disposition_type}; filename*=UTF-8''{quote(filename, safe='')}"
         request = self.oss.GetObjectRequest(
             bucket=self.bucket,
             key=object_key,

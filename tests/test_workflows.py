@@ -27,7 +27,12 @@ from app.main import app  # noqa: E402
 from app.orchestrator import Worker, worker  # noqa: E402
 from app.project_catalog import load_project_presets, resolve_project_for_work_item  # noqa: E402
 from app.services.codex_runner import CodexRunner  # noqa: E402
-from app.services.delivery import Mailer, changed_files  # noqa: E402
+from app.services.delivery import (  # noqa: E402
+    ArtifactService,
+    Mailer,
+    changed_files,
+    repository_short_name,
+)
 from app.store import RemoteStore  # noqa: E402
 
 
@@ -139,7 +144,8 @@ class WorkflowTests(unittest.TestCase):
 
         waiting = mailer.delivery_html({**detail, "completed_at": None, "pr_url": "https://tfs.test/pr/14"}, action_required=True)
         self.assertIn("需要项目经理协同处理", waiting)
-        self.assertIn("打开 PR 并安排合并", waiting)
+        self.assertIn("请逐个联系有权限的同事审核并合并以下 PR", waiting)
+        self.assertIn("主仓库 · PR #", waiting)
         self.assertIn("进行中", waiting)
 
         failed_detail = {**detail, "status": "failed", "error_message": "Filename too long"}
@@ -403,18 +409,86 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         completed = self.client.get(f"/api/requests/{detail['id']}").json()["request"]
         self.assertEqual(completed["status"], "delivered")
-        self.assertTrue(any(item["kind"] in {"merge_screenshot", "merge_evidence"} for item in completed["artifacts"]))
+        screenshots = [item for item in completed["artifacts"] if item["kind"] == "merge_screenshot"]
+        self.assertEqual(len(screenshots), 1)
+        self.assertIn("PR #", screenshots[0]["name"])
+        self.assertNotIn("pull_request", {item["kind"] for item in completed["artifacts"]})
 
     def test_product_review_emails_before_and_after_merge(self) -> None:
         project_id = self.create_project("test-product", "product_manual_review")
         detail = self.submit_and_process(project_id, 910003)
         self.assertEqual(detail["status"], "waiting_merge")
         self.assertTrue(any(item["name"] == "review-email-preview.html" for item in detail["artifacts"]))
+        self.assertNotIn("pull_request", {item["kind"] for item in detail["artifacts"]})
         response = self.client.post(f"/api/requests/{detail['id']}/simulate-merge")
         self.assertEqual(response.status_code, 200, response.text)
         completed = self.client.get(f"/api/requests/{detail['id']}").json()["request"]
         self.assertEqual(completed["status"], "delivered")
         self.assertTrue(any(item["name"] == "delivery-email-preview.html" for item in completed["artifacts"]))
+        self.assertEqual(
+            len([item for item in completed["artifacts"] if item["kind"] == "merge_screenshot"]),
+            1,
+        )
+        self.assertNotIn("pull_request", {item["kind"] for item in completed["artifacts"]})
+
+    def test_real_pr_screenshot_uses_repository_short_name_and_is_idempotent(self) -> None:
+        self.assertEqual(repository_short_name("dcsd-notice-srv-sichuancd-dm"), "notice-srv")
+        self.assertEqual(repository_short_name("th-dc-biz-bazhong"), "bazhong")
+        recorded: list[tuple] = []
+
+        def recorder(*args) -> int:
+            recorded.append(args)
+            return 31
+
+        with tempfile.TemporaryDirectory() as delivery_dir, patch(
+            "app.config.Settings.delivery_dir",
+            new_callable=PropertyMock,
+            return_value=Path(delivery_dir),
+        ):
+            service = ArtifactService(recorder=recorder, detail_loader=lambda _: {"artifacts": []})
+
+            def capture(pr: dict, pr_url: str, image_path: Path) -> None:
+                self.assertEqual(pr["id"], 757862)
+                self.assertIn("pullrequest/757862", pr_url)
+                image_path.write_bytes(b"\x89PNG\r\n\x1a\nreal-browser-image")
+
+            with patch.object(service, "_capture_real_pr_page", side_effect=capture) as screenshot:
+                artifact_id = service.create_merge_evidence(
+                    "real-pr-request",
+                    {"id": 757862, "status": "completed"},
+                    "http://dev.tellhowsoft.com/DefaultCollection/DCS/_git/repo/pullrequest/757862",
+                    repository_name="dcsd-notice-srv-sichuancd-dm",
+                )
+
+            self.assertEqual(artifact_id, 31)
+            screenshot.assert_called_once()
+            self.assertEqual(recorded[0][1], "merge_screenshot")
+            self.assertEqual(recorded[0][2], "notice-srv · PR #757862 · 合并截图.png")
+            self.assertTrue(Path(recorded[0][3]).is_file())
+
+            existing = ArtifactService(
+                recorder=recorder,
+                detail_loader=lambda _: {
+                    "artifacts": [
+                        {
+                            "id": 44,
+                            "kind": "merge_screenshot",
+                            "name": "notice-srv · PR #757862 · 合并截图.png",
+                        }
+                    ]
+                },
+            )
+            with patch.object(existing, "_capture_real_pr_page") as duplicate_capture:
+                self.assertEqual(
+                    existing.create_merge_evidence(
+                        "real-pr-request",
+                        {"id": 757862},
+                        "http://dev.tellhowsoft.com/pr/757862",
+                        repository_name="dcsd-notice-srv-sichuancd-dm",
+                    ),
+                    44,
+                )
+            duplicate_capture.assert_not_called()
 
     def test_admin_can_override_delivery_mode_for_one_requirement(self) -> None:
         project_id = self.create_project("test-override", "product_manual_review", allow_override=True)
@@ -539,7 +613,7 @@ class WorkflowTests(unittest.TestCase):
             json={
                 "runner_id": "quota-test-runner",
                 "hostname": "quota-pc",
-                "version": "0.4.3",
+                "version": "0.4.4",
                 "state": "idle",
                 "current_request_ids": [],
                 "max_concurrency": 5,
@@ -573,11 +647,14 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
 
         page = self.client.get("/")
-        self.assertIn("SYSTEM v0.4.3", page.text)
+        self.assertIn("SYSTEM v0.4.4", page.text)
         self.assertIn("control-strip", page.text)
         script = self.client.get("/static/app.js").text
         self.assertIn("addOptimisticIntake", script)
         self.assertIn("renderActiveRuns", script)
+        self.assertIn("merge-screenshot-grid", script)
+        self.assertIn("openArtifactPreview", script)
+        self.assertIn("visibleArtifacts", script)
         self.assertNotIn("activeEl.innerHTML=state.dashboard.active", script)
 
         headers = {"Authorization": "Bearer test-runner-token"}
@@ -909,6 +986,14 @@ class WorkflowTests(unittest.TestCase):
 
         completed.assert_called_once_with("multi-pr-request")
         self.assertEqual(evidence.call_count, 2)
+        self.assertEqual(
+            [call.kwargs["repository_name"] for call in evidence.call_args_list],
+            ["repo-one", "repo-two"],
+        )
+        self.assertEqual(
+            [call.args[1]["id"] for call in evidence.call_args_list],
+            [101, 102],
+        )
         self.assertEqual(store.request["merge_commit"], "merge-one")
         self.assertTrue(all(item["status"] == "completed" for item in store.request["repository_states"]))
         self.assertEqual(

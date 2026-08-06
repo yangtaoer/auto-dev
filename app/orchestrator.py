@@ -14,7 +14,15 @@ from .config import settings
 from .db import utc_now
 from .domain import DeliveryMode, RunStatus
 from .services.codex_runner import CodexRunner
-from .services.delivery import ArtifactService, Mailer, changed_files, git, protected_changes, run_command
+from .services.delivery import (
+    ArtifactService,
+    Mailer,
+    changed_files,
+    git,
+    protected_changes,
+    repository_short_name,
+    run_command,
+)
 from .services.tfs import TfsClient
 from .services.process_env import git_authenticated_env, sanitized_process_env
 from .project_catalog import resolve_project_for_work_item
@@ -313,17 +321,9 @@ class Worker:
                     )
                     state.update({"pr_id": pr["id"], "pr_url": pr["url"], "status": "waiting_merge"})
                     pull_requests.append((state, pr))
-                    self.store.add_artifact(
-                        request_id,
-                        "pull_request",
-                        f"{state['name']} · PR #{pr['id']}",
-                        external_url=pr["url"],
-                    )
                 self.store.update_request(request_id, repository_states=repository_states)
             primary_pr = pull_requests[0][1]
             self.store.update_request(request_id, pr_id=primary_pr["id"], pr_url=primary_pr["url"], progress=76)
-            if project.get("simulation_mode"):
-                self.store.add_artifact(request_id, "pull_request", f"PR #{primary_pr['id']}", external_url=primary_pr["url"])
             pr_numbers = "、".join(f"#{item[1]['id']}" for item in pull_requests)
             self.store.update_step(request_id, "submit", "completed", f"PR {pr_numbers} 已创建并关联需求")
 
@@ -535,6 +535,7 @@ class Worker:
                     states.append(
                         {
                             "name": repo.name,
+                            "repository_short_name": repository_short_name(repo.name),
                             "repository_path": str(repo),
                             "worktree_path": str(worktree),
                             "base_branch": base_branch,
@@ -648,7 +649,18 @@ class Worker:
         detail = self.store.detail(request_id)
         self.store.update_request(request_id, status=RunStatus.CAPTURING.value, progress=91, merge_commit=pr.get("merge_commit"))
         self.store.add_event(request_id, "pr.merged", f"PR #{pr['id']} 已合并", metadata=pr)
-        self.artifacts.create_merge_evidence(request_id, pr, detail["pr_url"])
+        screenshot_id = self.artifacts.create_merge_evidence(
+            request_id,
+            pr,
+            detail["pr_url"],
+            repository_name=str(pr.get("repository") or detail["policy_snapshot"].get("project_key") or "repository"),
+        )
+        self.store.add_event(
+            request_id,
+            "pr.screenshot_captured",
+            f"PR #{pr['id']} 的真实浏览器页面截图已生成",
+            metadata={"artifact_id": screenshot_id},
+        )
         if detail["policy_snapshot"].get("simulation_mode"):
             self._create_demo_artifacts(request_id, include_package=False)
         self._complete_delivery(request_id)
@@ -672,11 +684,18 @@ class Worker:
                 f"{state['name']} 的 PR #{pr['id']} 已合并",
                 metadata=pr,
             )
-            self.artifacts.create_merge_evidence(
+            screenshot_id = self.artifacts.create_merge_evidence(
                 request_id,
                 pr,
                 state.get("pr_url", ""),
                 repository_name=state["name"],
+            )
+            state["merge_screenshot_artifact_id"] = screenshot_id
+            self.store.add_event(
+                request_id,
+                "pr.screenshot_captured",
+                f"{state.get('repository_short_name') or repository_short_name(state['name'])} · PR #{pr['id']} 的真实浏览器页面截图已生成",
+                metadata={"artifact_id": screenshot_id, "repository": state["name"]},
             )
         self.store.update_request(
             request_id,
@@ -689,7 +708,7 @@ class Worker:
         self.store.update_request(request_id, status=RunStatus.DELIVERING.value, progress=96, completed_at=utc_now())
         self._send_status_email(request_id, action_required=False)
         self.store.update_request(request_id, status=RunStatus.DELIVERED.value, current_step="deliver", progress=100, completed_at=utc_now())
-        self.store.update_step(request_id, "deliver", "completed", "交付邮件和产物已生成")
+        self.store.update_step(request_id, "deliver", "completed", "交付邮件及每个已合并 PR 的浏览器截图已生成")
         self.store.add_event(request_id, "delivery.completed", "需求研发交付完成")
 
     def _send_status_email(self, request_id: str, *, action_required: bool, terminal: bool = False) -> None:

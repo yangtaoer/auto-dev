@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import base64
 import html
 import mimetypes
 import re
@@ -14,6 +15,7 @@ from email.message import EmailMessage
 from email.utils import format_datetime as format_rfc_datetime, make_msgid
 from pathlib import Path
 from typing import Any, Callable, Iterable
+from urllib.parse import urlsplit
 
 from ..config import settings
 from ..db import add_artifact, request_detail
@@ -73,6 +75,21 @@ def matches_any(path: str, patterns: Iterable[str]) -> bool:
 
 def protected_changes(paths: list[str], patterns: list[str]) -> list[str]:
     return [path for path in paths if matches_any(path, patterns)]
+
+
+def repository_short_name(repository_name: str) -> str:
+    """Build the compact repository label used by screenshot deliverables and the UI."""
+    value = str(repository_name or "repository").strip().strip("/\\")
+    value = Path(value).name or "repository"
+    for prefix in ("dcsd-", "th-dc-biz-"):
+        if value.lower().startswith(prefix):
+            value = value[len(prefix):]
+            break
+    for suffix in ("-sichuancd-dm", "-sichuancd", "-dm"):
+        if value.lower().endswith(suffix):
+            value = value[: -len(suffix)]
+            break
+    return value or "repository"
 
 
 class ArtifactService:
@@ -148,11 +165,86 @@ class ArtifactService:
         repository_name: str = "",
     ) -> int:
         target_dir = self.request_dir(request_id)
-        slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", repository_name).strip("-") if repository_name else ""
-        suffix = f"-{slug}" if slug else ""
-        html_path = target_dir / f"merge-evidence{suffix}.html"
-        image_path = target_dir / f"merge-evidence{suffix}.png"
-        tfs_image_path = target_dir / f"tfs-pr-merged{suffix}.png"
+        repository_label = repository_short_name(repository_name or str(pr.get("repository") or "repository"))
+        pr_id = str(pr.get("id") or "unknown")
+        artifact_name = f"{repository_label} · PR #{pr_id} · 合并截图.png"
+        detail = self.detail_loader(request_id) or {}
+        for artifact in detail.get("artifacts", []):
+            if artifact.get("kind") == "merge_screenshot" and artifact.get("name") == artifact_name:
+                return int(artifact["id"])
+        slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", repository_label).strip("-") or "repository"
+        image_path = target_dir / f"pr-{pr_id}-merged-{slug}.png"
+        if "/demo/" in pr_url:
+            self._capture_demo_merge_page(request_id, pr, pr_url, repository_label, image_path)
+        else:
+            self._capture_real_pr_page(pr, pr_url, image_path)
+        if not image_path.is_file() or image_path.stat().st_size == 0:
+            raise RuntimeError(f"PR #{pr_id} 浏览器截图未生成")
+        return self.record(request_id, "merge_screenshot", artifact_name, str(image_path))
+
+    @staticmethod
+    def _capture_real_pr_page(pr: dict, pr_url: str, image_path: Path) -> None:
+        if not settings.tfs_pat:
+            raise RuntimeError("未配置 TFS_PAT，无法打开真实 PR 页面截图")
+        parsed_url = urlsplit(pr_url)
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+            raise RuntimeError(f"PR 地址无效：{pr_url}")
+        authorization = base64.b64encode(f":{settings.tfs_pat}".encode("ascii")).decode("ascii")
+        try:
+            from playwright.sync_api import sync_playwright
+
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(channel="msedge", headless=True)
+                context = browser.new_context(
+                    viewport={"width": 1920, "height": 1080},
+                    device_scale_factor=1,
+                    ignore_https_errors=True,
+                    locale="zh-CN",
+                )
+                origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
+
+                def authorize(route, request) -> None:
+                    headers = dict(request.headers)
+                    headers["authorization"] = f"Basic {authorization}"
+                    route.continue_(headers=headers)
+
+                context.route(f"{origin}/**", authorize)
+                page = context.new_page()
+                response = page.goto(pr_url, wait_until="domcontentloaded", timeout=60_000)
+                if response and response.status >= 400:
+                    raise RuntimeError(f"TFS PR 页面返回 HTTP {response.status}")
+                pr_marker = str(pr.get("id") or "")
+                page.wait_for_function(
+                    """prId => {
+                      const text = document.body?.innerText || '';
+                      const merged = text.includes('已完成') || text.includes('完成此拉取请求') || text.includes('Completed');
+                      return text.includes(prId) && merged;
+                    }""",
+                    arg=pr_marker,
+                    timeout=45_000,
+                )
+                page.wait_for_timeout(1_500)
+                visible_text = page.locator("body").inner_text(timeout=10_000)
+                if pr_marker not in visible_text:
+                    raise RuntimeError(f"TFS 页面未显示 PR #{pr_marker}")
+                if not any(marker in visible_text for marker in ("已完成", "完成此拉取请求", "Completed")):
+                    raise RuntimeError(f"TFS 页面未显示 PR #{pr_marker} 已合并")
+                page.evaluate("window.scrollTo(0, 0)")
+                page.screenshot(path=str(image_path), full_page=False)
+                context.close()
+                browser.close()
+        except Exception as exc:
+            image_path.unlink(missing_ok=True)
+            raise RuntimeError(f"无法截取真实 TFS PR #{pr.get('id', '')} 页面：{exc}") from exc
+
+    @staticmethod
+    def _capture_demo_merge_page(
+        request_id: str,
+        pr: dict,
+        pr_url: str,
+        repository_label: str,
+        image_path: Path,
+    ) -> None:
         completed = pr.get("closed_date") or datetime.now(UTC).isoformat()
         page = f"""<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><style>
         *{{box-sizing:border-box}}body{{margin:0;width:1440px;height:900px;background:#07110e;color:#eef9f2;font-family:'Microsoft YaHei',sans-serif;padding:72px}}
@@ -161,44 +253,28 @@ class ArtifactService:
         .row{{display:grid;grid-template-columns:220px 1fr;padding:17px 0;border-bottom:1px solid #1d382d;font-size:20px}}.row:last-child{{border:0}}
         .key{{color:#87aa99}}.ok{{display:inline-block;color:#06150e;background:#76f7ae;padding:7px 14px;font-weight:700}}
         .foot{{position:absolute;bottom:64px;color:#6f8f80;font:16px Consolas}}
-        </style></head><body><div class='seal'>AUTODEV / MERGE CERTIFICATE</div><h1>代码合并完成</h1><div class='sub'>系统通过 TFS API 检测到 Pull Request 已完成</div>
+        </style></head><body><div class='seal'>AUTODEV / MERGE SCREENSHOT</div><h1>代码合并完成</h1><div class='sub'>演示环境中的 Pull Request 已完成</div>
         <div class='card'><div class='row'><div class='key'>状态</div><div><span class='ok'>COMPLETED</span></div></div>
         <div class='row'><div class='key'>PR</div><div>#{html.escape(str(pr.get('id','')))} · {html.escape(pr.get('title',''))}</div></div>
-        <div class='row'><div class='key'>代码仓库</div><div>{html.escape(pr.get('repository',''))}</div></div>
+        <div class='row'><div class='key'>代码仓库</div><div>{html.escape(repository_label)}</div></div>
         <div class='row'><div class='key'>合并方向</div><div>{html.escape(pr.get('source_branch',''))} → {html.escape(pr.get('target_branch',''))}</div></div>
         <div class='row'><div class='key'>Merge commit</div><div>{html.escape(pr.get('merge_commit') or '—')}</div></div>
         <div class='row'><div class='key'>完成时间</div><div>{html.escape(completed)}</div></div></div>
         <div class='foot'>{html.escape(pr_url)} · 任务 {html.escape(request_id)}</div></body></html>"""
+        html_path = image_path.with_suffix(".html")
         html_path.write_text(page, encoding="utf-8")
         try:
             from playwright.sync_api import sync_playwright
 
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(channel="msedge", headless=True)
-                if settings.tfs_pat and "/demo/" not in pr_url:
-                    try:
-                        context = browser.new_context(http_credentials={"username": "", "password": settings.tfs_pat})
-                        tfs_page = context.new_page(viewport={"width": 1440, "height": 1000})
-                        tfs_page.goto(pr_url, wait_until="networkidle", timeout=30_000)
-                        visible_text = tfs_page.locator("body").inner_text(timeout=5_000)
-                        if str(pr.get("id", "")) in visible_text or pr.get("title", "") in visible_text:
-                            tfs_page.screenshot(path=str(tfs_image_path), full_page=True)
-                            browser.close()
-                            name = f"{repository_name}-PR合并截图.png" if repository_name else "TFS-PR合并完成截图.png"
-                            return self.record(request_id, "merge_screenshot", name, str(tfs_image_path))
-                        context.close()
-                    except Exception:
-                        # TFS Web 登录方式因部署而异；REST 已确认完成时退回系统生成凭证。
-                        pass
                 page_obj = browser.new_page(viewport={"width": 1440, "height": 900})
                 page_obj.goto(html_path.as_uri())
                 page_obj.screenshot(path=str(image_path), full_page=True)
                 browser.close()
-            name = f"{repository_name}-PR合并凭证.png" if repository_name else "PR合并完成凭证.png"
-            return self.record(request_id, "merge_screenshot", name, str(image_path))
-        except Exception:
-            name = f"{repository_name}-PR合并凭证.html" if repository_name else "PR合并完成凭证.html"
-            return self.record(request_id, "merge_evidence", name, str(html_path))
+        except Exception as exc:
+            image_path.unlink(missing_ok=True)
+            raise RuntimeError(f"无法生成演示 PR #{pr.get('id', '')} 合并截图：{exc}") from exc
 
 
 class Mailer:
@@ -338,14 +414,12 @@ class Mailer:
             "sql": "SQL 脚本",
             "config": "配置文件",
             "merge_screenshot": "合并截图",
-            "merge_evidence": "合并凭证",
-            "pull_request": "代码 PR",
         }
         artifact_lines = []
         for item in detail.get("artifacts", []):
             artifact_url = item.get("external_url") or f"{settings.public_base_url}/api/artifacts/{item['id']}"
             kind = kind_labels.get(item.get("kind"), item.get("kind") or "交付文件")
-            action_label = "打开链接" if item.get("kind") == "pull_request" else "下载产物"
+            action_label = "查看截图" if item.get("kind") == "merge_screenshot" else "下载产物"
             artifact_lines.append(
                 f"""<tr><td style="padding:0 0 7px 0">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d8e5dd;background:#f8fbf9">
@@ -374,12 +448,23 @@ class Mailer:
         )
         action = ""
         if action_required:
-            action_button = (
-                f"<a href=\"{html.escape(pr_url, quote=True)}\" style=\"display:inline-block;margin-left:10px;padding:7px 11px;background:#e8a318;color:#13251d;text-decoration:none;font-weight:700;font-size:11px;white-space:nowrap\">打开 PR 并安排合并 →</a>"
-                if pr_url else ""
+            review_items = [
+                {
+                    "repository": state.get("repository_short_name") or repository_short_name(state.get("name", "")),
+                    "pr_id": state.get("pr_id"),
+                    "pr_url": state.get("pr_url"),
+                }
+                for state in detail.get("repository_states", [])
+                if state.get("pr_url")
+            ]
+            if not review_items and pr_url:
+                review_items = [{"repository": "主仓库", "pr_id": detail.get("pr_id"), "pr_url": pr_url}]
+            review_links = "".join(
+                f"<a href=\"{html.escape(str(item['pr_url']), quote=True)}\" style=\"display:inline-block;margin:7px 7px 0 0;padding:7px 10px;background:#e8a318;color:#13251d;text-decoration:none;font-weight:700;font-size:11px;white-space:nowrap\">{safe_text(item['repository'])} · PR #{safe_text(item['pr_id'])} →</a>"
+                for item in review_items
             )
             action = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;background:#fff7df;border-left:4px solid #e8a318">
-              <tr><td style="padding:11px 13px;color:#694b0d;font-size:12px;line-height:1.55"><b style="color:#392a0c;font-size:13px">需要项目经理协同处理：</b> 请联系有权限的同事审核并合并 PR；AutoDev 将持续检测。{action_button}</td></tr>
+              <tr><td style="padding:11px 13px;color:#694b0d;font-size:12px;line-height:1.55"><b style="display:block;color:#392a0c;font-size:13px">需要项目经理协同处理：</b> 请逐个联系有权限的同事审核并合并以下 PR；AutoDev 将持续检测。<div>{review_links}</div></td></tr>
             </table>"""
         elif terminal:
             reason = safe_text(detail.get("error_message"), "任务已终止，暂无更多错误说明。", limit=3000)

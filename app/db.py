@@ -543,7 +543,11 @@ def request_detail(request_id: str) -> dict[str, Any] | None:
     request["steps"] = rows("SELECT * FROM delivery_steps WHERE request_id=? ORDER BY id", (request_id,))
     request["events"] = rows("SELECT * FROM delivery_events WHERE request_id=? ORDER BY id DESC LIMIT 100", (request_id,))
     request["artifacts"] = rows(
-        "SELECT * FROM delivery_artifacts WHERE request_id=? AND kind<>'report' ORDER BY id",
+        """SELECT * FROM delivery_artifacts
+           WHERE request_id=?
+             AND kind NOT IN ('report','pull_request','merge_evidence')
+             AND NOT (kind='merge_screenshot' AND name LIKE '%凭证%')
+           ORDER BY id""",
         (request_id,),
     )
     request["policy_snapshot"] = json_value(request["policy_snapshot"], {})

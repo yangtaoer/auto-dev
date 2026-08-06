@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="全自助需求研发交付",
-    version="0.4.3",
+    version="0.4.4",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -459,7 +459,9 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
         for artifact in rows(
             f"""SELECT id,request_id,kind,name,external_url,size_bytes
                 FROM delivery_artifacts
-                WHERE request_id IN ({placeholders}) AND kind<>'report'
+                WHERE request_id IN ({placeholders})
+                  AND kind NOT IN ('report','pull_request','merge_evidence')
+                  AND NOT (kind='merge_screenshot' AND name LIKE '%凭证%')
                 ORDER BY id""",
             tuple(request_ids),
         ):
@@ -1156,7 +1158,11 @@ def runner_email_template() -> dict:
 
 
 @app.get("/api/artifacts/{artifact_id}")
-def download_artifact(artifact_id: int, user: Annotated[dict, Depends(current_user)]):
+def download_artifact(
+    artifact_id: int,
+    user: Annotated[dict, Depends(current_user)],
+    preview: bool = False,
+):
     artifact = row(
         """SELECT a.*,r.requester_id FROM delivery_artifacts a
            JOIN delivery_requests r ON r.id=a.request_id WHERE a.id=?""",
@@ -1172,6 +1178,8 @@ def download_artifact(artifact_id: int, user: Annotated[dict, Depends(current_us
     delivery_root = settings.delivery_dir.resolve()
     if delivery_root not in path.parents or not path.is_file():
         raise HTTPException(status_code=404, detail="产物文件不存在")
+    if preview and artifact["kind"] == "merge_screenshot":
+        return FileResponse(path)
     return FileResponse(path, filename=artifact["name"])
 
 
