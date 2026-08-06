@@ -56,9 +56,12 @@ class Settings:
     worker_enabled: bool = env_bool("AUTODEV_WORKER_ENABLED", True)
     poll_seconds: int = max(5, int(os.getenv("AUTODEV_POLL_SECONDS", "30")))
     runner_id: str = os.getenv("AUTODEV_RUNNER_ID", "yangtao-pc").strip()
+    project_preset_dir: Path = (
+        ROOT / os.getenv("AUTODEV_PROJECT_PRESET_DIR", "local-runner/project-presets")
+    ).resolve()
     runner_token: str = env_secret("AUTODEV_RUNNER_TOKEN")
     cloud_url: str = os.getenv("AUTODEV_CLOUD_URL", "").rstrip("/")
-    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "0.2.9")
+    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "0.3.0")
     max_artifact_mb: int = max(1, int(os.getenv("AUTODEV_MAX_ARTIFACT_MB", "200")))
     aliyun_access_key_id: str = env_secret("ALIYUN_ACCESS_KEY_ID")
     aliyun_access_key_secret: str = env_secret("ALIYUN_ACCESS_KEY_SECRET")

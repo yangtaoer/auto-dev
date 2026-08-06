@@ -109,6 +109,15 @@ class RemoteStore:
             )
         )
 
+    def sync_projects(self, projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        data = self._json(
+            self.client.put(
+                "/api/runner/projects",
+                json={"runner_id": self.runner_id, "projects": projects},
+            )
+        )
+        return data.get("projects", [])
+
     def next_queued(self) -> str | None:
         data = self._json(self.client.post("/api/runner/claim", json={"runner_id": self.runner_id}))
         item = data.get("request")

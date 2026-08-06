@@ -54,6 +54,14 @@ CREATE TABLE IF NOT EXISTS users (
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS user_emails (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    is_primary INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    UNIQUE(user_id, email)
+);
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -112,6 +120,7 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
     completed_at TEXT,
     next_poll_at TEXT,
     email_sent_at TEXT,
+    notification_emails TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -214,14 +223,48 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     request_columns = {item["name"] for item in conn.execute("PRAGMA table_info(delivery_requests)")}
     if "runner_id" not in request_columns:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN runner_id TEXT NOT NULL DEFAULT 'yangtao-pc'")
+    if "notification_emails" not in request_columns:
+        conn.execute("ALTER TABLE delivery_requests ADD COLUMN notification_emails TEXT NOT NULL DEFAULT '[]'")
+    for user in conn.execute("SELECT id,email,created_at FROM users").fetchall():
+        if not conn.execute("SELECT 1 FROM user_emails WHERE user_id=? LIMIT 1", (user["id"],)).fetchone():
+            conn.execute(
+                "INSERT OR IGNORE INTO user_emails(user_id,email,is_primary,created_at) VALUES(?,?,1,?)",
+                (user["id"], user["email"], user["created_at"]),
+            )
+    for request in conn.execute(
+        "SELECT id,requester_id FROM delivery_requests WHERE notification_emails='[]' OR notification_emails=''"
+    ).fetchall():
+        emails = [
+            item["email"]
+            for item in conn.execute(
+                "SELECT email FROM user_emails WHERE user_id=? ORDER BY is_primary DESC,id",
+                (request["requester_id"],),
+            ).fetchall()
+        ]
+        if emails:
+            conn.execute(
+                "UPDATE delivery_requests SET notification_emails=? WHERE id=?",
+                (json.dumps(emails, ensure_ascii=False), request["id"]),
+            )
 
 
 def _seed_user(conn: sqlite3.Connection, username: str, display_name: str, email: str, role: str, password: str) -> None:
-    if conn.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
+    existing = conn.execute("SELECT id,email,created_at FROM users WHERE username=?", (username,)).fetchone()
+    if existing:
+        if not conn.execute("SELECT 1 FROM user_emails WHERE user_id=? LIMIT 1", (existing["id"],)).fetchone():
+            conn.execute(
+                "INSERT OR IGNORE INTO user_emails(user_id,email,is_primary,created_at) VALUES(?,?,1,?)",
+                (existing["id"], existing["email"], existing["created_at"]),
+            )
         return
-    conn.execute(
+    now = utc_now()
+    cursor = conn.execute(
         "INSERT INTO users(username,display_name,email,password_hash,role,created_at) VALUES(?,?,?,?,?,?)",
-        (username, display_name, email, hash_password(password), role, utc_now()),
+        (username, display_name, email, hash_password(password), role, now),
+    )
+    conn.execute(
+        "INSERT INTO user_emails(user_id,email,is_primary,created_at) VALUES(?,?,1,?)",
+        (cursor.lastrowid, email, now),
     )
 
 
@@ -250,7 +293,24 @@ def json_value(value: str | None, fallback: Any) -> Any:
 
 
 def public_user(user: dict[str, Any]) -> dict[str, Any]:
-    return {key: user[key] for key in ("id", "username", "display_name", "email", "role", "active")}
+    result = {key: user[key] for key in ("id", "username", "display_name", "email", "role", "active")}
+    result["active"] = bool(result["active"])
+    configured = rows(
+        "SELECT email FROM user_emails WHERE user_id=? ORDER BY is_primary DESC,id",
+        (user["id"],),
+    )
+    result["emails"] = [item["email"] for item in configured] or [user["email"]]
+    result["email"] = result["emails"][0]
+    return result
+
+
+def replace_user_emails(conn: sqlite3.Connection, user_id: int, emails: list[str]) -> None:
+    conn.execute("DELETE FROM user_emails WHERE user_id=?", (user_id,))
+    now = utc_now()
+    conn.executemany(
+        "INSERT INTO user_emails(user_id,email,is_primary,created_at) VALUES(?,?,?,?)",
+        [(user_id, email, int(index == 0), now) for index, email in enumerate(emails)],
+    )
 
 
 def create_session(user_id: int) -> tuple[str, str]:
@@ -300,7 +360,13 @@ def project_for_api(project: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def create_delivery_request(project: dict[str, Any], user_id: int, work_item_id: int, mode: str) -> str:
+def create_delivery_request(
+    project: dict[str, Any],
+    user_id: int,
+    work_item_id: int,
+    mode: str,
+    notification_emails: list[str],
+) -> str:
     request_id = str(uuid.uuid4())
     now = utc_now()
     snapshot = project_for_api(project)
@@ -308,9 +374,14 @@ def create_delivery_request(project: dict[str, Any], user_id: int, work_item_id:
         conn.execute(
             """INSERT INTO delivery_requests(
                 id,work_item_id,project_id,requester_id,runner_id,delivery_mode,status,current_step,progress,
-                policy_snapshot,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,'queued','validate',0,?,?,?)""",
-            (request_id, work_item_id, project["id"], user_id, project.get("runner_id", "yangtao-pc"), mode, json.dumps(snapshot, ensure_ascii=False), now, now),
+                policy_snapshot,notification_emails,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,'queued','validate',0,?,?,?,?)""",
+            (
+                request_id, work_item_id, project["id"], user_id,
+                project.get("runner_id", "yangtao-pc"), mode,
+                json.dumps(snapshot, ensure_ascii=False),
+                json.dumps(notification_emails, ensure_ascii=False), now, now,
+            ),
         )
         conn.executemany(
             "INSERT INTO delivery_steps(request_id,step_code,name,status) VALUES(?,?,?,'pending')",
@@ -384,4 +455,5 @@ def request_detail(request_id: str) -> dict[str, Any] | None:
     request["events"] = rows("SELECT * FROM delivery_events WHERE request_id=? ORDER BY id DESC LIMIT 100", (request_id,))
     request["artifacts"] = rows("SELECT * FROM delivery_artifacts WHERE request_id=? ORDER BY id", (request_id,))
     request["policy_snapshot"] = json_value(request["policy_snapshot"], {})
+    request["notification_emails"] = json_value(request.get("notification_emails"), [request["requester_email"]])
     return request

@@ -91,15 +91,15 @@ AUTODEV_RUNNER_ID=yangtao-pc
 .\local-runner\restart.ps1
 ```
 
-## 4. 云端配置项目
+## 4. 配置账号与本机项目目录
 
 管理员打开 `https://auto.yangtaoer.com.cn`：
 
-1. 新建项目经理账号并填写真实交付邮箱。
-2. 新建项目策略，执行器 ID 填 `yangtao-pc`。
+1. 新建项目经理账号，可维护多个真实交付邮箱。
+2. 通过 Codex 对话新增或修改 `local-runner/project-presets/*.json`。
 3. 仓库路径填写 Windows 本机的绝对路径，例如 `D:\workspace\sc-project`。
 4. 配置允许的 TFS Area Path、基础分支、构建命令和产物匹配。
-5. 先保持演示模式跑通所选交付方式，再关闭演示模式验证真实 TFS 需求。
+5. 本机执行器会自动把预设同步为云端只读项目目录，所有账号均可查看和选择。
 
 ## 5. 运维
 

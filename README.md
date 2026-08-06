@@ -7,7 +7,7 @@
 - `121.4.77.6` 的 28765 只允许 `162.14.113.130/32` 访问。
 
 - 项目经理通过 `https://auto.yangtaoer.com.cn` 登录、输入 TFS 编号并查看过程与交付物。
-- 云端保存用户、项目策略、任务状态、审计事件和上传后的交付产物，并发送邮件。
+- 云端保存用户、只读项目目录、任务状态、审计事件和上传后的交付产物，并发送邮件。
 - 你的 Windows 电脑只主动通过 HTTPS 轮询云端，不需要公网 IP、端口映射或开放防火墙入站。
 - Codex 登录态、代码仓库、TFS PAT、构建环境和审核账号全部留在本机，不上传云服务器。
 
@@ -21,7 +21,7 @@
 - `deploy/edge-caddy/`：`162.14.113.130` 现有 Caddy 的站点配置。
 - `deploy/cloud/`：控制台与 Caddy 部署在同一台服务器时使用的备用方案。
 - `local-runner/`：Windows 本机执行器安装、启动和登录自启脚本。
-- `local-runner/project-presets/`：已核验项目策略预设；巴中项目可直接照此录入云端。
+- `local-runner/project-presets/`：项目策略的唯一配置源；本机执行器自动同步云端只读目录。
 - `local-runner/project-scripts/`：项目专用构建/打包脚本，避免每次任务临时推断命令。
 - `app/`：云端控制台与本机编排器共用源码。
 - `docs/deployment.md`：从 DNS 到正式运行的完整部署清单。
@@ -33,7 +33,7 @@
 
 ```sh
 cd deploy/backend
-chmod +x deploy.sh upgrade.sh backup.sh
+chmod +x *.sh
 ./deploy.sh
 ```
 
@@ -66,9 +66,11 @@ chmod +x deploy.sh upgrade.sh backup.sh
 
 OSS 参数配置在本机 `local-runner/.env.runner`，包括 AccessKey、Region、Endpoint、Bucket、对象前缀、链接有效期、保留天数和清理周期。OSS 凭据不会进入云端容器或一键部署 ZIP。
 
-## 项目配置关键项
+## 项目与账号配置
 
-管理员登录云端后创建项目策略：
+项目策略不在云端编辑。通过 Codex 对话新增或修改 `local-runner/project-presets/*.json` 后，本机执行器最迟在下一次 20 秒心跳时自动同步；所有登录账号都能在“自助项目”页面查看，发起需求下拉只展示已启用项目。
+
+项目预设关键项：
 
 - `本机执行器 ID`：默认 `yangtao-pc`，必须与 `.env.runner` 一致。
 - `本机代码仓库绝对路径`：例如 `C:\workspace\project`，由本机执行器使用。
@@ -76,6 +78,8 @@ OSS 参数配置在本机 `local-runner/.env.runner`，包括 AccessKey、Region
 - `基础分支`：默认 `dev`；自动研发只推 feature 分支，不直推 `dev`。
 - `构建/校验命令`、安装包匹配、SQL/配置匹配和受保护路径。
 - 三种交付方式之一；也可以允许管理员针对单个需求覆盖。
+
+管理员可在云端创建、编辑、启用或禁用账号。每个账号支持最多 10 个通知邮箱；发起需求时从当前账号维护的邮箱中多选本次收件人，默认全部选中。
 
 四川自动审核方式必须配置构建/校验命令，且应使用经组织授权的专用审核账号。Codex 报告风险、构建失败或触及保护路径时，不会自动批准 PR。
 
@@ -106,3 +110,17 @@ cd /opt/autodev/deploy/backend
 ```
 
 脚本会下载并校验最新 ZIP、备份 SQLite 数据库与本地产物、覆盖程序文件并滚动更新容器。`.env.backend`、`secrets/` 和 `data/` 不包含在 ZIP 中，因此不会被覆盖。
+
+需要让服务器自动跟随 GitHub `latest` 时执行一次：
+
+```sh
+cd /opt/autodev/deploy/backend
+./install-auto-update.sh
+```
+
+该脚本安装 systemd timer，每 5 分钟检查一次发布包校验值。版本未变化时不做任何操作；有新版本时自动校验、备份并升级。查看状态和日志：
+
+```sh
+systemctl status autodev-github-update.timer
+journalctl -u autodev-github-update.service -n 100 --no-pager
+```

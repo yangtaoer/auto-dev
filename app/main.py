@@ -28,6 +28,7 @@ from .db import (
     init_db,
     project_for_api,
     public_user,
+    replace_user_emails,
     request_detail,
     row,
     rows,
@@ -55,7 +56,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="全自助需求研发交付",
-    version="0.2.9",
+    version="0.3.0",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -74,9 +75,21 @@ class LoginInput(BaseModel):
 class UserInput(BaseModel):
     username: str = Field(pattern=r"^[a-zA-Z0-9_.-]{2,40}$")
     display_name: str = Field(min_length=1, max_length=80)
-    email: str
+    email: str | None = None
+    emails: list[str] = Field(default_factory=list)
     password: str = Field(min_length=8, max_length=200)
     role: str = Field(pattern=r"^(admin|pm)$")
+    active: bool = True
+
+
+class UserUpdateInput(BaseModel):
+    username: str = Field(pattern=r"^[a-zA-Z0-9_.-]{2,40}$")
+    display_name: str = Field(min_length=1, max_length=80)
+    email: str | None = None
+    emails: list[str] = Field(default_factory=list)
+    password: str | None = Field(default=None, min_length=8, max_length=200)
+    role: str = Field(pattern=r"^(admin|pm)$")
+    active: bool = True
 
 
 class ProjectInput(BaseModel):
@@ -113,6 +126,12 @@ class DeliveryRequestInput(BaseModel):
     project_id: int
     work_item_id: int = Field(gt=0)
     delivery_mode: DeliveryMode | None = None
+    notification_emails: list[str] = Field(default_factory=list)
+
+
+class RunnerProjectSync(BaseModel):
+    runner_id: str = Field(pattern=r"^[a-zA-Z0-9_.-]{2,80}$")
+    projects: list[ProjectInput] = Field(max_length=200)
 
 
 class RunnerIdentity(BaseModel):
@@ -172,11 +191,44 @@ def runner_request(request_id: str) -> dict[str, Any]:
     return detail
 
 
+def normalize_emails(emails: list[str], legacy_email: str | None = None) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in emails or ([legacy_email] if legacy_email else []):
+        email = raw.strip().lower()
+        if not email or email in seen:
+            continue
+        if len(email) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            raise HTTPException(status_code=422, detail=f"邮箱格式不正确：{raw}")
+        seen.add(email)
+        normalized.append(email)
+    if not normalized:
+        raise HTTPException(status_code=422, detail="至少配置一个通知邮箱")
+    if len(normalized) > 10:
+        raise HTTPException(status_code=422, detail="每个账号最多配置 10 个邮箱")
+    return normalized
+
+
+def request_recipients(detail: dict[str, Any]) -> list[str]:
+    selected = list(detail.get("notification_emails") or [detail["requester_email"]])
+    selected.extend(
+        email.strip()
+        for email in detail["policy_snapshot"].get("notification_cc", "").split(",")
+        if email.strip()
+    )
+    result: list[str] = []
+    seen: set[str] = set()
+    for email in selected:
+        key = email.strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            result.append(email.strip())
+    return result
+
+
 def send_cloud_email(request_id: str, *, action_required: bool) -> None:
     detail = runner_request(request_id)
-    project = detail["policy_snapshot"]
-    recipients = [detail["requester_email"]]
-    recipients.extend(email.strip() for email in project.get("notification_cc", "").split(",") if email.strip())
+    recipients = request_recipients(detail)
     subject_prefix = "[待审核]" if action_required else "[已交付]"
     subject = f"{subject_prefix} #{detail['work_item_id']} {detail.get('title', '')}"
     mailer = Mailer()
@@ -290,9 +342,8 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
 
 
 @app.get("/api/projects")
-def list_projects(user: Annotated[dict, Depends(current_user)]) -> dict:
-    query = "SELECT * FROM projects ORDER BY enabled DESC,name" if user["role"] == "admin" else "SELECT * FROM projects WHERE enabled=1 ORDER BY name"
-    return {"projects": [project_for_api(item) for item in rows(query)]}
+def list_projects(_: Annotated[dict, Depends(current_user)]) -> dict:
+    return {"projects": [project_for_api(item) for item in rows("SELECT * FROM projects WHERE enabled=1 ORDER BY name")]}
 
 
 @app.post("/api/projects")
@@ -347,16 +398,79 @@ def update_project(project_id: int, payload: ProjectInput, user: Annotated[dict,
     return {"project": project_for_api(row("SELECT * FROM projects WHERE id=?", (project_id,)))}
 
 
+@app.put("/api/runner/projects", dependencies=[Depends(runner_auth)])
+def sync_runner_projects(payload: RunnerProjectSync) -> dict:
+    """Mirror the runner's local project preset catalog into the cloud read-only registry."""
+    now = utc_now()
+    project_keys = [item.project_key for item in payload.projects]
+    if len(project_keys) != len(set(project_keys)):
+        raise HTTPException(status_code=422, detail="本机项目预设中存在重复的项目标识")
+    with transaction() as conn:
+        if project_keys:
+            placeholders = ",".join("?" for _ in project_keys)
+            conn.execute(
+                f"UPDATE projects SET enabled=0,updated_at=? WHERE runner_id=? AND project_key NOT IN ({placeholders})",
+                (now, payload.runner_id, *project_keys),
+            )
+        else:
+            conn.execute(
+                "UPDATE projects SET enabled=0,updated_at=? WHERE runner_id=?",
+                (now, payload.runner_id),
+            )
+        for project in payload.projects:
+            data = project.model_dump(mode="json")
+            data["runner_id"] = payload.runner_id
+            columns = list(data)
+            values: list[Any] = []
+            for value in data.values():
+                if isinstance(value, list):
+                    value = json.dumps(value, ensure_ascii=False)
+                elif isinstance(value, bool):
+                    value = int(value)
+                values.append(value)
+            updates = ",".join(f"{column}=excluded.{column}" for column in columns if column != "project_key")
+            conn.execute(
+                f"""INSERT INTO projects({','.join(columns)},created_at,updated_at)
+                    VALUES({','.join('?' for _ in columns)},?,?)
+                    ON CONFLICT(project_key) DO UPDATE SET {updates},updated_at=excluded.updated_at""",
+                (*values, now, now),
+            )
+        conn.execute(
+            "INSERT INTO audit_logs(actor_id,action,target_type,target_id,detail,created_at) VALUES(NULL,?,?,?,?,?)",
+            (
+                "project.runner_sync", "runner", payload.runner_id,
+                json.dumps({"project_keys": project_keys}, ensure_ascii=False), now,
+            ),
+        )
+    return {
+        "ok": True,
+        "projects": [
+            project_for_api(item)
+            for item in rows("SELECT * FROM projects WHERE runner_id=? AND enabled=1 ORDER BY name", (payload.runner_id,))
+        ],
+    }
+
+
 @app.post("/api/users")
 def create_user(payload: UserInput, user: Annotated[dict, Depends(admin_user)]) -> dict:
+    emails = normalize_emails(payload.emails, payload.email)
+    now = utc_now()
     with transaction() as conn:
         try:
             cursor = conn.execute(
-                "INSERT INTO users(username,display_name,email,password_hash,role,created_at) VALUES(?,?,?,?,?,?)",
-                (payload.username, payload.display_name, payload.email, hash_password(payload.password), payload.role, utc_now()),
+                "INSERT INTO users(username,display_name,email,password_hash,role,active,created_at) VALUES(?,?,?,?,?,?,?)",
+                (
+                    payload.username, payload.display_name, emails[0], hash_password(payload.password),
+                    payload.role, int(payload.active), now,
+                ),
             )
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=409, detail="用户名已存在") from exc
+        replace_user_emails(conn, int(cursor.lastrowid), emails)
+        conn.execute(
+            "INSERT INTO audit_logs(actor_id,action,target_type,target_id,detail,created_at) VALUES(?,?,?,?,?,?)",
+            (user["id"], "user.create", "user", str(cursor.lastrowid), json.dumps({"emails": emails, "role": payload.role}, ensure_ascii=False), now),
+        )
     created = row("SELECT * FROM users WHERE id=?", (cursor.lastrowid,))
     return {"user": public_user(created)}
 
@@ -364,6 +478,47 @@ def create_user(payload: UserInput, user: Annotated[dict, Depends(admin_user)]) 
 @app.get("/api/users")
 def list_users(_: Annotated[dict, Depends(admin_user)]) -> dict:
     return {"users": [public_user(item) for item in rows("SELECT * FROM users ORDER BY role,display_name")]}
+
+
+@app.put("/api/users/{user_id}")
+def update_user(user_id: int, payload: UserUpdateInput, actor: Annotated[dict, Depends(admin_user)]) -> dict:
+    existing = row("SELECT * FROM users WHERE id=?", (user_id,))
+    if not existing:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    if user_id == actor["id"] and (not payload.active or payload.role != actor["role"]):
+        raise HTTPException(status_code=409, detail="当前登录管理员不能停用自己或修改自己的角色")
+    emails = normalize_emails(payload.emails, payload.email)
+    fields: dict[str, Any] = {
+        "username": payload.username,
+        "display_name": payload.display_name,
+        "email": emails[0],
+        "role": payload.role,
+        "active": int(payload.active),
+    }
+    if payload.password:
+        fields["password_hash"] = hash_password(payload.password)
+    now = utc_now()
+    with transaction() as conn:
+        try:
+            conn.execute(
+                f"UPDATE users SET {','.join(f'{key}=?' for key in fields)} WHERE id=?",
+                (*fields.values(), user_id),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="用户名已存在") from exc
+        replace_user_emails(conn, user_id, emails)
+        if not payload.active:
+            conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+        conn.execute(
+            "INSERT INTO audit_logs(actor_id,action,target_type,target_id,detail,created_at) VALUES(?,?,?,?,?,?)",
+            (
+                actor["id"], "user.update", "user", str(user_id),
+                json.dumps({"emails": emails, "role": payload.role, "active": payload.active, "password_changed": bool(payload.password)}, ensure_ascii=False),
+                now,
+            ),
+        )
+    updated = row("SELECT * FROM users WHERE id=?", (user_id,))
+    return {"user": public_user(updated)}
 
 
 @app.post("/api/requests")
@@ -376,8 +531,13 @@ def submit_request(payload: DeliveryRequestInput, user: Annotated[dict, Depends(
         if user["role"] != "admin" or not project["allow_requirement_override"]:
             raise HTTPException(status_code=403, detail="该项目不允许覆盖交付方式")
         mode = payload.delivery_mode.value
+    configured_emails = public_user(user)["emails"]
+    selected_emails = normalize_emails(payload.notification_emails or configured_emails)
+    configured_lookup = {email.lower() for email in configured_emails}
+    if any(email.lower() not in configured_lookup for email in selected_emails):
+        raise HTTPException(status_code=422, detail="通知邮箱只能从当前账号已配置的邮箱中选择")
     try:
-        request_id = create_delivery_request(project, user["id"], payload.work_item_id, mode)
+        request_id = create_delivery_request(project, user["id"], payload.work_item_id, mode, selected_emails)
     except sqlite3.IntegrityError as exc:
         raise HTTPException(status_code=409, detail="该需求已有正在执行的研发任务") from exc
     return {"id": request_id, "status": RunStatus.QUEUED.value}

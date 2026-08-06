@@ -141,6 +141,7 @@ class ArtifactService:
             "pull_request": detail.get("pr_url"),
             "merge_commit": detail.get("merge_commit"),
             "summary": detail.get("result_summary"),
+            "notification_emails": detail.get("notification_emails", []),
             "artifact_retention_days": settings.oss_retention_days,
             "artifacts": [
                 {

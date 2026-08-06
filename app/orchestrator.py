@@ -378,8 +378,9 @@ class Worker:
             return
         detail = self.store.detail(request_id)
         project = detail["policy_snapshot"]
-        recipients = [detail["requester_email"]]
+        recipients = list(detail.get("notification_emails") or [detail["requester_email"]])
         recipients.extend(email.strip() for email in project.get("notification_cc", "").split(",") if email.strip())
+        recipients = list(dict.fromkeys(email.strip() for email in recipients if email and email.strip()))
         subject_prefix = "[待审核]" if action_required else "[已交付]"
         subject = f"{subject_prefix} #{detail['work_item_id']} {detail.get('title','')}"
         html_body = self.mailer.delivery_html(detail, action_required=action_required)

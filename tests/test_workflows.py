@@ -16,6 +16,7 @@ os.environ["AUTODEV_RUNNER_TOKEN"] = "test-runner-token"
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
+from app.local_runner_main import load_project_presets  # noqa: E402
 from app.orchestrator import worker  # noqa: E402
 
 
@@ -166,6 +167,123 @@ class WorkflowTests(unittest.TestCase):
             "/api/runner/claim", json={"runner_id": "yangtao-pc"}
         )
         self.assertEqual(unauthenticated.status_code, 401)
+
+    def test_runner_syncs_read_only_project_catalog(self) -> None:
+        headers = {"Authorization": "Bearer test-runner-token"}
+
+        def preset(key: str, name: str) -> dict:
+            return {
+                "project_key": key,
+                "name": name,
+                "enabled": True,
+                "simulation_mode": True,
+                "delivery_mode": "local_package",
+                "allow_requirement_override": False,
+                "tfs_collection_url": "http://dev.tellhowsoft.com/DefaultCollection",
+                "tfs_project": "XiNanArea-New",
+                "tfs_area_path": "XiNanArea-New\\四川省区团队",
+                "repository_path": "C:\\work\\demo",
+                "base_branch": "dev",
+                "build_command": "echo test",
+                "package_patterns": ["target/*.jar"],
+                "sql_patterns": ["**/*.sql"],
+                "config_patterns": ["**/*.yml"],
+                "protected_patterns": ["**/production/**"],
+                "notification_cc": "",
+                "runner_id": "ignored-by-cloud",
+            }
+
+        first = self.client.put(
+            "/api/runner/projects",
+            headers=headers,
+            json={
+                "runner_id": "catalog-test-runner",
+                "projects": [preset("catalog-one", "目录项目一"), preset("catalog-two", "目录项目二")],
+            },
+        )
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual({item["runner_id"] for item in first.json()["projects"]}, {"catalog-test-runner"})
+
+        second = self.client.put(
+            "/api/runner/projects",
+            headers=headers,
+            json={"runner_id": "catalog-test-runner", "projects": [preset("catalog-one", "目录项目一（已更新）")]},
+        )
+        self.assertEqual(second.status_code, 200, second.text)
+        visible = self.client.get("/api/projects").json()["projects"]
+        visible_keys = {item["project_key"] for item in visible}
+        self.assertIn("catalog-one", visible_keys)
+        self.assertNotIn("catalog-two", visible_keys)
+        synced = next(item for item in visible if item["project_key"] == "catalog-one")
+        self.assertEqual(synced["name"], "目录项目一（已更新）")
+
+    def test_local_project_preset_catalog_contains_bazhong(self) -> None:
+        projects = load_project_presets()
+        bazhong = next(item for item in projects if item["project_key"] == "bazhong-self-developed")
+        self.assertEqual(bazhong["name"], "巴中自巡航-自研")
+        self.assertEqual(bazhong["runner_id"], "yangtao-pc")
+
+    def test_user_multiple_emails_edit_disable_and_request_selection(self) -> None:
+        username = "multi_mail_pm"
+        created = self.client.post(
+            "/api/users",
+            json={
+                "username": username,
+                "display_name": "多邮箱项目经理",
+                "emails": ["pm.primary@example.com", "pm.backup@example.com"],
+                "password": "password123",
+                "role": "pm",
+                "active": True,
+            },
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        user = created.json()["user"]
+        self.assertEqual(user["emails"], ["pm.primary@example.com", "pm.backup@example.com"])
+
+        project_id = self.create_project("multi-mail-project", "local_package")
+        with TestClient(app) as pm_client:
+            logged_in = pm_client.post(
+                "/api/auth/login", json={"username": username, "password": "password123"}
+            )
+            self.assertEqual(logged_in.status_code, 200, logged_in.text)
+            submitted = pm_client.post(
+                "/api/requests",
+                json={
+                    "project_id": project_id,
+                    "work_item_id": 910006,
+                    "notification_emails": ["pm.backup@example.com"],
+                },
+            )
+            self.assertEqual(submitted.status_code, 200, submitted.text)
+            detail = pm_client.get(f"/api/requests/{submitted.json()['id']}").json()["request"]
+            self.assertEqual(detail["notification_emails"], ["pm.backup@example.com"])
+            rejected = pm_client.post(
+                "/api/requests",
+                json={
+                    "project_id": project_id,
+                    "work_item_id": 910007,
+                    "notification_emails": ["not-owned@example.com"],
+                },
+            )
+            self.assertEqual(rejected.status_code, 422, rejected.text)
+
+        edited = self.client.put(
+            f"/api/users/{user['id']}",
+            json={
+                "username": username,
+                "display_name": "多邮箱项目经理（已编辑）",
+                "emails": ["pm.new@example.com", "pm.backup@example.com"],
+                "role": "pm",
+                "active": False,
+            },
+        )
+        self.assertEqual(edited.status_code, 200, edited.text)
+        self.assertFalse(edited.json()["user"]["active"])
+        self.assertEqual(edited.json()["user"]["emails"][0], "pm.new@example.com")
+        disabled_login = self.client.post(
+            "/api/auth/login", json={"username": username, "password": "password123"}
+        )
+        self.assertEqual(disabled_login.status_code, 401, disabled_login.text)
 
 
 if __name__ == "__main__":

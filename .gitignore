@@ -6,11 +6,7 @@ __pycache__/
 .env.runner
 .pytest_cache/
 .coverage
-data/*.db
-data/worktrees/
-data/deliveries/
-data/logs/
-data/runner/
+data/
 dist/
 deploy/cloud/.env.production
 deploy/cloud/data/

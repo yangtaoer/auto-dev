@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import signal
 import sys
 import threading
@@ -12,6 +13,22 @@ from .store import RemoteStore
 
 
 logger = logging.getLogger("autodev.runner")
+
+
+def load_project_presets() -> list[dict]:
+    preset_dir = settings.project_preset_dir
+    preset_dir.mkdir(parents=True, exist_ok=True)
+    projects: list[dict] = []
+    for path in sorted(preset_dir.glob("*.json")):
+        try:
+            project = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"项目预设无法读取：{path.name}：{exc}") from exc
+        if not isinstance(project, dict):
+            raise RuntimeError(f"项目预设必须是 JSON 对象：{path.name}")
+        project["runner_id"] = settings.runner_id
+        projects.append(project)
+    return projects
 
 
 def configure_logging() -> None:
@@ -36,9 +53,24 @@ def main() -> None:
     store = RemoteStore(settings.cloud_url, settings.runner_token, settings.runner_id)
     worker = Worker(store=store)
     heartbeat_stop = threading.Event()
+    last_catalog = ""
+
+    def sync_project_catalog() -> None:
+        nonlocal last_catalog
+        projects = load_project_presets()
+        fingerprint = json.dumps(projects, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if fingerprint == last_catalog:
+            return
+        synced = store.sync_projects(projects)
+        last_catalog = fingerprint
+        logger.info("本机项目目录已同步 cloud_projects=%s preset_dir=%s", len(synced), settings.project_preset_dir)
 
     def heartbeat_loop() -> None:
         while not heartbeat_stop.is_set():
+            try:
+                sync_project_catalog()
+            except Exception as exc:
+                logger.warning("项目目录同步失败，将继续保持心跳并稍后重试：%s", exc)
             try:
                 current = worker.current_request_id
                 store.heartbeat("working" if current else "idle", current)
@@ -67,6 +99,10 @@ def main() -> None:
     signal.signal(signal.SIGINT, stop_runner)
     try:
         store.heartbeat("starting")
+        try:
+            sync_project_catalog()
+        except Exception as exc:
+            logger.warning("首次同步本机项目目录失败，将随心跳重试：%s", exc)
         heartbeat_thread = threading.Thread(target=heartbeat_loop, name="autodev-heartbeat", daemon=True)
         heartbeat_thread.start()
         if settings.oss_enabled:

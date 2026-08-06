@@ -56,6 +56,7 @@ PR 创建时关联 TFS 工作项，目标固定为项目策略中的 `dev`（或
 `queued → validating → developing → submitting/building → waiting_merge → capturing → delivering → delivered`
 
 - 项目策略在发起时完整快照，后续修改不会改变进行中的任务。
+- 本机 `project-presets` 是项目策略唯一配置源；执行器检测到目录变化后同步云端只读目录，删除的本机预设会在云端停用。
 - `queued` 和 `waiting_merge` 存在云端数据库，本机重启后可以继续领取或轮询。
 - 本机每 20 秒报告心跳；90 秒未上报时控制台显示离线。
 - 任务执行中仍会检查云端取消状态。

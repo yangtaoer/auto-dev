@@ -13,7 +13,8 @@
       <nav>
         <button class="nav-item active" data-view="dashboard"><span class="nav-index">01</span><span>任务总览</span></button>
         <button class="nav-item" data-view="requests"><span class="nav-index">02</span><span>交付记录</span></button>
-        {% if user.role == 'admin' %}<button class="nav-item" data-view="projects"><span class="nav-index">03</span><span>项目策略</span></button><button class="nav-item" data-view="users"><span class="nav-index">04</span><span>账号管理</span></button>{% endif %}
+        <button class="nav-item" data-view="projects"><span class="nav-index">03</span><span>自助项目</span></button>
+        {% if user.role == 'admin' %}<button class="nav-item" data-view="users"><span class="nav-index">04</span><span>账号管理</span></button>{% endif %}
       </nav>
       <div class="sidebar-foot">
         <div class="system-status offline" id="runner-status"><i></i><span>本机执行器未连接</span></div>
@@ -40,16 +41,16 @@
         <div class="table-card"><table><thead><tr><th>需求</th><th>项目 / 发起人</th><th>交付策略</th><th>当前状态</th><th>PR</th><th>发起时间</th></tr></thead><tbody id="all-table"></tbody></table></div>
       </section>
 
-      {% if user.role == 'admin' %}
       <section class="view" id="view-projects">
-        <div class="section-heading"><div><p class="eyebrow">POLICY REGISTRY</p><h2>自动研发项目策略</h2></div><button class="btn btn-secondary" id="new-project">＋ 新建项目策略</button></div>
-        <div class="policy-note"><b>准入边界</b><span>项目、代码仓库、保护路径和交付方式共同决定 Codex 可以做什么。</span></div>
+        <div class="section-heading"><div><p class="eyebrow">SUPPORTED PROJECTS</p><h2>支持自助开发的项目</h2></div><span class="catalog-source">由本机执行器同步</span></div>
+        <div class="policy-note"><b>项目目录</b><span>项目策略在本机通过 Codex 对话维护；这里展示当前已开放的项目、交付方式和执行器。</span></div>
         <div class="project-grid" id="project-grid"></div>
       </section>
+      {% if user.role == 'admin' %}
       <section class="view" id="view-users">
         <div class="section-heading"><div><p class="eyebrow">ACCESS REGISTRY</p><h2>项目经理账号</h2></div><button class="btn btn-secondary" id="new-user">＋ 新建账号</button></div>
-        <div class="policy-note"><b>邮件身份</b><span>项目经理发起需求后，交付邮件将发送到其账号绑定的邮箱。</span></div>
-        <div class="table-card"><table><thead><tr><th>登录账号</th><th>姓名</th><th>邮箱</th><th>角色</th><th>状态</th></tr></thead><tbody id="users-table"></tbody></table></div>
+        <div class="policy-note"><b>邮件身份</b><span>每个账号可维护多个邮箱；发起需求时可以从自己的邮箱中选择本次通知对象。</span></div>
+        <div class="table-card"><table><thead><tr><th>登录账号</th><th>姓名</th><th>通知邮箱</th><th>角色</th><th>状态</th><th>操作</th></tr></thead><tbody id="users-table"></tbody></table></div>
       </section>
       {% endif %}
     </main>
@@ -61,6 +62,7 @@
         <label class="span-2"><span>TFS 用户情景编号</span><input type="number" name="work_item_id" min="1" placeholder="例如：1551572" required></label>
         <label class="span-2"><span>自动研发项目</span><select name="project_id" id="request-project" required></select></label>
         <label class="span-2" id="request-mode-row" hidden><span>本需求交付方式（管理员覆盖）</span><select name="delivery_mode" id="request-mode"><option value="">继承项目默认方式</option><option value="local_package">本地打包交付</option><option value="sichuan_auto_review">四川审核后交付</option><option value="product_manual_review">产品审核后交付</option></select></label>
+        <div class="span-2 field-block"><div class="field-label">通知邮箱 <small>可多选，默认全部选中</small></div><div class="mail-choice-grid" id="request-email-options"></div></div>
         <div class="strategy-preview span-2" id="strategy-preview"></div>
         <p class="form-error span-2" id="request-error" hidden></p>
         <div class="modal-actions span-2"><button type="button" class="btn btn-ghost" data-close>取消</button><button type="submit" class="btn btn-primary">确认并进入队列 ↗</button></div>
@@ -72,37 +74,16 @@
   <aside class="detail-drawer" id="detail-drawer" aria-hidden="true"><button class="modal-close" id="close-detail">×</button><div id="detail-content"></div></aside>
 
   {% if user.role == 'admin' %}
-  <div class="modal-backdrop" id="project-modal" hidden>
-    <section class="modal project-modal"><button class="modal-close" data-close>×</button><p class="eyebrow">PROJECT POLICY</p><h2 id="project-modal-title">新建项目策略</h2>
-      <form id="project-form" class="form-grid dense">
-        <input type="hidden" name="id">
-        <label><span>项目标识</span><input name="project_key" placeholder="sichuan-portal" required></label><label><span>项目名称</span><input name="name" required></label>
-        <label><span>TFS Collection</span><input name="tfs_collection_url" value="http://dev.tellhowsoft.com/DefaultCollection" required></label><label><span>TFS 项目</span><input name="tfs_project" value="XiNanArea-New" required></label>
-        <label class="span-2"><span>允许的 Area Path</span><input name="tfs_area_path" placeholder="XiNanArea-New\四川省区团队"></label>
-        <label><span>允许的需求类型（一行一个）</span><textarea name="allowed_work_item_types">用户情景</textarea></label><label><span>允许的需求状态（一行一个）</span><textarea name="allowed_states">已评审</textarea></label>
-        <label class="span-2"><span>本机代码仓库绝对路径</span><input name="repository_path" placeholder="C:\workspace\project"></label>
-        <label class="span-2"><span>本机执行器 ID</span><input name="runner_id" value="yangtao-pc" placeholder="yangtao-pc" required></label>
-        <label><span>基础分支</span><input name="base_branch" value="dev"></label><label><span>默认交付方式</span><select name="delivery_mode"><option value="local_package">本地打包交付</option><option value="sichuan_auto_review">四川审核后交付</option><option value="product_manual_review">产品审核后交付</option></select></label>
-        <label class="span-2"><span>构建/校验命令</span><input name="build_command" placeholder="mvn clean test package（四川自动审核模式必填）"></label>
-        <label class="span-2"><span>包产物匹配（一行一个）</span><textarea name="package_patterns" placeholder="target/*.jar&#10;dist/**/*"></textarea></label>
-        <label><span>SQL 匹配</span><textarea name="sql_patterns">**/*.sql</textarea></label><label><span>配置文件匹配</span><textarea name="config_patterns">**/*.yml&#10;**/*.yaml&#10;**/*.properties&#10;**/*.xml</textarea></label>
-        <label class="span-2"><span>受保护路径（一行一个）</span><textarea name="protected_patterns">**/common/**&#10;**/shared/**&#10;**/production/**</textarea></label>
-        <label class="span-2"><span>邮件抄送（逗号分隔）</span><input name="notification_cc"></label>
-        <label class="toggle-line"><input type="checkbox" name="enabled" checked><span>启用项目</span></label><label class="toggle-line"><input type="checkbox" name="simulation_mode" checked><span>演示模式</span></label>
-        <label class="toggle-line span-2"><input type="checkbox" name="allow_requirement_override"><span>允许管理员按需求覆盖默认交付方式</span></label>
-        <p class="form-error span-2" id="project-error" hidden></p>
-        <div class="modal-actions span-2"><button type="button" class="btn btn-ghost" data-close>取消</button><button type="submit" class="btn btn-primary">保存项目策略</button></div>
-      </form>
-    </section>
-  </div>
   <div class="modal-backdrop" id="user-modal" hidden>
-    <section class="modal"><button class="modal-close" data-close>×</button><p class="eyebrow">ACCESS REGISTRY</p><h2>新建内部账号</h2>
+    <section class="modal"><button class="modal-close" data-close>×</button><p class="eyebrow">ACCESS REGISTRY</p><h2 id="user-modal-title">新建内部账号</h2>
       <form id="user-form" class="form-grid">
+        <input type="hidden" name="id">
         <label><span>登录账号</span><input name="username" required placeholder="zhangsan"></label><label><span>姓名</span><input name="display_name" required placeholder="张三"></label>
-        <label class="span-2"><span>交付邮箱</span><input name="email" type="email" required placeholder="zhangsan@example.com"></label>
-        <label><span>初始密码</span><input name="password" type="password" minlength="8" required></label><label><span>角色</span><select name="role"><option value="pm">项目经理</option><option value="admin">管理员</option></select></label>
+        <div class="span-2 field-block"><div class="field-label">通知邮箱 <small>第一个邮箱作为主邮箱</small></div><div class="email-editor" id="user-email-editor"></div><button type="button" class="add-email" id="add-user-email">＋ 添加邮箱</button></div>
+        <label><span id="password-label">初始密码</span><input name="password" type="password" minlength="8" autocomplete="new-password"></label><label><span>角色</span><select name="role"><option value="pm">项目经理</option><option value="admin">管理员</option></select></label>
+        <label class="toggle-line span-2"><input type="checkbox" name="active" checked><span>启用账号</span></label>
         <p class="form-error span-2" id="user-error" hidden></p>
-        <div class="modal-actions span-2"><button type="button" class="btn btn-ghost" data-close>取消</button><button type="submit" class="btn btn-primary">创建账号</button></div>
+        <div class="modal-actions span-2"><button type="button" class="btn btn-ghost" data-close>取消</button><button type="submit" class="btn btn-primary" id="save-user">创建账号</button></div>
       </form>
     </section>
   </div>
