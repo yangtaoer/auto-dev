@@ -20,7 +20,7 @@ if command -v flock >/dev/null 2>&1; then
 fi
 
 echo "[1/6] 获取 GitHub 最新版本信息"
-curl --fail --location --retry 3 \
+curl --fail --location --retry 3 --connect-timeout 10 --max-time 120 \
   --header "Cache-Control: no-cache" \
   "$RELEASE_BASE/SHA256SUMS.txt" \
   --output "$TEMP_DIR/SHA256SUMS.txt"
@@ -37,7 +37,7 @@ if [ "${AUTODEV_FORCE_UPDATE:-0}" != "1" ] \
 fi
 
 echo "[2/6] 下载 GitHub 最新部署包"
-curl --fail --location --retry 3 \
+curl --fail --location --retry 3 --connect-timeout 10 --max-time 120 \
   --header "Cache-Control: no-cache" \
   "$RELEASE_BASE/autodev-hybrid-latest.zip" \
   --output "$TEMP_DIR/autodev-hybrid-latest.zip"
