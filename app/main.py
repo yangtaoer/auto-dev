@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="全自助需求研发交付",
-    version="0.3.5",
+    version="0.3.6",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -253,9 +253,8 @@ def request_recipients(detail: dict[str, Any]) -> list[str]:
 def send_cloud_email(request_id: str, *, action_required: bool) -> None:
     detail = runner_request(request_id)
     recipients = request_recipients(detail)
-    subject_prefix = "[待审核]" if action_required else "[已交付]"
-    subject = f"{subject_prefix} #{detail['work_item_id']} {detail.get('title', '')}"
     mailer = Mailer()
+    subject = mailer.delivery_subject(detail, action_required=action_required)
     html_body = mailer.delivery_html(detail, action_required=action_required)
     if not mailer.configured():
         artifacts = ArtifactService()

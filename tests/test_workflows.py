@@ -24,6 +24,7 @@ from app.main import app  # noqa: E402
 from app.orchestrator import worker  # noqa: E402
 from app.project_catalog import load_project_presets, resolve_project_for_work_item  # noqa: E402
 from app.services.codex_runner import CodexRunner  # noqa: E402
+from app.services.delivery import Mailer  # noqa: E402
 from app.store import RemoteStore  # noqa: E402
 
 
@@ -81,6 +82,50 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue({"package", "sql", "config"}.issubset(kinds))
         self.assertNotIn("report", kinds)
         self.assertTrue(any(event["event_type"] == "delivery.policy_enforced" for event in detail["events"]))
+
+    def test_delivery_email_is_branded_and_uses_china_standard_time(self) -> None:
+        detail = {
+            "id": "mail-preview-request",
+            "work_item_id": 910014,
+            "title": "优化交付邮件",
+            "requirement_summary": "统一邮件样式与时间格式。",
+            "project_name": "邮件测试项目",
+            "requester_name": "杨涛",
+            "delivery_mode": "local_package",
+            "result_summary": "已完成品牌模板与北京时间转换。",
+            "created_at": "2026-08-06T03:50:00+00:00",
+            "started_at": "2026-08-06T03:51:21+00:00",
+            "completed_at": "2026-08-06T03:56:45+00:00",
+            "branch_name": "feature/910014-yangtao",
+            "commit_hash": "abcdef1234567890",
+            "pr_url": None,
+            "artifacts": [
+                {
+                    "id": 1,
+                    "kind": "package",
+                    "name": "autodev-mail-demo.zip",
+                    "external_url": "https://auto-dev-oss.oss-cn-chengdu.aliyuncs.com/demo.zip",
+                }
+            ],
+        }
+        mailer = Mailer()
+        rendered = mailer.delivery_html(detail)
+        self.assertEqual(mailer.sender_address().display_name, "AutoDev 全自助研发交付")
+        self.assertEqual(
+            mailer.delivery_subject(detail),
+            "【AutoDev · 已交付】TFS #910014｜优化交付邮件",
+        )
+        self.assertIn("AUTODEV · DELIVERY SIGNAL", rendered)
+        self.assertIn("2026-08-06 11:50:00（UTC+8）", rendered)
+        self.assertIn("2026-08-06 11:56:45（UTC+8）", rendered)
+        self.assertIn("5 分 24 秒", rendered)
+        self.assertIn("下载产物", rendered)
+        self.assertIn("提交人", rendered)
+
+        waiting = mailer.delivery_html({**detail, "completed_at": None, "pr_url": "https://tfs.test/pr/14"}, action_required=True)
+        self.assertIn("需要项目经理协同处理", waiting)
+        self.assertIn("打开 PR 并安排合并", waiting)
+        self.assertIn("进行中", waiting)
 
     def test_two_requests_can_be_submitted_concurrently_and_both_delivered(self) -> None:
         project_id = self.create_project("test-concurrent", "local_package")
@@ -300,7 +345,7 @@ class WorkflowTests(unittest.TestCase):
             json={
                 "runner_id": "quota-test-runner",
                 "hostname": "quota-pc",
-                "version": "0.3.5",
+                "version": "0.3.6",
                 "state": "idle",
                 "codex_usage": {
                     "available": True,

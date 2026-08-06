@@ -42,6 +42,7 @@ SMTP_PORT=465
 SMTP_PROTOCOL=smtps
 SMTP_USERNAME=yangtaoere@163.com
 SMTP_FROM=yangtaoere@163.com
+SMTP_FROM_NAME=AutoDev 全自助研发交付
 SMTP_STARTTLS=0
 ```
 

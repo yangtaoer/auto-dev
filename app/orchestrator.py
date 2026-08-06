@@ -420,8 +420,7 @@ class Worker:
         recipients = list(detail.get("notification_emails") or [detail["requester_email"]])
         recipients.extend(email.strip() for email in project.get("notification_cc", "").split(",") if email.strip())
         recipients = list(dict.fromkeys(email.strip() for email in recipients if email and email.strip()))
-        subject_prefix = "[待审核]" if action_required else "[已交付]"
-        subject = f"{subject_prefix} #{detail['work_item_id']} {detail.get('title','')}"
+        subject = self.mailer.delivery_subject(detail, action_required=action_required)
         html_body = self.mailer.delivery_html(detail, action_required=action_required)
         if not self.mailer.configured():
             path = self.artifacts.request_dir(request_id) / ("review-email-preview.html" if action_required else "delivery-email-preview.html")

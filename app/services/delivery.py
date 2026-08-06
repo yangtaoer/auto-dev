@@ -7,8 +7,10 @@ import shutil
 import smtplib
 import ssl
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
+from email.headerregistry import Address
 from email.message import EmailMessage
+from email.utils import format_datetime as format_rfc_datetime, make_msgid
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -175,6 +177,14 @@ class Mailer:
     def configured(self) -> bool:
         return bool(settings.smtp_host and settings.smtp_from)
 
+    def sender_address(self) -> Address:
+        return Address(display_name=settings.smtp_from_name or "AutoDev 全自助研发交付", addr_spec=settings.smtp_from)
+
+    def delivery_subject(self, detail: dict, *, action_required: bool = False) -> str:
+        status = "待审核" if action_required else "已交付"
+        title = str(detail.get("title") or "研发任务").strip()[:80]
+        return f"【AutoDev · {status}】TFS #{detail['work_item_id']}｜{title}"
+
     def send(self, *, to: list[str], subject: str, html_body: str, attachments: list[Path] | None = None) -> None:
         recipients = [email.strip() for email in to if email and email.strip()]
         if not recipients:
@@ -182,10 +192,15 @@ class Mailer:
         if not self.configured():
             raise RuntimeError("未配置 SMTP_HOST/SMTP_FROM")
         message = EmailMessage()
-        message["From"] = settings.smtp_from
+        message["From"] = self.sender_address()
         message["To"] = ", ".join(recipients)
         message["Subject"] = subject
-        message.set_content("请使用支持 HTML 的邮件客户端查看交付说明。")
+        message["Date"] = format_rfc_datetime(datetime.now(timezone(timedelta(hours=8))))
+        message["Message-ID"] = make_msgid(domain=settings.smtp_from.rsplit("@", 1)[-1])
+        message["Auto-Submitted"] = "auto-generated"
+        message.set_content(
+            "AutoDev 全自助研发交付通知。请使用支持 HTML 的邮件客户端查看需求说明、代码信息和交付产物。"
+        )
         message.add_alternative(html_body, subtype="html")
         for path in attachments or []:
             if not path.exists() or path.stat().st_size > 10 * 1024 * 1024:
@@ -214,34 +229,150 @@ class Mailer:
         mode = DELIVERY_MODE_LABELS[DeliveryMode(detail["delivery_mode"])]
         started_at = detail.get("started_at") or detail["created_at"]
         end_at = detail.get("completed_at") or datetime.now(UTC).isoformat()
+
+        def parse_datetime(value: str | None) -> datetime | None:
+            if not value:
+                return None
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            return parsed
+
+        def format_datetime(value: str | None, fallback: str = "—") -> str:
+            try:
+                parsed = parse_datetime(value)
+            except (TypeError, ValueError):
+                parsed = None
+            if not parsed:
+                return fallback
+            china_time = parsed.astimezone(timezone(timedelta(hours=8)))
+            return china_time.strftime("%Y-%m-%d %H:%M:%S") + "（UTC+8）"
+
+        def safe_text(value: object, fallback: str = "—", limit: int = 4000) -> str:
+            text = str(value or fallback)[:limit]
+            return html.escape(text).replace("\n", "<br>")
+
         try:
-            duration_seconds = max(0, int((datetime.fromisoformat(end_at) - datetime.fromisoformat(started_at)).total_seconds()))
-            duration_text = f"{duration_seconds // 3600} 小时 {(duration_seconds % 3600) // 60} 分 {duration_seconds % 60} 秒"
+            duration_seconds = max(0, int((parse_datetime(end_at) - parse_datetime(started_at)).total_seconds()))
+            duration_parts = []
+            days, remainder = divmod(duration_seconds, 86400)
+            hours, remainder = divmod(remainder, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            if days:
+                duration_parts.append(f"{days} 天")
+            if hours:
+                duration_parts.append(f"{hours} 小时")
+            if minutes:
+                duration_parts.append(f"{minutes} 分")
+            if seconds or not duration_parts:
+                duration_parts.append(f"{seconds} 秒")
+            duration_text = " ".join(duration_parts)
         except (ValueError, TypeError):
             duration_text = "—"
+
+        kind_labels = {
+            "package": "安装包",
+            "package_note": "构建说明",
+            "sql": "SQL 脚本",
+            "config": "配置文件",
+            "merge_screenshot": "合并截图",
+            "merge_evidence": "合并凭证",
+        }
         artifact_lines = []
         for item in detail.get("artifacts", []):
             artifact_url = item.get("external_url") or f"{settings.public_base_url}/api/artifacts/{item['id']}"
+            kind = kind_labels.get(item.get("kind"), item.get("kind") or "交付文件")
             artifact_lines.append(
-                f"<li><a href='{html.escape(artifact_url, quote=True)}'>{html.escape(item['name'])}</a> · {html.escape(item['kind'])}</li>"
+                f"""<tr><td style="padding:0 0 10px 0">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d8e5dd;background:#f8fbf9">
+                  <tr>
+                    <td width="48" align="center" style="padding:15px 8px;color:#087a49;font:700 18px Consolas,'Courier New',monospace">↘</td>
+                    <td style="padding:13px 8px">
+                      <div style="font-size:14px;font-weight:700;color:#123428;word-break:break-all">{safe_text(item.get('name'))}</div>
+                      <div style="margin-top:3px;color:#6c8479;font-size:11px;letter-spacing:.04em">{safe_text(kind)}</div>
+                    </td>
+                    <td width="100" align="right" style="padding:13px 16px 13px 8px">
+                      <a href="{html.escape(artifact_url, quote=True)}" style="display:inline-block;padding:8px 12px;background:#0d2b20;color:#79f2ad;text-decoration:none;font-size:12px;font-weight:700;white-space:nowrap">下载产物</a>
+                    </td>
+                  </tr>
+                </table></td></tr>"""
             )
-        artifacts = "".join(artifact_lines) or "<li>暂无附件</li>"
+        artifacts = "".join(artifact_lines) or """<tr><td style="padding:16px;border:1px dashed #c7d8ce;color:#71877c;text-align:center;font-size:13px">当前阶段暂无可下载产物</td></tr>"""
         expiry_note = (
-            f"<p style='color:#b26b00'><b>下载有效期：</b>OSS 交付链接自生成起 {settings.oss_retention_days} 天内有效，请及时下载归档。</p>"
+            f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;background:#fff8e5;border-left:4px solid #e8a318">
+              <tr><td style="padding:12px 14px;color:#7a5712;font-size:12px;line-height:1.65"><b>下载有效期</b>　OSS 链接自生成起 {settings.oss_retention_days} 天内有效，请及时下载并归档。</td></tr>
+            </table>"""
             if any(item.get("external_url") and "aliyuncs.com" in item["external_url"] for item in detail.get("artifacts", []))
             else ""
         )
-        action = "<p style='padding:14px;background:#fff5d6'><b>需要处理：</b>请安排有权限的同事审核并合并下方 PR，系统会持续检测合并状态。</p>" if action_required else ""
-        pr = f"<p><b>PR：</b><a href='{html.escape(detail.get('pr_url') or '')}'>{html.escape(detail.get('pr_url') or '无')}</a></p>"
-        return f"""<div style='font-family:Microsoft YaHei,sans-serif;color:#163026;line-height:1.7;max-width:760px'>
-        <h2>需求研发交付 · #{detail['work_item_id']}</h2>{action}
-        <p><b>需求：</b>{html.escape(detail.get('title') or '')}</p>
-        <p><b>需求说明：</b>{html.escape((detail.get('requirement_summary') or '—')[:2000])}</p>
-        <p><b>项目：</b>{html.escape(detail['project_name'])}</p><p><b>交付方式：</b>{mode}</p>{pr}
-        <p><b>分支：</b>{html.escape(detail.get('branch_name') or '—')}</p>
-        <p><b>提交：</b>{html.escape(detail.get('commit_hash') or '—')}</p>
-        <p><b>开发说明：</b>{html.escape(detail.get('result_summary') or '—')}</p>
-        <p><b>发起时间：</b>{html.escape(detail['created_at'])}</p><p><b>完成时间：</b>{html.escape(detail.get('completed_at') or '进行中')}</p>
-        <p><b>{'当前耗时' if action_required else '开发耗时'}：</b>{duration_text}</p>
-        <h3>交付产物</h3>{expiry_note}<ul>{artifacts}</ul>
-        <p style='color:#71847b'>此邮件由全自助研发控制台自动发送，所有操作均保留审计记录。</p></div>"""
+        pr_url = str(detail.get("pr_url") or "")
+        pr_value = (
+            f"<a href=\"{html.escape(pr_url, quote=True)}\" style=\"color:#087a49;text-decoration:underline;word-break:break-all\">{html.escape(pr_url)}</a>"
+            if pr_url else "无需 PR"
+        )
+        action = ""
+        if action_required:
+            action_button = (
+                f"<a href=\"{html.escape(pr_url, quote=True)}\" style=\"display:inline-block;margin-top:10px;padding:9px 14px;background:#e8a318;color:#13251d;text-decoration:none;font-weight:700;font-size:12px\">打开 PR 并安排合并 →</a>"
+                if pr_url else ""
+            )
+            action = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 22px;background:#fff7df;border-left:4px solid #e8a318">
+              <tr><td style="padding:15px 17px;color:#694b0d;font-size:13px;line-height:1.65"><b style="display:block;color:#392a0c;font-size:14px">需要项目经理协同处理</b>请联系有权限的同事审核并合并 PR；AutoDev 会持续检测合并状态，完成后自动发送最终交付邮件。{action_button}</td></tr>
+            </table>"""
+
+        status_label = "等待代码合并" if action_required else "研发交付完成"
+        status_color = "#ffc857" if action_required else "#79f2ad"
+        completed_text = format_datetime(detail.get("completed_at"), "进行中")
+        console_url = html.escape(settings.public_base_url, quote=True)
+        return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{safe_text(status_label)}</title></head>
+<body style="margin:0;padding:0;background:#edf3ef;color:#163026;font-family:'Microsoft YaHei UI','Microsoft YaHei',sans-serif">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0">TFS #{detail['work_item_id']} · {safe_text(detail.get('title'))} · {status_label}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#edf3ef"><tr><td align="center" style="padding:30px 12px">
+  <table role="presentation" width="680" cellpadding="0" cellspacing="0" style="width:100%;max-width:680px;background:#ffffff;border:1px solid #d4e1d9;box-shadow:0 10px 35px rgba(18,52,40,.08)">
+    <tr><td style="padding:27px 30px;background:#0c1a14;border-bottom:4px solid {status_color}">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+        <td width="52" valign="top"><div style="width:38px;height:38px;line-height:38px;text-align:center;background:#79f2ad;color:#07110d;font:700 17px Consolas,'Courier New',monospace">A/</div></td>
+        <td valign="top"><div style="color:#79f2ad;font:700 10px Consolas,'Courier New',monospace;letter-spacing:.16em">AUTODEV · DELIVERY SIGNAL</div><div style="margin-top:7px;color:#f0f7f2;font-size:22px;font-weight:700">{status_label}</div></td>
+        <td width="110" align="right" valign="top"><span style="display:inline-block;padding:6px 9px;border:1px solid {status_color};color:{status_color};font:700 10px Consolas,'Courier New',monospace">TFS #{detail['work_item_id']}</span></td>
+      </tr></table>
+    </td></tr>
+    <tr><td style="padding:30px">
+      <div style="color:#698176;font:700 10px Consolas,'Courier New',monospace;letter-spacing:.13em">需求 / REQUIREMENT</div>
+      <h1 style="margin:8px 0 22px;color:#102d22;font-size:24px;line-height:1.45">{safe_text(detail.get('title'))}</h1>
+      {action}
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:22px;border:1px solid #dce7e0;background:#f7faf8">
+        <tr>
+          <td width="50%" style="padding:14px 16px;border-right:1px solid #dce7e0;border-bottom:1px solid #dce7e0"><div style="color:#72887d;font-size:10px">项目</div><div style="margin-top:4px;color:#17392c;font-size:13px;font-weight:700">{safe_text(detail.get('project_name'))}</div></td>
+          <td width="50%" style="padding:14px 16px;border-bottom:1px solid #dce7e0"><div style="color:#72887d;font-size:10px">交付方式</div><div style="margin-top:4px;color:#17392c;font-size:13px;font-weight:700">{safe_text(mode)}</div></td>
+        </tr><tr>
+          <td width="50%" style="padding:14px 16px;border-right:1px solid #dce7e0"><div style="color:#72887d;font-size:10px">提交人</div><div style="margin-top:4px;color:#17392c;font-size:13px;font-weight:700">{safe_text(detail.get('requester_name'))}</div></td>
+          <td width="50%" style="padding:14px 16px"><div style="color:#72887d;font-size:10px">{'当前耗时' if action_required else '开发耗时'}</div><div style="margin-top:4px;color:#087a49;font-size:13px;font-weight:700">{safe_text(duration_text)}</div></td>
+        </tr>
+      </table>
+
+      <div style="margin-bottom:20px"><div style="margin-bottom:7px;color:#698176;font:700 10px Consolas,'Courier New',monospace;letter-spacing:.1em">需求说明 / BRIEF</div><div style="padding:15px 17px;background:#f7faf8;border-left:3px solid #6ea98a;color:#29493d;font-size:13px;line-height:1.8">{safe_text(detail.get('requirement_summary'), limit=2000)}</div></div>
+      <div style="margin-bottom:22px"><div style="margin-bottom:7px;color:#698176;font:700 10px Consolas,'Courier New',monospace;letter-spacing:.1em">开发说明 / DEVELOPMENT NOTES</div><div style="padding:15px 17px;background:#f7faf8;border-left:3px solid #79f2ad;color:#29493d;font-size:13px;line-height:1.8">{safe_text(detail.get('result_summary'))}</div></div>
+
+      <div style="margin-bottom:7px;color:#698176;font:700 10px Consolas,'Courier New',monospace;letter-spacing:.1em">代码信息 / CODE DELIVERY</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:22px;border:1px solid #dce7e0">
+        <tr><td width="74" style="padding:11px 13px;background:#f2f7f4;color:#6c8277;font-size:11px">分支</td><td style="padding:11px 13px;color:#17392c;font:12px Consolas,'Courier New',monospace;word-break:break-all">{safe_text(detail.get('branch_name'))}</td></tr>
+        <tr><td width="74" style="padding:11px 13px;background:#f2f7f4;border-top:1px solid #dce7e0;color:#6c8277;font-size:11px">提交</td><td style="padding:11px 13px;border-top:1px solid #dce7e0;color:#17392c;font:12px Consolas,'Courier New',monospace;word-break:break-all">{safe_text(detail.get('commit_hash'))}</td></tr>
+        <tr><td width="74" style="padding:11px 13px;background:#f2f7f4;border-top:1px solid #dce7e0;color:#6c8277;font-size:11px">PR</td><td style="padding:11px 13px;border-top:1px solid #dce7e0;color:#17392c;font-size:12px;word-break:break-all">{pr_value}</td></tr>
+      </table>
+
+      <div style="margin-bottom:7px;color:#698176;font:700 10px Consolas,'Courier New',monospace;letter-spacing:.1em">时间记录 / TIMELINE</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:25px;background:#0f211a;color:#dce9e1">
+        <tr><td style="padding:13px 16px;border-bottom:1px solid #294338"><span style="display:inline-block;width:82px;color:#789589;font-size:10px">提交时间</span><b style="font-size:12px">{format_datetime(detail.get('created_at'))}</b></td></tr>
+        <tr><td style="padding:13px 16px;border-bottom:1px solid #294338"><span style="display:inline-block;width:82px;color:#789589;font-size:10px">开始时间</span><b style="font-size:12px">{format_datetime(started_at)}</b></td></tr>
+        <tr><td style="padding:13px 16px"><span style="display:inline-block;width:82px;color:#789589;font-size:10px">完成时间</span><b style="font-size:12px;color:{status_color}">{completed_text}</b></td></tr>
+      </table>
+
+      <div style="margin-bottom:8px;color:#698176;font:700 10px Consolas,'Courier New',monospace;letter-spacing:.1em">交付产物 / DELIVERABLES</div>
+      {expiry_note}<table role="presentation" width="100%" cellpadding="0" cellspacing="0">{artifacts}</table>
+    </td></tr>
+    <tr><td style="padding:19px 30px;background:#f3f7f4;border-top:1px solid #d9e5de;color:#70857a;font-size:11px;line-height:1.7">
+      此邮件由 <b style="color:#315847">AutoDev 全自助研发交付</b> 自动发送，研发与交付操作均保留审计记录。<br>
+      <a href="{console_url}" style="color:#087a49;text-decoration:none">打开研发控制台 →</a>
+    </td></tr>
+  </table>
+</td></tr></table></body></html>"""
