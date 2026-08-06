@@ -30,14 +30,16 @@
     <main class="main-stage">
       <header class="topbar">
         <div><p class="eyebrow" id="view-code">控制室 / CONTROL ROOM / 01</p><h1 id="view-title">任务总览</h1></div>
-        <div class="top-actions"><span class="clock" id="clock"></span><button class="btn btn-primary" id="open-request">＋ 发起自动研发</button></div>
+        <div class="top-actions"><span class="version-chip">SYSTEM v{{ app_version }}</span><span class="clock" id="clock"></span><button class="btn btn-primary" id="open-request">＋ 发起自动研发</button></div>
       </header>
 
       <section class="view active" id="view-dashboard">
-        {% if user.role == 'admin' %}<div class="codex-quota" id="codex-quota"><div><p class="eyebrow">套餐容量 / CODEX CAPACITY</p><h2>套餐用量正在同步</h2></div><span class="muted">来自本机 Codex 登录态</span></div>{% endif %}
-        <div class="metrics" id="metrics"></div>
+        <div class="control-strip {{ 'admin-strip' if user.role == 'admin' else 'pm-strip' }}">
+          {% if user.role == 'admin' %}<div class="codex-quota" id="codex-quota"><div><p class="eyebrow">套餐容量 / CODEX CAPACITY</p><h2>套餐用量正在同步</h2></div><span class="muted">来自本机 Codex 登录态</span></div>{% endif %}
+          <div class="metrics" id="metrics"></div>
+        </div>
         <section class="active-pipeline" id="active-pipeline" hidden>
-          <div class="section-heading"><div><p class="eyebrow">运行流水线 / LIVE PIPELINE</p><h2>正在运行</h2></div><span class="muted">状态每 5 秒刷新</span></div>
+          <div class="section-heading live-heading"><div><p class="eyebrow">运行流水线 / LIVE PIPELINE</p><h2><i class="live-orbit" aria-hidden="true"></i>正在运行</h2></div><div class="capacity-status" id="capacity-status">并发槽位 0 / 5</div></div>
           <div class="run-grid" id="active-runs"></div>
         </section>
         <div class="section-heading compact"><div><p class="eyebrow">最近动态 / RECENT SIGNALS</p><h2>最近任务</h2></div><button class="text-button" data-view-link="requests">查看全部 →</button></div>
@@ -65,7 +67,7 @@
   </div>
 
   <div class="modal-backdrop" id="request-modal" hidden>
-    <section class="modal request-modal"><button class="modal-close" data-close>×</button><p class="eyebrow">新研发任务 / NEW DEVELOPMENT RUN</p><h2>发起自动研发</h2><p class="muted">输入 TFS 用户情景编号，执行器会自动识别项目和交付策略。</p>
+    <section class="modal request-modal"><button class="modal-close" data-close>×</button><p class="eyebrow">新研发任务 / NEW DEVELOPMENT RUN</p><h2>发起自动研发</h2><p class="muted">输入 TFS 用户情景编号，执行器会自动识别项目和交付策略。</p><p class="queue-note"><i></i>最多同时运行 5 个任务，超出后自动排队，不影响继续提交。</p>
       <form id="request-form" class="form-grid">
         <label class="span-2"><span>TFS 用户情景编号</span><input type="number" name="work_item_id" min="1" placeholder="例如：1551572" required></label>
         <div class="span-2 field-block"><div class="field-label">通知邮箱 <small>可多选，默认全部选中</small></div><div class="mail-choice-grid" id="request-email-options"></div></div>

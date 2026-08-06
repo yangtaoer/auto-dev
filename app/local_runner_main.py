@@ -84,9 +84,16 @@ def main() -> None:
             except Exception as exc:
                 logger.warning("项目目录同步失败，将继续保持心跳并稍后重试：%s", exc)
             try:
-                current = worker.current_request_id
+                current_ids = worker.current_request_ids
+                current = current_ids[0] if current_ids else None
                 refresh_codex_usage()
-                store.heartbeat("working" if current else "idle", current, get_codex_usage())
+                store.heartbeat(
+                    "working" if current_ids else "idle",
+                    current,
+                    get_codex_usage(),
+                    current_request_ids=current_ids,
+                    max_concurrency=worker.max_concurrency,
+                )
             except Exception as exc:
                 logger.warning("心跳上报失败：%s", exc)
             heartbeat_stop.wait(20)
@@ -113,7 +120,12 @@ def main() -> None:
     try:
         refresh_codex_usage(force=True)
         monitor.start()
-        store.heartbeat("starting", codex_usage=get_codex_usage())
+        store.heartbeat(
+            "starting",
+            codex_usage=get_codex_usage(),
+            current_request_ids=[],
+            max_concurrency=worker.max_concurrency,
+        )
         try:
             sync_project_catalog()
         except Exception as exc:
@@ -131,12 +143,16 @@ def main() -> None:
                 settings.oss_cleanup_interval_hours,
             )
         worker.start()
-        if worker.thread:
-            worker.thread.join()
+        worker.join()
     finally:
         heartbeat_stop.set()
         try:
-            store.heartbeat("stopping", codex_usage=get_codex_usage())
+            store.heartbeat(
+                "stopping",
+                codex_usage=get_codex_usage(),
+                current_request_ids=[],
+                max_concurrency=worker.max_concurrency,
+            )
         except Exception:
             pass
         monitor.stop()

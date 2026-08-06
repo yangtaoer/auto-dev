@@ -3,13 +3,14 @@ from __future__ import annotations
 import logging
 import socket
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import httpx
 
 from .config import settings
-from .db import add_artifact, add_event, request_detail, row, update_request, update_step, utc_now
+from .db import add_artifact, add_event, request_detail, row, transaction, update_request, update_step, utc_now
 from .services.oss_storage import OssArtifactStorage, cleanup_local_deliveries
 
 
@@ -20,17 +21,37 @@ class LocalStore:
     remote = False
 
     def next_queued(self) -> str | None:
-        item = row("SELECT id FROM delivery_requests WHERE status='queued' ORDER BY created_at LIMIT 1")
-        return item["id"] if item else None
+        with transaction() as conn:
+            item = conn.execute(
+                "SELECT id FROM delivery_requests WHERE status='queued' ORDER BY created_at LIMIT 1"
+            ).fetchone()
+            if not item:
+                return None
+            now = utc_now()
+            changed = conn.execute(
+                """UPDATE delivery_requests SET status='validating',started_at=COALESCE(started_at,?),updated_at=?
+                   WHERE id=? AND status='queued'""",
+                (now, now, item["id"]),
+            ).rowcount
+            return item["id"] if changed else None
 
     def next_waiting(self) -> str | None:
-        item = row(
-            """SELECT id FROM delivery_requests
-               WHERE status='waiting_merge' AND (next_poll_at IS NULL OR next_poll_at<=?)
-               ORDER BY updated_at LIMIT 1""",
-            (utc_now(),),
-        )
-        return item["id"] if item else None
+        now = utc_now()
+        lease_until = (datetime.now(UTC) + timedelta(seconds=max(60, settings.poll_seconds * 3))).isoformat()
+        with transaction() as conn:
+            item = conn.execute(
+                """SELECT id FROM delivery_requests
+                   WHERE status='waiting_merge' AND (next_poll_at IS NULL OR next_poll_at<=?)
+                   ORDER BY updated_at LIMIT 1""",
+                (now,),
+            ).fetchone()
+            if not item:
+                return None
+            conn.execute(
+                "UPDATE delivery_requests SET next_poll_at=?,updated_at=? WHERE id=? AND status='waiting_merge'",
+                (lease_until, now, item["id"]),
+            )
+            return item["id"]
 
     @staticmethod
     def detail(request_id: str) -> dict[str, Any] | None:
@@ -105,6 +126,8 @@ class RemoteStore:
         state: str = "idle",
         current_request_id: str | None = None,
         codex_usage: dict[str, Any] | None = None,
+        current_request_ids: list[str] | None = None,
+        max_concurrency: int | None = None,
     ) -> None:
         self._json(
             self._request(
@@ -116,6 +139,8 @@ class RemoteStore:
                     "version": settings.runner_version,
                     "state": state,
                     "current_request_id": current_request_id,
+                    "current_request_ids": current_request_ids or ([current_request_id] if current_request_id else []),
+                    "max_concurrency": max_concurrency or settings.runner_max_concurrency,
                     "codex_usage": codex_usage or {},
                 },
             )

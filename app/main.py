@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="全自助需求研发交付",
-    version="0.3.8",
+    version="0.3.9",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -154,6 +154,8 @@ class RunnerHeartbeat(RunnerIdentity):
     version: str = Field(default="", max_length=80)
     state: str = Field(default="idle", max_length=40)
     current_request_id: str | None = None
+    current_request_ids: list[str] = Field(default_factory=list, max_length=5)
+    max_concurrency: int = Field(default=1, ge=1, le=5)
     codex_usage: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -304,7 +306,11 @@ def home(request: Request):
     user = get_session_user(request.cookies.get("autodev_session"))
     if not user:
         return RedirectResponse("/login", status_code=303)
-    return templates.TemplateResponse(request, "index.html", {"user": public_user(user)})
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {"user": public_user(user), "app_version": settings.runner_version},
+    )
 
 
 @app.post("/api/auth/login")
@@ -341,20 +347,86 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     active_scope = active_sql if not scope else f"requester_id=? AND {active_sql}"
     activity_select = """(SELECT e.message FROM delivery_events e
         WHERE e.request_id=r.id ORDER BY e.id DESC LIMIT 1) current_activity"""
-    active = rows(
+    active_requests = rows(
         f"""SELECT r.*,p.name project_name,u.display_name requester_name,{activity_select}
             FROM delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id
             WHERE {active_scope} ORDER BY r.updated_at DESC LIMIT 12""",
         params,
     )
     recent_scope = "" if not scope else "WHERE r.requester_id=?"
-    recent = rows(
+    recent_requests = rows(
         f"""SELECT r.*,p.name project_name,u.display_name requester_name,{activity_select}
             FROM delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id
             {recent_scope} ORDER BY r.created_at DESC LIMIT 40""",
         params,
     )
-    request_ids = [item["id"] for item in (*active, *recent)]
+    intake_scope = "" if user["role"] == "admin" else "AND i.requester_id=?"
+    pending_intakes = rows(
+        f"""SELECT i.*,u.display_name requester_name
+            FROM request_intakes i JOIN users u ON u.id=i.requester_id
+            WHERE i.status IN ('queued','claimed') {intake_scope}
+            ORDER BY i.created_at DESC LIMIT 12""",
+        params,
+    )
+    failed_intakes = rows(
+        f"""SELECT i.*,u.display_name requester_name
+            FROM request_intakes i JOIN users u ON u.id=i.requester_id
+            WHERE i.status='failed' {intake_scope}
+            ORDER BY i.created_at DESC LIMIT 40""",
+        params,
+    )
+    intake_items: list[dict[str, Any]] = []
+    for intake in pending_intakes:
+        intake_items.append(
+            {
+                "id": intake["id"],
+                "intake_id": intake["id"],
+                "record_type": "intake",
+                "work_item_id": intake["work_item_id"],
+                "requester_id": intake["requester_id"],
+                "requester_name": intake["requester_name"],
+                "title": "正在读取 TFS 需求并识别项目…",
+                "project_name": "项目识别中",
+                "delivery_mode": "routing",
+                "status": "routing",
+                "current_activity": "执行器正在识别所属项目与交付策略" if intake["status"] == "claimed" else "任务已提交，等待执行器扫描",
+                "created_at": intake["created_at"],
+                "updated_at": intake["updated_at"],
+                "completed_at": None,
+                "duration_seconds": None,
+                "artifacts": [],
+            }
+        )
+    failed_intake_items = [
+        {
+            "id": intake["id"],
+            "intake_id": intake["id"],
+            "record_type": "intake",
+            "work_item_id": intake["work_item_id"],
+            "requester_id": intake["requester_id"],
+            "requester_name": intake["requester_name"],
+            "title": "未能识别需求所属项目",
+            "project_name": "项目识别失败",
+            "delivery_mode": "routing",
+            "status": "failed",
+            "current_activity": intake.get("error_message") or "项目识别失败，请查看详情",
+            "created_at": intake["created_at"],
+            "updated_at": intake["updated_at"],
+            "completed_at": intake["updated_at"],
+            "duration_seconds": None,
+            "artifacts": [],
+        }
+        for intake in failed_intakes
+    ]
+    active = sorted(
+        [*active_requests, *intake_items], key=lambda item: item.get("updated_at") or "", reverse=True
+    )[:12]
+    recent = sorted(
+        [*recent_requests, *intake_items, *failed_intake_items],
+        key=lambda item: item.get("created_at") or "",
+        reverse=True,
+    )[:40]
+    request_ids = [item["id"] for item in (*active_requests, *recent_requests)]
     artifact_map: dict[str, list[dict[str, Any]]] = {request_id: [] for request_id in request_ids}
     if request_ids:
         placeholders = ",".join("?" for _ in request_ids)
@@ -368,7 +440,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
             artifact_map.setdefault(artifact["request_id"], []).append(artifact)
     terminal_statuses = {"delivered", "failed", "rejected", "cancelled"}
     current_time = datetime.now(UTC)
-    for item in (*active, *recent):
+    for item in (*active_requests, *recent_requests):
         item["artifacts"] = artifact_map.get(item["id"], [])
         started_value = item.get("started_at") or item.get("created_at")
         ended_value = item.get("completed_at")
@@ -388,7 +460,13 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
         except (TypeError, ValueError):
             age = 999999
         item["online"] = age <= 90 and item["state"] != "stopping"
-        item["codex_usage"] = json_value(item.get("detail"), {}).get("codex_usage", {})
+        runner_detail = json_value(item.get("detail"), {})
+        item["codex_usage"] = runner_detail.get("codex_usage", {})
+        item["current_request_ids"] = runner_detail.get(
+            "current_request_ids", [item["current_request_id"]] if item.get("current_request_id") else []
+        )
+        item["active_count"] = len(item["current_request_ids"])
+        item["max_concurrency"] = min(5, max(1, int(runner_detail.get("max_concurrency") or 1)))
         item.pop("detail", None)
     local_now = datetime.now(timezone(timedelta(hours=8)))
     today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC).isoformat()
@@ -405,12 +483,61 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
             FROM delivery_requests {stats_scope} {today_join} created_at IS NOT NULL""",
         (today_start, *stats_params),
     ) or {}
+    intake_summary = row(
+        f"""SELECT COUNT(*) total,
+            SUM(CASE WHEN i.created_at>=? THEN 1 ELSE 0 END) today_total,
+            SUM(CASE WHEN i.status='claimed' THEN 1 ELSE 0 END) claimed
+            FROM request_intakes i WHERE i.status IN ('queued','claimed') {intake_scope}""",
+        (today_start, *params),
+    ) or {}
+    pending_total = int(intake_summary.get("total") or 0)
+    pending_today = int(intake_summary.get("today_total") or 0)
+    failed_intake_summary = row(
+        f"""SELECT COUNT(*) total,
+            SUM(CASE WHEN i.created_at>=? THEN 1 ELSE 0 END) today_total
+            FROM request_intakes i WHERE i.status='failed' {intake_scope}""",
+        (today_start, *params),
+    ) or {}
+    intake_failed_total = int(failed_intake_summary.get("total") or 0)
+    intake_failed_today = int(failed_intake_summary.get("today_total") or 0)
+    queued_requests = row(
+        "SELECT COUNT(*) count FROM delivery_requests WHERE status='queued'",
+    ) or {"count": 0}
+    busy_statuses = "'validating','developing','submitting','building','capturing','delivering'"
+    busy_requests = row(
+        f"SELECT COUNT(*) count FROM delivery_requests WHERE status IN ({busy_statuses})",
+    ) or {"count": 0}
+    intake_capacity = row(
+        """SELECT
+            SUM(CASE WHEN status='claimed' THEN 1 ELSE 0 END) claimed,
+            SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END) queued
+            FROM request_intakes WHERE status IN ('queued','claimed')"""
+    ) or {}
+    capacity_active = min(
+        settings.runner_max_concurrency,
+        int(busy_requests.get("count") or 0) + int(intake_capacity.get("claimed") or 0),
+    )
+    capacity_queued = int(queued_requests.get("count") or 0) + int(intake_capacity.get("queued") or 0)
+    stats = {key: int(summary.get(key) or 0) for key in ("total", "today_total", "success", "failed", "running", "waiting_merge")}
+    stats["total"] += pending_total + intake_failed_total
+    stats["today_total"] += pending_today + intake_failed_today
+    stats["failed"] += intake_failed_total
+    stats["running"] += pending_total
+    request_counts = {item["status"]: item["count"] for item in counts}
+    request_counts["routing"] = pending_total
+    request_counts["failed"] = int(request_counts.get("failed") or 0) + intake_failed_total
     return {
-        "counts": {item["status"]: item["count"] for item in counts},
+        "counts": request_counts,
         "active": active,
         "recent": recent,
         "runners": runners,
-        "stats": {key: int(summary.get(key) or 0) for key in ("total", "today_total", "success", "failed", "running", "waiting_merge")},
+        "stats": stats,
+        "capacity": {
+            "limit": settings.runner_max_concurrency,
+            "active": capacity_active,
+            "queued": capacity_queued,
+            "available": max(0, settings.runner_max_concurrency - capacity_active),
+        },
     }
 
 
@@ -728,7 +855,14 @@ def runner_heartbeat(payload: RunnerHeartbeat) -> dict:
                 payload.state,
                 payload.current_request_id,
                 now,
-                json.dumps({"codex_usage": payload.codex_usage}, ensure_ascii=False),
+                json.dumps(
+                    {
+                        "codex_usage": payload.codex_usage,
+                        "current_request_ids": list(dict.fromkeys(payload.current_request_ids))[:5],
+                        "max_concurrency": payload.max_concurrency,
+                    },
+                    ensure_ascii=False,
+                ),
             ),
         )
     return {"ok": True, "server_time": now}
@@ -824,11 +958,19 @@ def runner_claim(payload: RunnerIdentity) -> dict:
 
 @app.get("/api/runner/pollable", dependencies=[Depends(runner_auth)])
 def runner_pollable(runner_id: str) -> dict:
-    item = row(
-        """SELECT id FROM delivery_requests WHERE runner_id=? AND status='waiting_merge'
-           AND (next_poll_at IS NULL OR next_poll_at<=?) ORDER BY updated_at LIMIT 1""",
-        (runner_id, utc_now()),
-    )
+    now = utc_now()
+    lease_until = (datetime.now(UTC) + timedelta(seconds=max(60, settings.poll_seconds * 3))).isoformat()
+    with transaction() as conn:
+        item = conn.execute(
+            """SELECT id FROM delivery_requests WHERE runner_id=? AND status='waiting_merge'
+               AND (next_poll_at IS NULL OR next_poll_at<=?) ORDER BY updated_at LIMIT 1""",
+            (runner_id, now),
+        ).fetchone()
+        if item:
+            conn.execute(
+                "UPDATE delivery_requests SET next_poll_at=?,updated_at=? WHERE id=? AND status='waiting_merge'",
+                (lease_until, now, item["id"]),
+            )
     return {"request": request_detail(item["id"]) if item else None}
 
 

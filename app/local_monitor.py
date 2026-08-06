@@ -68,15 +68,18 @@ class LocalMonitorServer:
         parsed = urlparse(handler.path)
         try:
             if parsed.path == "/healthz":
-                current = self.worker.current_request_id
+                current_ids = self.worker.current_request_ids
                 self._send(
                     handler,
                     {
                         "status": "ok",
                         "runner_id": settings.runner_id,
                         "version": settings.runner_version,
-                        "state": "working" if current else "idle",
-                        "current_request_id": current,
+                        "state": "working" if current_ids else "idle",
+                        "current_request_id": current_ids[0] if current_ids else None,
+                        "current_request_ids": current_ids,
+                        "active_count": len(current_ids),
+                        "max_concurrency": self.worker.max_concurrency,
                         "codex_usage": self.usage_provider(),
                         "pid": os.getpid(),
                     },

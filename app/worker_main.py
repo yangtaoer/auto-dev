@@ -16,8 +16,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop_worker)
     signal.signal(signal.SIGINT, stop_worker)
     worker.start()
-    if worker.thread:
-        worker.thread.join()
+    worker.join()
 
 
 if __name__ == "__main__":

@@ -1,11 +1,12 @@
 const USER = window.__USER__;
-const state = { projects: [], users: [], dashboard: {active:[],recent:[],counts:{},runners:[],stats:{}}, filter:'all', selectedRequest:null, selectedTerminal:false, selectedIntake:null, routingGeneration:0, live:{requestId:null,watcherId:null,cursor:0,generation:0,timer:null,lastGroup:'',lastKind:'',lastBubble:null} };
+const state = { projects: [], users: [], dashboard: {active:[],recent:[],counts:{},runners:[],stats:{},capacity:{limit:5,active:0,queued:0,available:5}}, filter:'all', selectedRequest:null, selectedTerminal:false, selectedIntake:null, routingGeneration:0, live:{requestId:null,watcherId:null,cursor:0,generation:0,timer:null,lastGroup:'',lastKind:'',lastBubble:null} };
 const MODE = {
+  routing:['自动识别中','正在读取 TFS 需求并识别项目与交付策略。'],
   local_package:['本地打包交付','推送代码后在本机执行构建，交付安装包、SQL、配置和说明。'],
   sichuan_auto_review:['四川审核后交付','创建 PR，由专用审核服务账号在门禁通过后批准；检测合并后交付截图。'],
   product_manual_review:['产品审核后交付','先邮件发送 PR 给项目经理；系统循环检测合并，完成后交付截图。']
 };
-const STATUS = {queued:'等待执行',validating:'准入校验',developing:'Codex 研发中',submitting:'提交代码',building:'本地构建',waiting_merge:'等待 PR 合并',capturing:'生成合并凭证',delivering:'发送交付邮件',delivered:'已交付',waiting_approval:'等待人工确认',rejected:'准入驳回',failed:'执行失败',cancelled:'已取消'};
+const STATUS = {routing:'项目识别中',queued:'等待执行',validating:'准入校验',developing:'Codex 研发中',submitting:'提交代码',building:'本地构建',waiting_merge:'等待 PR 合并',capturing:'生成合并凭证',delivering:'发送交付邮件',delivered:'已交付',waiting_approval:'等待人工确认',rejected:'准入驳回',failed:'执行失败',cancelled:'已取消'};
 const TERMINAL = new Set(['delivered','failed','rejected','cancelled']);
 const escapeHtml = (value='') => String(value).replace(/[&<>'"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const fmt = value => value ? new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(value)) : '—';
@@ -42,25 +43,29 @@ function renderDashboard(){
   const active=Object.entries(c).filter(([k])=>!['delivered','failed','rejected','cancelled'].includes(k)).reduce((a,[,v])=>a+v,0);
   const stats=state.dashboard.stats||{};
   const metricData=USER.role==='admin'?[['当日任务',stats.today_total||0,'accent'],['任务总量',stats.total||0,''],['成功交付',stats.success||0,''],['失败 / 驳回',stats.failed||0,'danger'],['运行中',stats.running||0,'accent'],['等待合并',stats.waiting_merge||0,'warn']]:[['运行中',active,'accent'],['等待合并',waiting,'warn'],['已交付',delivered,''],['需要关注',failed+(c.waiting_approval||0),'']];
-  const metrics=document.querySelector('#metrics');metrics.classList.toggle('admin-metrics',USER.role==='admin');metrics.innerHTML=metricData.map(([l,v,k])=>`<div class="metric ${k}"><span>${l}</span><b>${String(v).padStart(2,'0')}</b></div>`).join('');
+  const metrics=document.querySelector('#metrics');metrics.classList.toggle('admin-metrics',USER.role==='admin');metrics.innerHTML=metricData.map(([l,v,k])=>`<div class="metric ${k} ${l==='运行中'&&Number(v)>0?'live':''}"><span>${l}</span><b>${String(v).padStart(2,'0')}</b></div>`).join('');
   renderCodexQuota();
   const activeEl=document.querySelector('#active-runs'),activePipeline=document.querySelector('#active-pipeline');
   activePipeline.hidden=state.dashboard.active.length===0;
   activeEl.innerHTML=state.dashboard.active.map(runCard).join('');
+  const capacity=state.dashboard.capacity||{limit:5,active:0,queued:0};
+  const capacityStatus=document.querySelector('#capacity-status');
+  if(capacityStatus)capacityStatus.innerHTML=`<b>${Number(capacity.active)||0} / ${Number(capacity.limit)||5}</b><span>并发槽位${capacity.queued?` · ${Number(capacity.queued)} 个排队`:''}</span>`;
+  document.body.classList.toggle('has-active-runs',state.dashboard.active.length>0);
   document.querySelector('#recent-table').innerHTML=state.dashboard.recent.slice(0,8).map(recentRow).join('')||'<tr><td colspan="6" class="muted">暂无记录</td></tr>';
   renderAllTable();bindRows();
   const runners=state.dashboard.runners||[],online=runners.filter(r=>r.online),status=document.querySelector('#runner-status');
   status.classList.toggle('offline',online.length===0);status.querySelector('span').textContent=online.length?'执行器在线':'执行器离线';
 }
 function renderCodexQuota(){const el=document.querySelector('#codex-quota');if(!el)return;const runners=state.dashboard.runners||[];const runner=runners.find(r=>r.online&&r.codex_usage?.available)||runners.find(r=>r.codex_usage?.available);if(!runner){el.innerHTML='<div><p class="eyebrow">套餐容量 / CODEX CAPACITY</p><h2>套餐信息暂不可用</h2></div><span class="muted">执行器上线后自动同步</span>';return}const usage=runner.codex_usage,primary=usage.primary||{},remaining=primary.remaining_percent,used=primary.used_percent??0,credits=usage.credits||{},plan=String(usage.plan_type||'unknown').toUpperCase();const reset=primary.resets_at?new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(primary.resets_at*1000)):'—';const balance=credits.unlimited?'无限':(credits.balance??'0');el.innerHTML=`<div class="quota-copy"><p class="eyebrow">套餐容量 / CODEX CAPACITY / ${escapeHtml(runner.runner_id)}</p><h2>${escapeHtml(plan)} 套餐</h2><span>周期重置 ${escapeHtml(reset)} · 额外余额 ${escapeHtml(balance)}</span></div><div class="quota-meter"><div class="quota-number"><b>${remaining??'—'}%</b><span>套餐剩余</span></div><div class="quota-track"><i style="width:${Math.max(0,Math.min(100,100-used))}%"></i></div><small>数据更新时间 ${fmt(usage.updated_at)}</small></div>`}
-function runCard(r){return `<article class="run-card clickable-row" data-id="${r.id}"><div class="run-top"><span class="work-id">TFS #${r.work_item_id}</span><span class="status-tag">${STATUS[r.status]||r.status}</span></div><h3>${escapeHtml(r.title||'正在读取需求…')}</h3><div class="project">${escapeHtml(r.project_name)} · ${escapeHtml(r.requester_name)}</div><div class="live-activity"><i></i><div><span>当前输出</span><b>${escapeHtml(r.current_activity||STATUS[r.status]||'等待执行器反馈')}</b></div></div><div class="run-mode">${MODE[r.delivery_mode]?.[0]||r.delivery_mode}</div></article>`}
-function recentRow(r){return `<tr class="clickable-row" data-id="${r.id}"><td class="demand-cell"><b>#${r.work_item_id}</b><span>${escapeHtml(r.title||'等待读取')}</span></td><td>${escapeHtml(r.project_name)}</td><td>${MODE[r.delivery_mode]?.[0]||r.delivery_mode}</td><td><span class="status-dot" data-status="${r.status}">${STATUS[r.status]||r.status}</span></td><td><span class="activity-cell">${escapeHtml(r.current_activity||'—')}</span></td><td>${fmt(r.updated_at)}</td></tr>`}
+function runCard(r){const intake=r.record_type==='intake'||r.intake_id;return `<article class="run-card clickable-row ${intake?'routing-card':''}" ${intake?`data-intake-id="${r.intake_id||r.id}" data-work-item-id="${r.work_item_id}"`:`data-id="${r.id}"`}><div class="run-top"><span class="work-id">TFS #${r.work_item_id}</span><span class="status-tag">${STATUS[r.status]||r.status}</span></div><h3>${escapeHtml(r.title||'正在读取需求…')}</h3><div class="project">${escapeHtml(r.project_name)} · ${escapeHtml(r.requester_name)}</div><div class="live-activity"><i></i><div><span>当前输出</span><b>${escapeHtml(r.current_activity||STATUS[r.status]||'等待执行器反馈')}</b></div></div><div class="run-mode">${MODE[r.delivery_mode]?.[0]||r.delivery_mode}</div></article>`}
+function recentRow(r){const intake=r.record_type==='intake'||r.intake_id;return `<tr class="clickable-row" ${intake?`data-intake-id="${r.intake_id||r.id}" data-work-item-id="${r.work_item_id}"`:`data-id="${r.id}"`}><td class="demand-cell"><b>#${r.work_item_id}</b><span>${escapeHtml(r.title||'等待读取')}</span></td><td>${escapeHtml(r.project_name)}</td><td>${MODE[r.delivery_mode]?.[0]||r.delivery_mode}</td><td><span class="status-dot" data-status="${r.status}">${STATUS[r.status]||r.status}</span></td><td><span class="activity-cell">${escapeHtml(r.current_activity||'—')}</span></td><td>${fmt(r.updated_at)}</td></tr>`}
 function renderAllTable(){
   const data=state.filter==='all'?state.dashboard.recent:state.dashboard.recent.filter(x=>x.status===state.filter);
   const el=document.querySelector('#all-table');if(!el)return;
-  el.innerHTML=data.map(r=>`<tr class="clickable-row" data-id="${r.id}"><td class="demand-cell"><b>#${r.work_item_id} · ${escapeHtml(r.project_name)}</b><span>${escapeHtml(r.title||'等待读取')}</span><small>${MODE[r.delivery_mode]?.[0]||r.delivery_mode}</small></td><td><span class="status-dot" data-status="${r.status}">${STATUS[r.status]||r.status}</span></td><td>${escapeHtml(r.requester_name)}</td><td>${fmt(r.created_at)}</td><td>${fmt(r.completed_at)}</td><td class="duration-cell">${fmtDuration(r.duration_seconds)}</td><td><div class="artifact-links">${artifactLinks(r.artifacts)}</div></td></tr>`).join('')||'<tr><td colspan="7" class="muted">没有符合条件的记录</td></tr>';bindRows();
+  el.innerHTML=data.map(r=>{const intake=r.record_type==='intake'||r.intake_id;return `<tr class="clickable-row" ${intake?`data-intake-id="${r.intake_id||r.id}" data-work-item-id="${r.work_item_id}"`:`data-id="${r.id}"`}><td class="demand-cell"><b>#${r.work_item_id} · ${escapeHtml(r.project_name)}</b><span>${escapeHtml(r.title||'等待读取')}</span><small>${MODE[r.delivery_mode]?.[0]||r.delivery_mode}</small></td><td><span class="status-dot" data-status="${r.status}">${STATUS[r.status]||r.status}</span></td><td>${escapeHtml(r.requester_name)}</td><td>${fmt(r.created_at)}</td><td>${fmt(r.completed_at)}</td><td class="duration-cell">${fmtDuration(r.duration_seconds)}</td><td><div class="artifact-links">${artifactLinks(r.artifacts)}</div></td></tr>`}).join('')||'<tr><td colspan="7" class="muted">没有符合条件的记录</td></tr>';bindRows();
 }
-function bindRows(){document.querySelectorAll('.clickable-row').forEach(el=>el.onclick=()=>openDetail(el.dataset.id))}
+function bindRows(){document.querySelectorAll('.clickable-row').forEach(el=>el.onclick=()=>el.dataset.intakeId?openRoutingDetail(el.dataset.intakeId,el.dataset.workItemId):openDetail(el.dataset.id))}
 
 function renderProjects(){
   const el=document.querySelector('#project-grid');if(!el)return;
@@ -82,6 +87,17 @@ async function waitForRouting(intakeId){
     await delay(1000);
   }
   return null;
+}
+
+function addOptimisticIntake(intakeId,workItemId){
+  const now=new Date().toISOString();
+  const intake={id:intakeId,intake_id:intakeId,record_type:'intake',work_item_id:workItemId,title:'正在读取 TFS 需求并识别项目…',project_name:'项目识别中',requester_name:USER.display_name,delivery_mode:'routing',status:'routing',current_activity:'任务已提交，等待执行器扫描',created_at:now,updated_at:now,completed_at:null,duration_seconds:null,artifacts:[]};
+  state.dashboard.active=[intake,...state.dashboard.active.filter(item=>item.id!==intakeId)].slice(0,12);
+  state.dashboard.recent=[intake,...state.dashboard.recent.filter(item=>item.id!==intakeId)].slice(0,40);
+  state.dashboard.counts.routing=(state.dashboard.counts.routing||0)+1;
+  if(state.dashboard.stats){state.dashboard.stats.total=(state.dashboard.stats.total||0)+1;state.dashboard.stats.today_total=(state.dashboard.stats.today_total||0)+1;state.dashboard.stats.running=(state.dashboard.stats.running||0)+1}
+  if(state.dashboard.capacity)state.dashboard.capacity.queued=(state.dashboard.capacity.queued||0)+1;
+  switchView('dashboard');renderDashboard();
 }
 
 function showDetailDrawer(){document.querySelector('#detail-backdrop').hidden=false;document.querySelector('#detail-drawer').classList.add('open');document.querySelector('#detail-drawer').setAttribute('aria-hidden','false')}
@@ -129,7 +145,7 @@ document.querySelectorAll('.chip').forEach(btn=>btn.onclick=()=>{document.queryS
 document.querySelector('#new-user')?.addEventListener('click',()=>openUser());
 document.querySelector('#add-user-email')?.addEventListener('click',()=>addEmailRow());
 
-document.querySelector('#request-form').addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget,error=document.querySelector('#request-error'),button=form.querySelector('button[type="submit"]');error.hidden=true;const data={work_item_id:Number(form.elements.work_item_id.value),notification_emails:[...form.querySelectorAll('[name="notification_emails"]:checked')].map(input=>input.value)};if(!data.notification_emails.length){error.textContent='请至少选择一个通知邮箱';error.hidden=false;return}button.disabled=true;try{const result=await api('/api/requests',{method:'POST',body:JSON.stringify(data)});closeModals();form.reset();if(result.routing){toast('任务已发起，正在自动识别项目');openRoutingDetail(result.id,data.work_item_id)}else{toast('研发任务已进入队列');await refresh();await openDetail(result.id)}}catch(err){form.elements.work_item_id.value=data.work_item_id;document.querySelector('#request-modal').hidden=false;error.textContent=err.message;error.hidden=false}finally{button.disabled=false}});
+document.querySelector('#request-form').addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget,error=document.querySelector('#request-error'),button=form.querySelector('button[type="submit"]');error.hidden=true;const data={work_item_id:Number(form.elements.work_item_id.value),notification_emails:[...form.querySelectorAll('[name="notification_emails"]:checked')].map(input=>input.value)};if(!data.notification_emails.length){error.textContent='请至少选择一个通知邮箱';error.hidden=false;return}button.disabled=true;try{const result=await api('/api/requests',{method:'POST',body:JSON.stringify(data)});closeModals();form.reset();if(result.routing){addOptimisticIntake(result.id,data.work_item_id);toast('提交成功，任务已进入运行看板');openRoutingDetail(result.id,data.work_item_id)}else{toast('研发任务已进入队列');await refresh();await openDetail(result.id)}}catch(err){form.elements.work_item_id.value=data.work_item_id;document.querySelector('#request-modal').hidden=false;error.textContent=err.message;error.hidden=false}finally{button.disabled=false}});
 document.querySelector('#user-form')?.addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget,error=document.querySelector('#user-error');error.hidden=true;const id=Number(form.elements.id.value)||null;const emails=[...form.querySelectorAll('.user-email-input')].map(input=>input.value.trim()).filter(Boolean);const data={username:form.elements.username.value.trim(),display_name:form.elements.display_name.value.trim(),emails,password:form.elements.password.value,role:form.elements.role.value,active:form.elements.active.checked};if(!data.password)delete data.password;try{const result=await api(id?`/api/users/${id}`:'/api/users',{method:id?'PUT':'POST',body:JSON.stringify(data)});if(result.user.id===USER.id)Object.assign(USER,result.user);closeModals();form.reset();toast(id?'账号已更新':'账号已创建');await refresh()}catch(err){error.textContent=err.message;error.hidden=false}});
 
 setInterval(()=>{document.querySelector('#clock').textContent=new Intl.DateTimeFormat('zh-CN',{dateStyle:'medium',timeStyle:'medium',hour12:false}).format(new Date())},1000);

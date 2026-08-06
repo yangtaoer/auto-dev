@@ -29,11 +29,16 @@ class Cancelled(RuntimeError):
 
 
 class Worker:
-    def __init__(self, store=None) -> None:
+    _workspace_lock = threading.RLock()
+
+    def __init__(self, store=None, *, max_concurrency: int | None = None) -> None:
         self.store = store or LocalStore()
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
-        self.current_request_id: str | None = None
+        self.threads: list[threading.Thread] = []
+        self.max_concurrency = min(5, max(1, max_concurrency or settings.runner_max_concurrency))
+        self._active_lock = threading.RLock()
+        self._active_request_ids: set[str] = set()
         public_base_url = settings.cloud_url or settings.public_base_url if self.store.remote else settings.public_base_url
         self.artifacts = ArtifactService(
             recorder=self.store.add_artifact,
@@ -43,24 +48,51 @@ class Worker:
         self.mailer = Mailer()
 
     def start(self) -> None:
-        if self.thread and self.thread.is_alive():
+        if any(thread.is_alive() for thread in self.threads):
             return
-        self.thread = threading.Thread(target=self._loop, name="autodev-worker", daemon=True)
-        self.thread.start()
+        self.threads = [
+            threading.Thread(target=self._loop, name=f"autodev-worker-{slot + 1}", daemon=True)
+            for slot in range(self.max_concurrency)
+        ]
+        self.thread = self.threads[0]
+        for thread in self.threads:
+            thread.start()
 
     def stop(self) -> None:
         self.stop_event.set()
-        if self.thread:
-            self.thread.join(timeout=5)
+        self.join(timeout=5)
+
+    def join(self, timeout: float | None = None) -> None:
+        for thread in self.threads:
+            thread.join(timeout=timeout)
+
+    @property
+    def current_request_ids(self) -> list[str]:
+        with self._active_lock:
+            return sorted(self._active_request_ids)
+
+    @property
+    def current_request_id(self) -> str | None:
+        active = self.current_request_ids
+        return active[0] if active else None
+
+    def _set_active(self, request_id: str, active: bool) -> None:
+        with self._active_lock:
+            if active:
+                self._active_request_ids.add(request_id)
+            else:
+                self._active_request_ids.discard(request_id)
 
     def _loop(self) -> None:
         while not self.stop_event.is_set():
+            processed = False
             try:
-                self.process_once()
+                processed = self.process_once()
             except Exception:
                 # 单个任务的异常会在 run_request/poll_merge 中落库；这里避免工作线程退出。
                 logger.exception("任务轮询循环发生异常")
-            self.stop_event.wait(settings.poll_seconds)
+            if not processed:
+                self.stop_event.wait(settings.poll_seconds)
 
     def process_once(self) -> bool:
         routed = False
@@ -72,20 +104,20 @@ class Worker:
         queued = self.store.next_queued()
         if queued:
             logger.info("开始执行研发任务 request_id=%s", queued)
-            self.current_request_id = queued
+            self._set_active(queued, True)
             try:
                 self.run_request(queued)
             finally:
-                self.current_request_id = None
+                self._set_active(queued, False)
             return True
         waiting = self.store.next_waiting()
         if waiting:
             logger.info("检查 PR 合并状态 request_id=%s", waiting)
-            self.current_request_id = waiting
+            self._set_active(waiting, True)
             try:
                 self.poll_merge(waiting)
             finally:
-                self.current_request_id = None
+                self._set_active(waiting, False)
             return True
         return routed
 
@@ -321,31 +353,33 @@ class Worker:
             raise RuntimeError(f"项目仓库路径无效：{repo}")
         base_branch = project.get("base_branch", "dev")
         fetch_env = git_authenticated_env(settings.tfs_pat) if settings.tfs_pat else sanitized_process_env()
-        subprocess.run(
-            ["git", "-C", str(repo), "fetch", "origin", base_branch],
-            check=True,
-            capture_output=True,
-            env=fetch_env,
-        )
-        base_commit = git(repo, "rev-parse", f"origin/{base_branch}")
-        branch = f"feature/{work_item['id']}-{settings.tfs_user_alias}"
-        branch_check = subprocess.run(
-            ["git", "-C", str(repo), "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
-            env=sanitized_process_env(),
-        )
-        if branch_check.returncode == 0:
-            suffix = datetime.now().strftime("%Y%m%d-%H%M")
-            branch = f"{branch}-{suffix}"
-        worktree = settings.worktree_dir / request_id / repo.name
-        worktree.parent.mkdir(parents=True, exist_ok=True)
-        if worktree.exists():
-            raise RuntimeError(f"任务工作区已存在，需要人工确认后重试：{worktree}")
-        subprocess.run(
-            ["git", "-C", str(repo), "worktree", "add", "-b", branch, str(worktree), f"origin/{base_branch}"],
-            check=True,
-            capture_output=True,
-            env=sanitized_process_env(),
-        )
+        # 同一仓库的 fetch/worktree 元数据共用 Git 锁；只串行化准备阶段，Codex 与构建仍可并行。
+        with self._workspace_lock:
+            subprocess.run(
+                ["git", "-C", str(repo), "fetch", "origin", base_branch],
+                check=True,
+                capture_output=True,
+                env=fetch_env,
+            )
+            base_commit = git(repo, "rev-parse", f"origin/{base_branch}")
+            branch = f"feature/{work_item['id']}-{settings.tfs_user_alias}"
+            branch_check = subprocess.run(
+                ["git", "-C", str(repo), "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+                env=sanitized_process_env(),
+            )
+            if branch_check.returncode == 0:
+                suffix = datetime.now().strftime("%Y%m%d-%H%M%S")
+                branch = f"{branch}-{suffix}"
+            worktree = settings.worktree_dir / request_id / repo.name
+            worktree.parent.mkdir(parents=True, exist_ok=True)
+            if worktree.exists():
+                raise RuntimeError(f"任务工作区已存在，需要人工确认后重试：{worktree}")
+            subprocess.run(
+                ["git", "-C", str(repo), "worktree", "add", "-b", branch, str(worktree), f"origin/{base_branch}"],
+                check=True,
+                capture_output=True,
+                env=sanitized_process_env(),
+            )
         self.store.add_event(request_id, "workspace.prepared", f"隔离工作区：{worktree}", metadata={"base_commit": base_commit})
         return worktree, base_commit, branch
 

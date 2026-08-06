@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -21,7 +23,7 @@ os.environ["AUTODEV_RUNNER_TOKEN"] = "test-runner-token"
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
-from app.orchestrator import worker  # noqa: E402
+from app.orchestrator import Worker, worker  # noqa: E402
 from app.project_catalog import load_project_presets, resolve_project_for_work_item  # noqa: E402
 from app.services.codex_runner import CodexRunner  # noqa: E402
 from app.services.delivery import Mailer  # noqa: E402
@@ -377,8 +379,10 @@ class WorkflowTests(unittest.TestCase):
             json={
                 "runner_id": "quota-test-runner",
                 "hostname": "quota-pc",
-                "version": "0.3.8",
+                "version": "0.3.9",
                 "state": "idle",
+                "current_request_ids": [],
+                "max_concurrency": 5,
                 "codex_usage": {
                     "available": True,
                     "plan_type": "prolite",
@@ -391,8 +395,103 @@ class WorkflowTests(unittest.TestCase):
         dashboard = self.client.get("/api/dashboard").json()
         runner = next(item for item in dashboard["runners"] if item["runner_id"] == "quota-test-runner")
         self.assertEqual(runner["codex_usage"]["primary"]["remaining_percent"], 58)
+        self.assertEqual(runner["max_concurrency"], 5)
         self.assertGreaterEqual(dashboard["stats"]["total"], 1)
         self.assertIn("today_total", dashboard["stats"])
+        self.assertEqual(dashboard["capacity"]["limit"], 5)
+
+    def test_new_intake_is_immediately_visible_and_home_shows_version(self) -> None:
+        self.create_project("test-instant-board", "local_package")
+        created = self.client.post("/api/requests", json={"work_item_id": 910020})
+        self.assertEqual(created.status_code, 200, created.text)
+        intake_id = created.json()["id"]
+
+        dashboard = self.client.get("/api/dashboard").json()
+        visible = next(item for item in dashboard["active"] if item.get("intake_id") == intake_id)
+        self.assertEqual(visible["status"], "routing")
+        self.assertEqual(visible["current_activity"], "任务已提交，等待执行器扫描")
+        self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
+
+        page = self.client.get("/")
+        self.assertIn("SYSTEM v0.3.9", page.text)
+        self.assertIn("control-strip", page.text)
+        script = self.client.get("/static/app.js").text
+        self.assertIn("addOptimisticIntake", script)
+
+        headers = {"Authorization": "Bearer test-runner-token"}
+        claimed = self.client.post(
+            "/api/runner/intakes/claim", headers=headers, json={"runner_id": "yangtao-pc"}
+        ).json()["intake"]
+        self.assertEqual(claimed["id"], intake_id)
+        routed = self.client.post(
+            f"/api/runner/intakes/{intake_id}/route",
+            headers=headers,
+            json={"runner_id": "yangtao-pc", "project_key": "test-instant-board"},
+        )
+        self.assertEqual(routed.status_code, 200, routed.text)
+        worker.process_once()
+
+    def test_worker_never_exceeds_five_parallel_tasks(self) -> None:
+        class QueueStore:
+            remote = False
+
+            def __init__(self) -> None:
+                self.items = [f"parallel-{index}" for index in range(7)]
+                self.lock = threading.Lock()
+
+            def next_queued(self):
+                with self.lock:
+                    return self.items.pop(0) if self.items else None
+
+            @staticmethod
+            def next_waiting():
+                return None
+
+            @staticmethod
+            def add_artifact(*_args, **_kwargs):
+                return 1
+
+            @staticmethod
+            def detail(_request_id):
+                return None
+
+        store = QueueStore()
+        parallel_worker = Worker(store=store, max_concurrency=5)
+        release = threading.Event()
+        five_started = threading.Event()
+        all_finished = threading.Event()
+        lock = threading.Lock()
+        running = 0
+        peak = 0
+        finished = 0
+
+        def blocking_run(_request_id: str) -> None:
+            nonlocal running, peak, finished
+            with lock:
+                running += 1
+                peak = max(peak, running)
+                if running == 5:
+                    five_started.set()
+            release.wait(3)
+            with lock:
+                running -= 1
+                finished += 1
+                if finished == 7:
+                    all_finished.set()
+
+        parallel_worker.run_request = blocking_run
+        parallel_worker.start()
+        try:
+            self.assertTrue(five_started.wait(2), "五个并发槽位未能同时启动")
+            time.sleep(0.1)
+            self.assertEqual(peak, 5)
+            self.assertEqual(len(parallel_worker.current_request_ids), 5)
+            release.set()
+            self.assertTrue(all_finished.wait(2), "排队任务未在槽位释放后继续执行")
+            self.assertLessEqual(peak, 5)
+        finally:
+            release.set()
+            parallel_worker.stop()
 
     def test_project_menu_is_hidden_from_project_manager(self) -> None:
         admin_page = self.client.get("/")
