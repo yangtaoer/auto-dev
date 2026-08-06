@@ -5,11 +5,14 @@ import signal
 import sys
 import threading
 import logging
+import time
 from logging.handlers import RotatingFileHandler
 
 from .config import settings
 from .orchestrator import Worker
+from .local_monitor import LocalMonitorServer
 from .project_catalog import load_project_presets
+from .services.codex_runner import CodexRunner
 from .store import RemoteStore
 
 
@@ -39,6 +42,30 @@ def main() -> None:
     worker = Worker(store=store)
     heartbeat_stop = threading.Event()
     last_catalog = ""
+    usage_lock = threading.RLock()
+    codex_usage: dict = {"available": False, "message": "正在读取 Codex 套餐信息"}
+    last_usage_check = 0.0
+
+    def refresh_codex_usage(*, force: bool = False) -> None:
+        nonlocal codex_usage, last_usage_check
+        now = time.monotonic()
+        if not force and now - last_usage_check < 300:
+            return
+        last_usage_check = now
+        try:
+            usage = CodexRunner.read_account_usage()
+            with usage_lock:
+                codex_usage = usage
+        except Exception as exc:
+            logger.warning("Codex 套餐信息读取失败：%s", exc)
+            with usage_lock:
+                codex_usage = {"available": False, "message": str(exc)[:300]}
+
+    def get_codex_usage() -> dict:
+        with usage_lock:
+            return dict(codex_usage)
+
+    monitor = LocalMonitorServer(worker, store, get_codex_usage)
 
     def sync_project_catalog() -> None:
         nonlocal last_catalog
@@ -58,7 +85,8 @@ def main() -> None:
                 logger.warning("项目目录同步失败，将继续保持心跳并稍后重试：%s", exc)
             try:
                 current = worker.current_request_id
-                store.heartbeat("working" if current else "idle", current)
+                refresh_codex_usage()
+                store.heartbeat("working" if current else "idle", current, get_codex_usage())
             except Exception as exc:
                 logger.warning("心跳上报失败：%s", exc)
             heartbeat_stop.wait(20)
@@ -83,7 +111,9 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop_runner)
     signal.signal(signal.SIGINT, stop_runner)
     try:
-        store.heartbeat("starting")
+        refresh_codex_usage(force=True)
+        monitor.start()
+        store.heartbeat("starting", codex_usage=get_codex_usage())
         try:
             sync_project_catalog()
         except Exception as exc:
@@ -106,9 +136,10 @@ def main() -> None:
     finally:
         heartbeat_stop.set()
         try:
-            store.heartbeat("stopping")
+            store.heartbeat("stopping", codex_usage=get_codex_usage())
         except Exception:
             pass
+        monitor.stop()
         store.close()
         logger.info("本机执行器已停止")
 

@@ -95,7 +95,12 @@ class RemoteStore:
     def close(self) -> None:
         self.client.close()
 
-    def heartbeat(self, state: str = "idle", current_request_id: str | None = None) -> None:
+    def heartbeat(
+        self,
+        state: str = "idle",
+        current_request_id: str | None = None,
+        codex_usage: dict[str, Any] | None = None,
+    ) -> None:
         self._json(
             self.client.post(
                 "/api/runner/heartbeat",
@@ -105,6 +110,7 @@ class RemoteStore:
                     "version": settings.runner_version,
                     "state": state,
                     "current_request_id": current_request_id,
+                    "codex_usage": codex_usage or {},
                 },
             )
         )
@@ -158,6 +164,26 @@ class RemoteStore:
         if response.status_code == 404:
             return None
         return self._json(response)["request"]
+
+    def list_tasks(self, limit: int = 80) -> list[dict[str, Any]]:
+        data = self._json(
+            self.client.get("/api/runner/tasks", params={"runner_id": self.runner_id, "limit": limit})
+        )
+        return data.get("tasks", [])
+
+    def codex_watch_active(self, request_id: str) -> bool:
+        data = self._json(self.client.get(f"/api/runner/requests/{request_id}/codex-watch/active"))
+        return bool(data.get("active"))
+
+    def publish_codex_events(self, request_id: str, events: list[dict[str, Any]]) -> None:
+        if not events:
+            return
+        self._json(
+            self.client.post(
+                f"/api/runner/requests/{request_id}/codex-watch/events",
+                json={"events": events},
+            )
+        )
 
     def update_request(self, request_id: str, **fields: Any) -> None:
         self._json(self.client.patch(f"/api/runner/requests/{request_id}", json={"fields": fields}))

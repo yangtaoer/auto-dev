@@ -169,6 +169,87 @@ class WorkflowTests(unittest.TestCase):
         )
         self.assertEqual(unauthenticated.status_code, 401)
 
+    def test_codex_live_output_is_watcher_gated_and_not_persisted(self) -> None:
+        project_id = self.create_project("test-live-codex", "local_package")
+        created = self.client.post(
+            "/api/requests", json={"project_id": project_id, "work_item_id": 910011}
+        )
+        request_id = created.json()["id"]
+        headers = {"Authorization": "Bearer test-runner-token"}
+        updated = self.client.patch(
+            f"/api/runner/requests/{request_id}", headers=headers, json={"fields": {"status": "developing"}}
+        )
+        self.assertEqual(updated.status_code, 200, updated.text)
+        event_count = len(self.client.get(f"/api/requests/{request_id}").json()["request"]["events"])
+
+        started = self.client.post(f"/api/requests/{request_id}/codex-watch/start")
+        self.assertEqual(started.status_code, 200, started.text)
+        watcher = started.json()
+        active = self.client.get(
+            f"/api/runner/requests/{request_id}/codex-watch/active", headers=headers
+        )
+        self.assertTrue(active.json()["active"])
+        published = self.client.post(
+            f"/api/runner/requests/{request_id}/codex-watch/events",
+            headers=headers,
+            json={"events": [{"kind": "assistant", "content": "only-live-output", "group": "agent-1", "delta": True}]},
+        )
+        self.assertEqual(published.json()["accepted"], 1)
+        polled = self.client.get(
+            f"/api/requests/{request_id}/codex-watch/{watcher['watcher_id']}?after={watcher['cursor']}"
+        )
+        self.assertEqual(polled.json()["events"][0]["content"], "only-live-output")
+        stopped = self.client.post(
+            f"/api/requests/{request_id}/codex-watch/{watcher['watcher_id']}/stop"
+        )
+        self.assertEqual(stopped.status_code, 200, stopped.text)
+        self.assertFalse(
+            self.client.get(f"/api/runner/requests/{request_id}/codex-watch/active", headers=headers).json()["active"]
+        )
+        self.assertEqual(
+            len(self.client.get(f"/api/requests/{request_id}").json()["request"]["events"]), event_count
+        )
+
+    def test_admin_dashboard_receives_codex_capacity_and_global_stats(self) -> None:
+        headers = {"Authorization": "Bearer test-runner-token"}
+        heartbeat = self.client.post(
+            "/api/runner/heartbeat",
+            headers=headers,
+            json={
+                "runner_id": "quota-test-runner",
+                "hostname": "quota-pc",
+                "version": "0.3.2",
+                "state": "idle",
+                "codex_usage": {
+                    "available": True,
+                    "plan_type": "prolite",
+                    "primary": {"used_percent": 42, "remaining_percent": 58},
+                    "credits": {"balance": "0", "has_credits": False, "unlimited": False},
+                },
+            },
+        )
+        self.assertEqual(heartbeat.status_code, 200, heartbeat.text)
+        dashboard = self.client.get("/api/dashboard").json()
+        runner = next(item for item in dashboard["runners"] if item["runner_id"] == "quota-test-runner")
+        self.assertEqual(runner["codex_usage"]["primary"]["remaining_percent"], 58)
+        self.assertGreaterEqual(dashboard["stats"]["total"], 1)
+        self.assertIn("today_total", dashboard["stats"])
+
+    def test_project_menu_is_hidden_from_project_manager(self) -> None:
+        admin_page = self.client.get("/")
+        self.assertIn("自助项目", admin_page.text)
+        self.client.post("/api/auth/logout")
+        login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
+        self.assertEqual(login.status_code, 200, login.text)
+        pm_page = self.client.get("/")
+        self.assertNotIn("自助项目", pm_page.text)
+        pm_dashboard = self.client.get("/api/dashboard")
+        self.assertEqual(pm_dashboard.status_code, 200, pm_dashboard.text)
+        self.assertIn("stats", pm_dashboard.json())
+        self.client.post("/api/auth/logout")
+        restored = self.client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        self.assertEqual(restored.status_code, 200, restored.text)
+
     def test_number_only_request_is_routed_by_local_runner(self) -> None:
         self.create_project("test-auto-route", "local_package")
         created = self.client.post("/api/requests", json={"work_item_id": 910008})

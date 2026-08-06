@@ -6,7 +6,7 @@ import re
 import sqlite3
 import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -28,6 +28,7 @@ from .db import (
     delete_session,
     get_session_user,
     init_db,
+    json_value,
     project_for_api,
     public_user,
     replace_user_emails,
@@ -42,6 +43,7 @@ from .db import (
 )
 from .domain import DELIVERY_MODE_LABELS, DeliveryMode, STATUS_LABELS, RunStatus
 from .orchestrator import worker
+from .live_stream import live_codex_streams
 from .security import hash_password, verify_password
 from .services.delivery import ArtifactService, Mailer
 
@@ -59,7 +61,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="全自助需求研发交付",
-    version="0.3.1",
+    version="0.3.2",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -152,6 +154,7 @@ class RunnerHeartbeat(RunnerIdentity):
     version: str = Field(default="", max_length=80)
     state: str = Field(default="idle", max_length=40)
     current_request_id: str | None = None
+    codex_usage: dict[str, Any] = Field(default_factory=dict)
 
 
 class RunnerRequestUpdate(BaseModel):
@@ -172,6 +175,17 @@ class RunnerEventInput(BaseModel):
 
 class RunnerNotifyInput(BaseModel):
     action_required: bool = False
+
+
+class LiveCodexEvent(BaseModel):
+    kind: str = Field(default="status", pattern=r"^(assistant|reasoning|command|file|plan|status)$")
+    content: str = Field(max_length=12000)
+    group: str = Field(default="", max_length=160)
+    delta: bool = False
+
+
+class RunnerLiveCodexEvents(BaseModel):
+    events: list[LiveCodexEvent] = Field(max_length=100)
 
 
 def current_user(autodev_session: Annotated[str | None, Cookie()] = None) -> dict[str, Any]:
@@ -321,15 +335,17 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     counts = rows(f"SELECT status,COUNT(*) count FROM delivery_requests {scope} GROUP BY status", params)
     active_sql = "status NOT IN ('delivered','failed','rejected','cancelled')"
     active_scope = active_sql if not scope else f"requester_id=? AND {active_sql}"
+    activity_select = """(SELECT e.message FROM delivery_events e
+        WHERE e.request_id=r.id ORDER BY e.id DESC LIMIT 1) current_activity"""
     active = rows(
-        f"""SELECT r.*,p.name project_name,u.display_name requester_name
+        f"""SELECT r.*,p.name project_name,u.display_name requester_name,{activity_select}
             FROM delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id
             WHERE {active_scope} ORDER BY r.updated_at DESC LIMIT 12""",
         params,
     )
     recent_scope = "" if not scope else "WHERE r.requester_id=?"
     recent = rows(
-        f"""SELECT r.*,p.name project_name,u.display_name requester_name
+        f"""SELECT r.*,p.name project_name,u.display_name requester_name,{activity_select}
             FROM delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id
             {recent_scope} ORDER BY r.created_at DESC LIMIT 40""",
         params,
@@ -342,11 +358,29 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
         except (TypeError, ValueError):
             age = 999999
         item["online"] = age <= 90 and item["state"] != "stopping"
+        item["codex_usage"] = json_value(item.get("detail"), {}).get("codex_usage", {})
+        item.pop("detail", None)
+    local_now = datetime.now(timezone(timedelta(hours=8)))
+    today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC).isoformat()
+    stats_scope = "" if user["role"] == "admin" else "WHERE requester_id=?"
+    stats_params: tuple[Any, ...] = () if user["role"] == "admin" else (user["id"],)
+    today_join = "AND" if stats_scope else "WHERE"
+    summary = row(
+        f"""SELECT COUNT(*) total,
+            SUM(CASE WHEN created_at>=? THEN 1 ELSE 0 END) today_total,
+            SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END) success,
+            SUM(CASE WHEN status IN ('failed','rejected') THEN 1 ELSE 0 END) failed,
+            SUM(CASE WHEN status NOT IN ('delivered','failed','rejected','cancelled') THEN 1 ELSE 0 END) running,
+            SUM(CASE WHEN status='waiting_merge' THEN 1 ELSE 0 END) waiting_merge
+            FROM delivery_requests {stats_scope} {today_join} created_at IS NOT NULL""",
+        (today_start, *stats_params),
+    ) or {}
     return {
         "counts": {item["status"]: item["count"] for item in counts},
         "active": active,
         "recent": recent,
         "runners": runners,
+        "stats": {key: int(summary.get(key) or 0) for key in ("total", "today_total", "success", "failed", "running", "waiting_merge")},
     }
 
 
@@ -589,6 +623,45 @@ def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -
     return {"request": detail}
 
 
+@app.post("/api/requests/{request_id}/codex-watch/start")
+def start_codex_watch(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
+    detail = can_access_request(user, request_id)
+    if detail["status"] != RunStatus.DEVELOPING.value:
+        raise HTTPException(status_code=409, detail="Codex 当前未处于研发执行阶段")
+    watcher_id, cursor = live_codex_streams.start(request_id)
+    return {
+        "watcher_id": watcher_id,
+        "cursor": cursor,
+        "ephemeral": True,
+        "message": "仅传输打开窗口后的输出；关闭即停止采集且不保存",
+    }
+
+
+@app.get("/api/requests/{request_id}/codex-watch/{watcher_id}")
+def poll_codex_watch(
+    request_id: str,
+    watcher_id: str,
+    user: Annotated[dict, Depends(current_user)],
+    after: int = 0,
+) -> dict:
+    can_access_request(user, request_id)
+    result = live_codex_streams.poll(request_id, watcher_id, max(0, after))
+    if result is None:
+        raise HTTPException(status_code=410, detail="查看会话已结束，请重新打开")
+    return result
+
+
+@app.post("/api/requests/{request_id}/codex-watch/{watcher_id}/stop")
+def stop_codex_watch(
+    request_id: str,
+    watcher_id: str,
+    user: Annotated[dict, Depends(current_user)],
+) -> dict:
+    can_access_request(user, request_id)
+    live_codex_streams.stop(request_id, watcher_id)
+    return {"ok": True}
+
+
 @app.post("/api/requests/{request_id}/cancel")
 def cancel_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
     detail = can_access_request(user, request_id)
@@ -616,7 +689,8 @@ def runner_heartbeat(payload: RunnerHeartbeat) -> dict:
             """INSERT INTO runners(runner_id,hostname,version,state,current_request_id,last_seen_at,detail)
                VALUES(?,?,?,?,?,?,?)
                ON CONFLICT(runner_id) DO UPDATE SET hostname=excluded.hostname,version=excluded.version,
-               state=excluded.state,current_request_id=excluded.current_request_id,last_seen_at=excluded.last_seen_at""",
+               state=excluded.state,current_request_id=excluded.current_request_id,last_seen_at=excluded.last_seen_at,
+               detail=excluded.detail""",
             (
                 payload.runner_id,
                 payload.hostname,
@@ -624,7 +698,7 @@ def runner_heartbeat(payload: RunnerHeartbeat) -> dict:
                 payload.state,
                 payload.current_request_id,
                 now,
-                "{}",
+                json.dumps({"codex_usage": payload.codex_usage}, ensure_ascii=False),
             ),
         )
     return {"ok": True, "server_time": now}
@@ -728,9 +802,42 @@ def runner_pollable(runner_id: str) -> dict:
     return {"request": request_detail(item["id"]) if item else None}
 
 
+@app.get("/api/runner/tasks", dependencies=[Depends(runner_auth)])
+def runner_tasks(runner_id: str, limit: int = 80) -> dict:
+    limit = max(1, min(120, limit))
+    tasks = rows(
+        """SELECT r.id,r.work_item_id,r.title,r.status,r.current_step,r.delivery_mode,
+                  r.created_at,r.updated_at,r.started_at,r.completed_at,r.error_message,
+                  p.name project_name,u.display_name requester_name,
+                  (SELECT e.message FROM delivery_events e WHERE e.request_id=r.id ORDER BY e.id DESC LIMIT 1) current_activity
+           FROM delivery_requests r
+           JOIN projects p ON p.id=r.project_id
+           JOIN users u ON u.id=r.requester_id
+           WHERE r.runner_id=? ORDER BY r.updated_at DESC LIMIT ?""",
+        (runner_id, limit),
+    )
+    return {"tasks": tasks}
+
+
 @app.get("/api/runner/requests/{request_id}", dependencies=[Depends(runner_auth)])
 def runner_get_request(request_id: str) -> dict:
     return {"request": runner_request(request_id)}
+
+
+@app.get("/api/runner/requests/{request_id}/codex-watch/active", dependencies=[Depends(runner_auth)])
+def runner_codex_watch_active(request_id: str) -> dict:
+    runner_request(request_id)
+    return {"active": live_codex_streams.active(request_id)}
+
+
+@app.post("/api/runner/requests/{request_id}/codex-watch/events", dependencies=[Depends(runner_auth)])
+def runner_publish_codex_events(request_id: str, payload: RunnerLiveCodexEvents) -> dict:
+    runner_request(request_id)
+    accepted = live_codex_streams.publish_many(
+        request_id,
+        [event.model_dump(mode="json") for event in payload.events],
+    )
+    return {"ok": True, "accepted": accepted}
 
 
 RUNNER_MUTABLE_FIELDS = {

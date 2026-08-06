@@ -17,6 +17,7 @@ from .services.delivery import ArtifactService, Mailer, changed_files, git, prot
 from .services.tfs import TfsClient
 from .services.process_env import git_authenticated_env, sanitized_process_env
 from .project_catalog import resolve_project_for_work_item
+from .live_stream import LiveCodexPublisher
 from .store import LocalStore
 
 
@@ -145,12 +146,17 @@ class Worker:
                 result = self._simulate_development(request_id, work_item)
                 codex_thread_id = "demo-thread"
             else:
-                run = CodexRunner().run(
-                    cwd=worktree,
-                    work_item=work_item,
-                    project=project,
-                    on_event=lambda event_type, message: self.store.add_event(request_id, event_type, message),
-                )
+                live_publisher = LiveCodexPublisher(request_id, self.store)
+                try:
+                    run = CodexRunner().run(
+                        cwd=worktree,
+                        work_item=work_item,
+                        project=project,
+                        on_event=lambda event_type, message: self.store.add_event(request_id, event_type, message),
+                        on_live_event=live_publisher.emit,
+                    )
+                finally:
+                    live_publisher.close()
                 result, codex_thread_id = run.result, run.thread_id
                 paths = changed_files(worktree, base_commit)
                 blocked = protected_changes(paths, project.get("protected_patterns", []))

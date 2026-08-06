@@ -18,8 +18,8 @@
       <nav>
         <button class="nav-item active" data-view="dashboard"><span class="nav-index">01</span><span>任务总览</span></button>
         <button class="nav-item" data-view="requests"><span class="nav-index">02</span><span>交付记录</span></button>
-        <button class="nav-item" data-view="projects"><span class="nav-index">03</span><span>自助项目</span></button>
-        {% if user.role == 'admin' %}<button class="nav-item" data-view="users"><span class="nav-index">04</span><span>账号管理</span></button>{% endif %}
+        {% if user.role == 'admin' %}<button class="nav-item" data-view="projects"><span class="nav-index">03</span><span>自助项目</span></button>
+        <button class="nav-item" data-view="users"><span class="nav-index">04</span><span>账号管理</span></button>{% endif %}
       </nav>
       <div class="sidebar-foot">
         <div class="system-status offline" id="runner-status"><i></i><span>执行器离线</span></div>
@@ -34,11 +34,12 @@
       </header>
 
       <section class="view active" id="view-dashboard">
+        {% if user.role == 'admin' %}<div class="codex-quota" id="codex-quota"><div><p class="eyebrow">CODEX CAPACITY</p><h2>套餐用量正在同步</h2></div><span class="muted">来自本机 Codex 登录态</span></div>{% endif %}
         <div class="metrics" id="metrics"></div>
         <div class="section-heading"><div><p class="eyebrow">LIVE PIPELINE</p><h2>正在运行</h2></div><span class="muted">状态每 5 秒刷新</span></div>
         <div class="run-grid" id="active-runs"></div>
         <div class="section-heading compact"><div><p class="eyebrow">RECENT SIGNALS</p><h2>最近任务</h2></div><button class="text-button" data-view-link="requests">查看全部 →</button></div>
-        <div class="table-card"><table><thead><tr><th>需求</th><th>项目</th><th>交付方式</th><th>状态</th><th>进度</th><th>更新时间</th></tr></thead><tbody id="recent-table"></tbody></table></div>
+        <div class="table-card"><table><thead><tr><th>需求</th><th>项目</th><th>交付方式</th><th>状态</th><th>最新动态</th><th>更新时间</th></tr></thead><tbody id="recent-table"></tbody></table></div>
       </section>
 
       <section class="view" id="view-requests">
@@ -46,11 +47,11 @@
         <div class="table-card"><table><thead><tr><th>需求</th><th>项目 / 发起人</th><th>交付策略</th><th>当前状态</th><th>PR</th><th>发起时间</th></tr></thead><tbody id="all-table"></tbody></table></div>
       </section>
 
-      <section class="view" id="view-projects">
+      {% if user.role == 'admin' %}<section class="view" id="view-projects">
         <div class="section-heading"><div><p class="eyebrow">SUPPORTED PROJECTS</p><h2>支持自助开发的项目</h2></div><span class="catalog-source">由本机执行器同步</span></div>
         <div class="policy-note"><b>项目目录</b><span>项目策略在本机通过 Codex 对话维护；这里展示当前已开放的项目、交付方式和执行器。</span></div>
         <div class="project-grid" id="project-grid"></div>
-      </section>
+      </section>{% endif %}
       {% if user.role == 'admin' %}
       <section class="view" id="view-users">
         <div class="section-heading"><div><p class="eyebrow">ACCESS REGISTRY</p><h2>项目经理账号</h2></div><button class="btn btn-secondary" id="new-user">＋ 新建账号</button></div>
@@ -74,6 +75,11 @@
 
   <div class="drawer-backdrop" id="detail-backdrop" hidden></div>
   <aside class="detail-drawer" id="detail-drawer" aria-hidden="true"><button class="modal-close" id="close-detail">×</button><div id="detail-content"></div></aside>
+  <aside class="codex-stream-panel" id="codex-stream-panel" aria-hidden="true">
+    <header><div><p class="eyebrow">LIVE CODEX SESSION</p><h2 id="codex-stream-title">研发过程</h2></div><button class="modal-close" id="close-codex-stream">×</button></header>
+    <div class="stream-notice"><i></i><span>仅传输打开后的输出；关闭即停止采集且不保存</span></div>
+    <div class="codex-chat" id="codex-chat"></div>
+  </aside>
 
   {% if user.role == 'admin' %}
   <div class="modal-backdrop" id="user-modal" hidden>

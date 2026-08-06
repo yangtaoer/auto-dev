@@ -14,6 +14,7 @@ flowchart LR
     Runner --> Repo["本机代码仓库与 worktree"]
     Runner --> TFS["内网 TFS / Git / PR"]
     Runner --> Build["本机构建工具链"]
+    Client["Windows C/S 执行器控制台"] -->|"回环地址 127.0.0.1:28766"| Runner
 ```
 
 云端是控制面，本机是执行面。云端不安装 Codex、不挂载代码仓库，也不保存 TFS/Codex 凭据；本机无需接受任何来自公网的连接。
@@ -40,6 +41,11 @@ sequenceDiagram
     Cloud-->>PC: 建立 queued 任务并返回策略快照
     PC->>TFS: 执行完整准入校验
     PC->>Codex: 在隔离 worktree 自动研发
+    opt 浏览器或本机客户端正在查看
+        Codex-->>PC: 回传回答摘要、命令输出与文件变更
+        PC-->>Cloud: 临时转发给云端查看者
+        Cloud-->>PM: 类 Codex 聊天框实时显示
+    end
     PC->>TFS: push feature 分支并创建 PR
     PC->>Cloud: 回传步骤、事件和交付物
     Cloud-->>PM: 邮件通知 / 云端下载链接
@@ -63,6 +69,8 @@ PR 创建时关联 TFS 工作项，目标固定为项目策略中的 `dev`（或
 - 本机 `project-presets` 是项目策略唯一配置源；执行器检测到目录变化后同步云端只读目录，删除的本机预设会在云端停用。
 - `queued` 和 `waiting_merge` 存在云端数据库，本机重启后可以继续领取或轮询。
 - 本机每 20 秒报告心跳；90 秒未上报时控制台显示离线。
+- Codex 详细输出只进入进程内存：第一个查看者打开后才开始采集，最后一个查看者关闭或超时后立即清空；数据库只保存精简状态事件。
+- 本机 C/S 控制台通过仅监听回环地址的监控接口查看任务与实时会话，并通过现有 PowerShell 管理脚本启动、停止或重启执行器。
 - 任务执行中仍会检查云端取消状态。
 - 自动开发中断后不自动从头重放，避免重复 commit、push 或 PR；保留事件、分支和错误供管理员确认。
 
