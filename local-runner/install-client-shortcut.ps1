@@ -1,14 +1,25 @@
 $ErrorActionPreference = "Stop"
 $RunnerDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ClientScript = Join-Path $RunnerDir "client.ps1"
+$ProjectRoot = Split-Path -Parent $RunnerDir
+$RunnerPythonw = Join-Path $ProjectRoot ".venv-runner\Scripts\pythonw.exe"
+$SharedPythonw = Join-Path $ProjectRoot ".venv\Scripts\pythonw.exe"
+if (Test-Path -LiteralPath $RunnerPythonw) {
+    $Pythonw = $RunnerPythonw
+}
+elseif (Test-Path -LiteralPath $SharedPythonw) {
+    $Pythonw = $SharedPythonw
+}
+else {
+    throw "缺少本机执行器 Python 环境，请先运行 local-runner\install.ps1。"
+}
 $Shell = New-Object -ComObject WScript.Shell
 $Desktop = $Shell.SpecialFolders.Item("Desktop")
 $ShortcutPath = Join-Path $Desktop "AutoDev Runner Console.lnk"
 $Shortcut = $Shell.CreateShortcut($ShortcutPath)
-$Shortcut.TargetPath = "powershell.exe"
-$Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ClientScript`""
-$Shortcut.WorkingDirectory = Split-Path -Parent $RunnerDir
-$IconPath = Join-Path (Split-Path -Parent $RunnerDir) "app\static\brand\favicon.ico"
+$Shortcut.TargetPath = $Pythonw
+$Shortcut.Arguments = "-m app.local_client"
+$Shortcut.WorkingDirectory = $ProjectRoot
+$IconPath = Join-Path $ProjectRoot "app\static\brand\favicon.ico"
 if (Test-Path -LiteralPath $IconPath) {
     $Shortcut.IconLocation = "$IconPath,0"
 }

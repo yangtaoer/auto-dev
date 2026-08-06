@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import subprocess
 import threading
@@ -12,6 +13,11 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Any, Callable
+
+os.environ.setdefault(
+    "AUTODEV_ENV_FILE",
+    str(Path(__file__).resolve().parent.parent / "local-runner" / ".env.runner"),
+)
 
 from .config import ROOT, settings
 
