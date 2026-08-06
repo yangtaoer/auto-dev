@@ -20,6 +20,10 @@ from ..domain import DELIVERY_MODE_LABELS, DeliveryMode
 from .process_env import sanitized_process_env
 
 
+BRAND_MARK_CID = "autodev-brand-mark"
+BRAND_MARK_PATH = Path(__file__).resolve().parents[1] / "static" / "brand" / "autodev-mark.png"
+
+
 def run_command(command: str, cwd: Path, timeout_minutes: int = 60) -> str:
     result = subprocess.run(
         command,
@@ -185,12 +189,12 @@ class Mailer:
         title = str(detail.get("title") or "研发任务").strip()[:80]
         return f"【AutoDev · {status}】TFS #{detail['work_item_id']}｜{title}"
 
-    def send(self, *, to: list[str], subject: str, html_body: str, attachments: list[Path] | None = None) -> None:
+    def build_message(
+        self, *, to: list[str], subject: str, html_body: str, attachments: list[Path] | None = None
+    ) -> EmailMessage:
         recipients = [email.strip() for email in to if email and email.strip()]
         if not recipients:
             raise RuntimeError("邮件没有收件人")
-        if not self.configured():
-            raise RuntimeError("未配置 SMTP_HOST/SMTP_FROM")
         message = EmailMessage()
         message["From"] = self.sender_address()
         message["To"] = ", ".join(recipients)
@@ -202,12 +206,28 @@ class Mailer:
             "AutoDev 全自助研发交付通知。请使用支持 HTML 的邮件客户端查看需求说明、代码信息和交付产物。"
         )
         message.add_alternative(html_body, subtype="html")
+        if f"cid:{BRAND_MARK_CID}" in html_body and BRAND_MARK_PATH.is_file():
+            html_part = message.get_payload()[-1]
+            html_part.add_related(
+                BRAND_MARK_PATH.read_bytes(),
+                maintype="image",
+                subtype="png",
+                cid=f"<{BRAND_MARK_CID}>",
+                filename=BRAND_MARK_PATH.name,
+                disposition="inline",
+            )
         for path in attachments or []:
             if not path.exists() or path.stat().st_size > 10 * 1024 * 1024:
                 continue
             mime, _ = mimetypes.guess_type(path.name)
             maintype, subtype = (mime or "application/octet-stream").split("/", 1)
             message.add_attachment(path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name)
+        return message
+
+    def send(self, *, to: list[str], subject: str, html_body: str, attachments: list[Path] | None = None) -> None:
+        if not self.configured():
+            raise RuntimeError("未配置 SMTP_HOST/SMTP_FROM")
+        message = self.build_message(to=to, subject=subject, html_body=html_body, attachments=attachments)
         use_smtps = settings.smtp_protocol == "smtps" or settings.smtp_port == 465
         if use_smtps:
             smtp_client = smtplib.SMTP_SSL(
@@ -331,7 +351,7 @@ class Mailer:
   <table role="presentation" width="680" cellpadding="0" cellspacing="0" style="width:100%;max-width:680px;background:#ffffff;border:1px solid #d4e1d9;box-shadow:0 10px 35px rgba(18,52,40,.08)">
     <tr><td style="padding:27px 30px;background:#0c1a14;border-bottom:4px solid {status_color}">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-        <td width="52" valign="top"><div style="width:38px;height:38px;line-height:38px;text-align:center;background:#79f2ad;color:#07110d;font:700 17px Consolas,'Courier New',monospace">A/</div></td>
+        <td width="62" valign="top"><div style="width:48px;height:48px;background:#eef6f0;text-align:center"><img src="cid:{BRAND_MARK_CID}" width="48" height="48" alt="AutoDev" style="display:block;width:48px;height:48px;border:0;object-fit:contain"></div></td>
         <td valign="top"><div style="color:#79f2ad;font:700 10px Consolas,'Courier New',monospace;letter-spacing:.16em">AUTODEV · DELIVERY SIGNAL</div><div style="margin-top:7px;color:#f0f7f2;font-size:22px;font-weight:700">{status_label}</div></td>
         <td width="110" align="right" valign="top"><span style="display:inline-block;padding:6px 9px;border:1px solid {status_color};color:{status_color};font:700 10px Consolas,'Courier New',monospace">TFS #{detail['work_item_id']}</span></td>
       </tr></table>

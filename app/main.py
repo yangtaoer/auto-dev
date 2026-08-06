@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="全自助需求研发交付",
-    version="0.3.6",
+    version="0.3.7",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -175,6 +175,10 @@ class RunnerEventInput(BaseModel):
 
 class RunnerNotifyInput(BaseModel):
     action_required: bool = False
+
+
+class RunnerTestEmailInput(BaseModel):
+    recipient: str = Field(min_length=5, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class LiveCodexEvent(BaseModel):
@@ -950,6 +954,19 @@ def runner_notify(request_id: str, payload: RunnerNotifyInput) -> dict:
         "已发送 PR 待审核邮件" if payload.action_required else "已发送最终交付邮件",
     )
     return {"ok": True}
+
+
+@app.post("/api/runner/requests/{request_id}/test-email", dependencies=[Depends(runner_auth)])
+def runner_test_email(request_id: str, payload: RunnerTestEmailInput) -> dict:
+    detail = runner_request(request_id)
+    mailer = Mailer()
+    if not mailer.configured():
+        raise HTTPException(status_code=503, detail="云端 SMTP 尚未配置")
+    title = str(detail.get("title") or "研发任务").strip()[:80]
+    subject = f"【AutoDev · 测试邮件】TFS #{detail['work_item_id']}｜{title}"
+    mailer.send(to=[payload.recipient], subject=subject, html_body=mailer.delivery_html(detail))
+    add_event(request_id, "mail.template_test", "已发送新版交付模板测试邮件")
+    return {"ok": True, "recipient": payload.recipient}
 
 
 @app.get("/api/artifacts/{artifact_id}")

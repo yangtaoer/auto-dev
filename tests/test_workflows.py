@@ -121,11 +121,35 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("5 分 24 秒", rendered)
         self.assertIn("下载产物", rendered)
         self.assertIn("提交人", rendered)
+        self.assertIn("cid:autodev-brand-mark", rendered)
+        message = mailer.build_message(
+            to=["recipient@example.com"], subject=mailer.delivery_subject(detail), html_body=rendered
+        )
+        inline_images = [part for part in message.walk() if part.get_content_type() == "image/png"]
+        self.assertEqual(len(inline_images), 1)
+        self.assertEqual(inline_images[0]["Content-ID"], "<autodev-brand-mark>")
+        self.assertEqual(inline_images[0].get_filename(), "autodev-mark.png")
 
         waiting = mailer.delivery_html({**detail, "completed_at": None, "pr_url": "https://tfs.test/pr/14"}, action_required=True)
         self.assertIn("需要项目经理协同处理", waiting)
         self.assertIn("打开 PR 并安排合并", waiting)
         self.assertIn("进行中", waiting)
+
+    def test_runner_can_send_branded_test_email(self) -> None:
+        project_id = self.create_project("test-branded-email", "local_package")
+        detail = self.submit_and_process(project_id, 910015)
+        headers = {"Authorization": "Bearer test-runner-token"}
+        with patch("app.main.Mailer.configured", return_value=True), patch("app.main.Mailer.send") as sender:
+            response = self.client.post(
+                f"/api/runner/requests/{detail['id']}/test-email",
+                headers=headers,
+                json={"recipient": "yangtao2@tellhow.com"},
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["recipient"], "yangtao2@tellhow.com")
+        sender.assert_called_once()
+        self.assertIn("【AutoDev · 测试邮件】", sender.call_args.kwargs["subject"])
+        self.assertIn("cid:autodev-brand-mark", sender.call_args.kwargs["html_body"])
 
     def test_two_requests_can_be_submitted_concurrently_and_both_delivered(self) -> None:
         project_id = self.create_project("test-concurrent", "local_package")
@@ -345,7 +369,7 @@ class WorkflowTests(unittest.TestCase):
             json={
                 "runner_id": "quota-test-runner",
                 "hostname": "quota-pc",
-                "version": "0.3.6",
+                "version": "0.3.7",
                 "state": "idle",
                 "codex_usage": {
                     "available": True,
