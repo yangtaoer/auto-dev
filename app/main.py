@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="全自助需求研发交付",
-    version="0.3.7",
+    version="0.3.8",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -967,6 +967,11 @@ def runner_test_email(request_id: str, payload: RunnerTestEmailInput) -> dict:
     mailer.send(to=[payload.recipient], subject=subject, html_body=mailer.delivery_html(detail))
     add_event(request_id, "mail.template_test", "已发送新版交付模板测试邮件")
     return {"ok": True, "recipient": payload.recipient}
+
+
+@app.get("/api/runner/email-template", dependencies=[Depends(runner_auth)])
+def runner_email_template() -> dict:
+    return {"template": "compact-wide", "card_width": 860, "brand_mark": "autodev-mark.png"}
 
 
 @app.get("/api/artifacts/{artifact_id}")

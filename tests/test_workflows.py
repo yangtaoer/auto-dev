@@ -122,6 +122,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("下载产物", rendered)
         self.assertIn("提交人", rendered)
         self.assertIn("cid:autodev-brand-mark", rendered)
+        self.assertIn('width="860"', rendered)
+        self.assertIn('max-width:860px', rendered)
+        self.assertIn('width="25%"', rendered)
+        self.assertIn('width="33.33%"', rendered)
         message = mailer.build_message(
             to=["recipient@example.com"], subject=mailer.delivery_subject(detail), html_body=rendered
         )
@@ -150,6 +154,10 @@ class WorkflowTests(unittest.TestCase):
         sender.assert_called_once()
         self.assertIn("【AutoDev · 测试邮件】", sender.call_args.kwargs["subject"])
         self.assertIn("cid:autodev-brand-mark", sender.call_args.kwargs["html_body"])
+        template = self.client.get("/api/runner/email-template", headers=headers)
+        self.assertEqual(template.status_code, 200, template.text)
+        self.assertEqual(template.json()["template"], "compact-wide")
+        self.assertEqual(template.json()["card_width"], 860)
 
     def test_two_requests_can_be_submitted_concurrently_and_both_delivered(self) -> None:
         project_id = self.create_project("test-concurrent", "local_package")
@@ -369,7 +377,7 @@ class WorkflowTests(unittest.TestCase):
             json={
                 "runner_id": "quota-test-runner",
                 "hostname": "quota-pc",
-                "version": "0.3.7",
+                "version": "0.3.8",
                 "state": "idle",
                 "codex_usage": {
                     "available": True,
