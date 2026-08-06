@@ -3,7 +3,7 @@ $RunnerDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ClientScript = Join-Path $RunnerDir "client.ps1"
 $Shell = New-Object -ComObject WScript.Shell
 $Desktop = $Shell.SpecialFolders.Item("Desktop")
-$ShortcutPath = Join-Path $Desktop "AutoDev 执行器控制台.lnk"
+$ShortcutPath = Join-Path $Desktop "AutoDev Runner Console.lnk"
 $Shortcut = $Shell.CreateShortcut($ShortcutPath)
 $Shortcut.TargetPath = "powershell.exe"
 $Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ClientScript`""
@@ -14,4 +14,8 @@ if (Test-Path -LiteralPath $IconPath) {
 }
 $Shortcut.Description = "查看并控制 AutoDev 本机执行器"
 $Shortcut.Save()
-Write-Host "已创建桌面快捷方式：$ShortcutPath"
+$Verified = $Shell.CreateShortcut($ShortcutPath)
+if (-not $Verified.TargetPath) {
+    throw "快捷方式创建后校验失败：$ShortcutPath"
+}
+Write-Host "已创建并校验桌面快捷方式：$ShortcutPath"
