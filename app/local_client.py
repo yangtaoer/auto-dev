@@ -56,7 +56,7 @@ class AutoDevConsole:
         self.root = root
         self.root.title("AutoDev 执行器控制台")
         self.root.geometry("1320x820")
-        self.root.minsize(1040, 680)
+        self.root.minsize(1180, 680)
         self.root.configure(bg=INK)
         self.results: queue.Queue[tuple[Callable[..., None] | None, Any, Exception | None]] = queue.Queue()
         self.tasks: dict[str, dict[str, Any]] = {}
@@ -128,9 +128,9 @@ class AutoDevConsole:
         body = tk.PanedWindow(self.root, orient="horizontal", bg=INK, bd=0, sashwidth=7, sashrelief="flat")
         body.pack(fill="both", expand=True, padx=20, pady=20)
 
-        left = tk.Frame(body, bg=PANEL, highlightbackground=LINE, highlightthickness=1, width=450)
+        left = tk.Frame(body, bg=PANEL, highlightbackground=LINE, highlightthickness=1, width=620)
         right = tk.Frame(body, bg=PANEL, highlightbackground=LINE, highlightthickness=1)
-        body.add(left, minsize=360, width=450)
+        body.add(left, minsize=560, width=620)
         body.add(right, minsize=560)
         self._build_task_list(left)
         self._build_detail(right)
@@ -138,7 +138,7 @@ class AutoDevConsole:
         controls = tk.Frame(self.root, bg=DEEP, height=62, highlightbackground=LINE, highlightthickness=1)
         controls.pack(fill="x")
         controls.pack_propagate(False)
-        tk.Label(controls, text="RUNNER CONTROL", bg=DEEP, fg=MUTED, font=(MONO, 9, "bold")).pack(side="left", padx=25)
+        tk.Label(controls, text="执行器控制 / RUNNER CONTROL", bg=DEEP, fg=MUTED, font=(MONO, 9, "bold")).pack(side="left", padx=25)
         self._control_button(controls, "启动执行器", "start.ps1", ACID).pack(side="left", padx=5, pady=12)
         self._control_button(controls, "停止执行器", "stop.ps1", RED).pack(side="left", padx=5, pady=12)
         self._control_button(controls, "重启执行器", "restart.ps1", AMBER).pack(side="left", padx=5, pady=12)
@@ -148,7 +148,7 @@ class AutoDevConsole:
     def _build_task_list(self, parent: tk.Frame) -> None:
         top = tk.Frame(parent, bg=PANEL)
         top.pack(fill="x", padx=18, pady=(18, 12))
-        tk.Label(top, text="CURRENT / RECENT", bg=PANEL, fg=ACID, font=(MONO, 9, "bold")).pack(anchor="w")
+        tk.Label(top, text="当前 / 最近 · CURRENT / RECENT", bg=PANEL, fg=ACID, font=(MONO, 9, "bold")).pack(anchor="w")
         row = tk.Frame(top, bg=PANEL)
         row.pack(fill="x", pady=(5, 0))
         tk.Label(row, text="执行任务", bg=PANEL, fg=PAPER, font=("Microsoft YaHei UI", 17, "bold")).pack(side="left")
@@ -159,16 +159,21 @@ class AutoDevConsole:
         tree_frame = tk.Frame(parent, bg=PANEL)
         tree_frame.pack(fill="both", expand=True, padx=1, pady=(0, 1))
         self.task_tree = ttk.Treeview(
-            tree_frame, style="Auto.Treeview", columns=("id", "status"), show="headings", selectmode="browse"
+            tree_frame, style="Auto.Treeview",
+            columns=("id", "requester", "submitted", "status"), show="headings", selectmode="browse",
         )
         self.task_scrollbar = ttk.Scrollbar(
             tree_frame, orient="vertical", style="Auto.Vertical.TScrollbar", command=self.task_tree.yview
         )
         self.task_tree.configure(yscrollcommand=self.task_scrollbar.set)
         self.task_tree.heading("id", text="TFS / 项目")
+        self.task_tree.heading("requester", text="提交人")
+        self.task_tree.heading("submitted", text="提交时间")
         self.task_tree.heading("status", text="状态")
-        self.task_tree.column("id", width=285, anchor="w")
-        self.task_tree.column("status", width=120, anchor="w")
+        self.task_tree.column("id", width=275, minwidth=220, anchor="w")
+        self.task_tree.column("requester", width=85, minwidth=70, anchor="w")
+        self.task_tree.column("submitted", width=105, minwidth=95, anchor="w")
+        self.task_tree.column("status", width=90, minwidth=80, anchor="w")
         self.task_tree.pack(side="left", fill="both", expand=True)
         self.task_scrollbar.pack(side="right", fill="y")
         self.task_tree.bind("<<TreeviewSelect>>", self._select_task)
@@ -353,7 +358,10 @@ class AutoDevConsole:
         for task in tasks:
             work = f"#{task.get('work_item_id')}  {task.get('title') or '正在读取需求…'}\n{task.get('project_name') or ''}"
             status = STATUS.get(task.get("status"), task.get("status", ""))
-            self.task_tree.insert("", "end", iid=task["id"], values=(work, status))
+            self.task_tree.insert(
+                "", "end", iid=task["id"],
+                values=(work, task.get("requester_name") or "—", self._format_datetime(task.get("created_at")), status),
+            )
         if previous and previous in self.tasks:
             self.task_tree.selection_set(previous)
         elif tasks:
@@ -556,6 +564,15 @@ class AutoDevConsole:
             return ""
         try:
             return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone().strftime("%H:%M:%S")
+        except ValueError:
+            return str(value)
+
+    @staticmethod
+    def _format_datetime(value: Any) -> str:
+        if not value:
+            return "—"
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone().strftime("%m-%d %H:%M")
         except ValueError:
             return str(value)
 

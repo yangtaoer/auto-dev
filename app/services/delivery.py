@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import fnmatch
 import html
-import json
 import mimetypes
 import shutil
 import smtplib
@@ -121,40 +120,6 @@ class ArtifactService:
             marker.write_text("构建成功，但配置的 package_patterns 未匹配到文件。\n", encoding="utf-8")
             ids.append(self.record(request_id, "package_note", marker.name, str(marker)))
         return ids
-
-    def create_report(self, request_id: str) -> int:
-        detail = self.detail_loader(request_id)
-        if not detail:
-            raise RuntimeError("交付任务不存在")
-        started = detail.get("started_at") or detail["created_at"]
-        completed = detail.get("completed_at") or datetime.now(UTC).isoformat()
-        body = {
-            "request_id": request_id,
-            "work_item_id": detail["work_item_id"],
-            "title": detail["title"],
-            "project": detail["project_name"],
-            "delivery_mode": detail["delivery_mode"],
-            "started_at": started,
-            "completed_at": completed,
-            "branch": detail.get("branch_name"),
-            "commit": detail.get("commit_hash"),
-            "pull_request": detail.get("pr_url"),
-            "merge_commit": detail.get("merge_commit"),
-            "summary": detail.get("result_summary"),
-            "notification_emails": detail.get("notification_emails", []),
-            "artifact_retention_days": settings.oss_retention_days,
-            "artifacts": [
-                {
-                    "kind": item["kind"],
-                    "name": item["name"],
-                    "url": item.get("external_url") or f"{self.public_base_url}/api/artifacts/{item['id']}",
-                }
-                for item in detail["artifacts"]
-            ],
-        }
-        target = self.request_dir(request_id) / "delivery-report.json"
-        target.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
-        return self.record(request_id, "report", "delivery-report.json", str(target))
 
     def create_merge_evidence(self, request_id: str, pr: dict, pr_url: str) -> int:
         target_dir = self.request_dir(request_id)

@@ -528,7 +528,10 @@ def request_detail(request_id: str) -> dict[str, Any] | None:
         return None
     request["steps"] = rows("SELECT * FROM delivery_steps WHERE request_id=? ORDER BY id", (request_id,))
     request["events"] = rows("SELECT * FROM delivery_events WHERE request_id=? ORDER BY id DESC LIMIT 100", (request_id,))
-    request["artifacts"] = rows("SELECT * FROM delivery_artifacts WHERE request_id=? ORDER BY id", (request_id,))
+    request["artifacts"] = rows(
+        "SELECT * FROM delivery_artifacts WHERE request_id=? AND kind<>'report' ORDER BY id",
+        (request_id,),
+    )
     request["policy_snapshot"] = json_value(request["policy_snapshot"], {})
     request["notification_emails"] = json_value(request.get("notification_emails"), [request["requester_email"]])
     return request

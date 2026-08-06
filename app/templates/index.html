@@ -29,32 +29,34 @@
 
     <main class="main-stage">
       <header class="topbar">
-        <div><p class="eyebrow" id="view-code">CONTROL ROOM / 01</p><h1 id="view-title">任务总览</h1></div>
+        <div><p class="eyebrow" id="view-code">控制室 / CONTROL ROOM / 01</p><h1 id="view-title">任务总览</h1></div>
         <div class="top-actions"><span class="clock" id="clock"></span><button class="btn btn-primary" id="open-request">＋ 发起自动研发</button></div>
       </header>
 
       <section class="view active" id="view-dashboard">
-        {% if user.role == 'admin' %}<div class="codex-quota" id="codex-quota"><div><p class="eyebrow">CODEX CAPACITY</p><h2>套餐用量正在同步</h2></div><span class="muted">来自本机 Codex 登录态</span></div>{% endif %}
+        {% if user.role == 'admin' %}<div class="codex-quota" id="codex-quota"><div><p class="eyebrow">套餐容量 / CODEX CAPACITY</p><h2>套餐用量正在同步</h2></div><span class="muted">来自本机 Codex 登录态</span></div>{% endif %}
         <div class="metrics" id="metrics"></div>
-        <div class="section-heading"><div><p class="eyebrow">LIVE PIPELINE</p><h2>正在运行</h2></div><span class="muted">状态每 5 秒刷新</span></div>
-        <div class="run-grid" id="active-runs"></div>
-        <div class="section-heading compact"><div><p class="eyebrow">RECENT SIGNALS</p><h2>最近任务</h2></div><button class="text-button" data-view-link="requests">查看全部 →</button></div>
+        <section class="active-pipeline" id="active-pipeline" hidden>
+          <div class="section-heading"><div><p class="eyebrow">运行流水线 / LIVE PIPELINE</p><h2>正在运行</h2></div><span class="muted">状态每 5 秒刷新</span></div>
+          <div class="run-grid" id="active-runs"></div>
+        </section>
+        <div class="section-heading compact"><div><p class="eyebrow">最近动态 / RECENT SIGNALS</p><h2>最近任务</h2></div><button class="text-button" data-view-link="requests">查看全部 →</button></div>
         <div class="table-card"><table><thead><tr><th>需求</th><th>项目</th><th>交付方式</th><th>状态</th><th>最新动态</th><th>更新时间</th></tr></thead><tbody id="recent-table"></tbody></table></div>
       </section>
 
       <section class="view" id="view-requests">
-        <div class="section-heading"><div><p class="eyebrow">DELIVERY LEDGER</p><h2>全部交付记录</h2></div><div class="filter-chips"><button class="chip active" data-filter="all">全部</button><button class="chip" data-filter="waiting_merge">等待合并</button><button class="chip" data-filter="delivered">已交付</button><button class="chip" data-filter="failed">失败</button></div></div>
-        <div class="table-card"><table><thead><tr><th>需求</th><th>项目 / 发起人</th><th>交付策略</th><th>当前状态</th><th>PR</th><th>发起时间</th></tr></thead><tbody id="all-table"></tbody></table></div>
+        <div class="section-heading"><div><p class="eyebrow">交付台账 / DELIVERY LEDGER</p><h2>全部交付记录</h2></div><div class="filter-chips"><button class="chip active" data-filter="all">全部</button><button class="chip" data-filter="waiting_merge">等待合并</button><button class="chip" data-filter="delivered">已交付</button><button class="chip" data-filter="failed">失败</button></div></div>
+        <div class="table-card delivery-table"><table><thead><tr><th>需求 / 项目</th><th>当前状态</th><th>提交人</th><th>提交时间</th><th>完成时间</th><th>耗时</th><th>交付产物</th></tr></thead><tbody id="all-table"></tbody></table></div>
       </section>
 
       {% if user.role == 'admin' %}<section class="view" id="view-projects">
-        <div class="section-heading"><div><p class="eyebrow">SUPPORTED PROJECTS</p><h2>支持自助开发的项目</h2></div><span class="catalog-source">由本机执行器同步</span></div>
+        <div class="section-heading"><div><p class="eyebrow">支持项目 / SUPPORTED PROJECTS</p><h2>支持自助开发的项目</h2></div><span class="catalog-source">由本机执行器同步</span></div>
         <div class="policy-note"><b>项目目录</b><span>项目策略在本机通过 Codex 对话维护；这里展示当前已开放的项目、交付方式和执行器。</span></div>
         <div class="project-grid" id="project-grid"></div>
       </section>{% endif %}
       {% if user.role == 'admin' %}
       <section class="view" id="view-users">
-        <div class="section-heading"><div><p class="eyebrow">ACCESS REGISTRY</p><h2>项目经理账号</h2></div><button class="btn btn-secondary" id="new-user">＋ 新建账号</button></div>
+        <div class="section-heading"><div><p class="eyebrow">账号管理 / ACCESS REGISTRY</p><h2>项目经理账号</h2></div><button class="btn btn-secondary" id="new-user">＋ 新建账号</button></div>
         <div class="policy-note"><b>邮件身份</b><span>每个账号可维护多个邮箱；发起需求时可以从自己的邮箱中选择本次通知对象。</span></div>
         <div class="table-card"><table><thead><tr><th>登录账号</th><th>姓名</th><th>通知邮箱</th><th>角色</th><th>状态</th><th>操作</th></tr></thead><tbody id="users-table"></tbody></table></div>
       </section>
@@ -63,7 +65,7 @@
   </div>
 
   <div class="modal-backdrop" id="request-modal" hidden>
-    <section class="modal request-modal"><button class="modal-close" data-close>×</button><p class="eyebrow">NEW DEVELOPMENT RUN</p><h2>发起自动研发</h2><p class="muted">输入 TFS 用户情景编号，执行器会自动识别项目和交付策略。</p>
+    <section class="modal request-modal"><button class="modal-close" data-close>×</button><p class="eyebrow">新研发任务 / NEW DEVELOPMENT RUN</p><h2>发起自动研发</h2><p class="muted">输入 TFS 用户情景编号，执行器会自动识别项目和交付策略。</p>
       <form id="request-form" class="form-grid">
         <label class="span-2"><span>TFS 用户情景编号</span><input type="number" name="work_item_id" min="1" placeholder="例如：1551572" required></label>
         <div class="span-2 field-block"><div class="field-label">通知邮箱 <small>可多选，默认全部选中</small></div><div class="mail-choice-grid" id="request-email-options"></div></div>
@@ -76,14 +78,14 @@
   <div class="drawer-backdrop" id="detail-backdrop" hidden></div>
   <aside class="detail-drawer" id="detail-drawer" aria-hidden="true"><button class="modal-close" id="close-detail">×</button><div id="detail-content"></div></aside>
   <aside class="codex-stream-panel" id="codex-stream-panel" aria-hidden="true">
-    <header><div><p class="eyebrow">LIVE CODEX SESSION</p><h2 id="codex-stream-title">研发过程</h2></div><button class="modal-close" id="close-codex-stream">×</button></header>
+    <header><div><p class="eyebrow">实时研发会话 / LIVE CODEX SESSION</p><h2 id="codex-stream-title">研发过程</h2></div><button class="modal-close" id="close-codex-stream">×</button></header>
     <div class="stream-notice"><i></i><span>仅传输打开后的输出；关闭即停止采集且不保存</span></div>
     <div class="codex-chat" id="codex-chat"></div>
   </aside>
 
   {% if user.role == 'admin' %}
   <div class="modal-backdrop" id="user-modal" hidden>
-    <section class="modal"><button class="modal-close" data-close>×</button><p class="eyebrow">ACCESS REGISTRY</p><h2 id="user-modal-title">新建内部账号</h2>
+    <section class="modal"><button class="modal-close" data-close>×</button><p class="eyebrow">账号管理 / ACCESS REGISTRY</p><h2 id="user-modal-title">新建内部账号</h2>
       <form id="user-form" class="form-grid">
         <input type="hidden" name="id">
         <label><span>登录账号</span><input name="username" required placeholder="zhangsan"></label><label><span>姓名</span><input name="display_name" required placeholder="张三"></label>

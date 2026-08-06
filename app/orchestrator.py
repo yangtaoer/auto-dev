@@ -406,7 +406,6 @@ class Worker:
 
     def _complete_delivery(self, request_id: str) -> None:
         self.store.update_request(request_id, status=RunStatus.DELIVERING.value, progress=96, completed_at=utc_now())
-        self.artifacts.create_report(request_id)
         self._send_status_email(request_id, action_required=False)
         self.store.update_request(request_id, status=RunStatus.DELIVERED.value, current_step="deliver", progress=100, completed_at=utc_now())
         self.store.update_step(request_id, "deliver", "completed", "交付邮件和产物已生成")

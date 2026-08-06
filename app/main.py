@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="全自助需求研发交付",
-    version="0.3.4",
+    version="0.3.5",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -351,6 +351,32 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
             {recent_scope} ORDER BY r.created_at DESC LIMIT 40""",
         params,
     )
+    request_ids = [item["id"] for item in (*active, *recent)]
+    artifact_map: dict[str, list[dict[str, Any]]] = {request_id: [] for request_id in request_ids}
+    if request_ids:
+        placeholders = ",".join("?" for _ in request_ids)
+        for artifact in rows(
+            f"""SELECT id,request_id,kind,name,external_url,size_bytes
+                FROM delivery_artifacts
+                WHERE request_id IN ({placeholders}) AND kind<>'report'
+                ORDER BY id""",
+            tuple(request_ids),
+        ):
+            artifact_map.setdefault(artifact["request_id"], []).append(artifact)
+    terminal_statuses = {"delivered", "failed", "rejected", "cancelled"}
+    current_time = datetime.now(UTC)
+    for item in (*active, *recent):
+        item["artifacts"] = artifact_map.get(item["id"], [])
+        started_value = item.get("started_at") or item.get("created_at")
+        ended_value = item.get("completed_at")
+        if not ended_value and item.get("status") in terminal_statuses:
+            ended_value = item.get("updated_at")
+        try:
+            started = datetime.fromisoformat(started_value) if started_value else None
+            ended = datetime.fromisoformat(ended_value) if ended_value else current_time
+            item["duration_seconds"] = max(0, int((ended - started).total_seconds())) if started else None
+        except (TypeError, ValueError):
+            item["duration_seconds"] = None
     runners = rows("SELECT * FROM runners ORDER BY runner_id")
     now = datetime.now(UTC)
     for item in runners:

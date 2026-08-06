@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -77,8 +78,39 @@ class WorkflowTests(unittest.TestCase):
         detail = self.submit_and_process(project_id, 910001)
         self.assertEqual(detail["status"], "delivered")
         kinds = {artifact["kind"] for artifact in detail["artifacts"]}
-        self.assertTrue({"package", "sql", "config", "report"}.issubset(kinds))
+        self.assertTrue({"package", "sql", "config"}.issubset(kinds))
+        self.assertNotIn("report", kinds)
         self.assertTrue(any(event["event_type"] == "delivery.policy_enforced" for event in detail["events"]))
+
+    def test_two_requests_can_be_submitted_concurrently_and_both_delivered(self) -> None:
+        project_id = self.create_project("test-concurrent", "local_package")
+
+        def submit(work_item_id: int) -> tuple[int, dict]:
+            response = self.client.post(
+                "/api/requests", json={"project_id": project_id, "work_item_id": work_item_id}
+            )
+            return response.status_code, response.json()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(submit, (910012, 910013)))
+
+        self.assertEqual([status for status, _ in results], [200, 200])
+        request_ids = [payload["id"] for _, payload in results]
+        self.assertEqual(len(set(request_ids)), 2)
+        self.assertTrue(all(payload["status"] == "queued" for _, payload in results))
+
+        worker.process_once()
+        worker.process_once()
+        details = [self.client.get(f"/api/requests/{request_id}").json()["request"] for request_id in request_ids]
+        self.assertTrue(all(detail["status"] == "delivered" for detail in details))
+        dashboard = self.client.get("/api/dashboard").json()
+        submitted = [item for item in dashboard["recent"] if item["id"] in request_ids]
+        self.assertEqual(len(submitted), 2)
+        self.assertTrue(all(item["requester_name"] == "系统管理员" for item in submitted))
+        self.assertTrue(all(item["completed_at"] for item in submitted))
+        self.assertTrue(all(item["duration_seconds"] is not None for item in submitted))
+        self.assertTrue(all(item["artifacts"] for item in submitted))
+        self.assertTrue(all(not any(a["kind"] == "report" for a in item["artifacts"]) for item in submitted))
 
     def test_codex_live_result_is_chinese_markdown_without_raw_json_or_system_events(self) -> None:
         raw = json.dumps(
@@ -268,7 +300,7 @@ class WorkflowTests(unittest.TestCase):
             json={
                 "runner_id": "quota-test-runner",
                 "hostname": "quota-pc",
-                "version": "0.3.4",
+                "version": "0.3.5",
                 "state": "idle",
                 "codex_usage": {
                     "available": True,
