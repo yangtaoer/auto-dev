@@ -1,5 +1,7 @@
 .artifact-link{background:transparent}
 @keyframes spin{to{transform:rotate(360deg)}}
+.artifact-action-pair{display:inline-flex;align-items:stretch;gap:4px}.artifact-link.artifact-download-link{border-color:#4f725f;color:#d9e8df}.artifact-link.artifact-download-link:hover{border-color:var(--acid);color:var(--acid)}
+.merge-screenshot-preview{display:block;width:100%;padding:0;border:0;background:transparent;color:inherit;text-align:left}.merge-screenshot-preview:focus-visible{outline:2px solid var(--acid);outline-offset:-2px}.merge-screenshot-download{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-top:1px solid #315344;background:#102219;color:#dbe9e1;font:700 10px Consolas,monospace;text-decoration:none;letter-spacing:.04em;transition:.18s}.merge-screenshot-download i{color:var(--acid);font-style:normal}.merge-screenshot-download:hover{background:var(--acid);color:var(--ink)}.merge-screenshot-download:hover i{color:var(--ink)}
 :root{
   --ink:#08110e;--deep:#0c1713;--panel:#11211a;--panel-2:#152820;--line:#294338;
   --paper:#eef6f0;--muted:#8ca499;--acid:#79f2ad;--amber:#ffc857;--red:#ff746d;--blue:#7cb8ff;

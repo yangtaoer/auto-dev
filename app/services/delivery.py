@@ -419,7 +419,7 @@ class Mailer:
         for item in detail.get("artifacts", []):
             artifact_url = item.get("external_url") or f"{settings.public_base_url}/api/artifacts/{item['id']}"
             kind = kind_labels.get(item.get("kind"), item.get("kind") or "交付文件")
-            action_label = "查看截图" if item.get("kind") == "merge_screenshot" else "下载产物"
+            action_label = "下载截图" if item.get("kind") == "merge_screenshot" else "下载产物"
             artifact_lines.append(
                 f"""<tr><td style="padding:0 0 7px 0">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d8e5dd;background:#f8fbf9">

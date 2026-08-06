@@ -613,7 +613,7 @@ class WorkflowTests(unittest.TestCase):
             json={
                 "runner_id": "quota-test-runner",
                 "hostname": "quota-pc",
-                "version": "0.4.4",
+                "version": "0.4.5",
                 "state": "idle",
                 "current_request_ids": [],
                 "max_concurrency": 5,
@@ -647,12 +647,14 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
 
         page = self.client.get("/")
-        self.assertIn("SYSTEM v0.4.4", page.text)
+        self.assertIn("SYSTEM v0.4.5", page.text)
         self.assertIn("control-strip", page.text)
         script = self.client.get("/static/app.js").text
         self.assertIn("addOptimisticIntake", script)
         self.assertIn("renderActiveRuns", script)
         self.assertIn("merge-screenshot-grid", script)
+        self.assertIn("merge-screenshot-download", script)
+        self.assertIn("下载原图", page.text)
         self.assertIn("openArtifactPreview", script)
         self.assertIn("visibleArtifacts", script)
         self.assertNotIn("activeEl.innerHTML=state.dashboard.active", script)
