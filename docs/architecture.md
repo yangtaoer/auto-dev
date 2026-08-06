@@ -28,13 +28,17 @@ sequenceDiagram
     participant TFS as TFS
     participant Codex as 本机 Codex
 
-    PM->>Cloud: 选择项目并输入 TFS 编号
-    Cloud-->>PM: 建立 queued 任务
+    PM->>Cloud: 输入 TFS 编号
+    Cloud-->>PM: 建立项目识别任务
     loop 每 2 秒领取 / 每 20 秒心跳
         PC->>Cloud: 出站 HTTPS 轮询
     end
-    Cloud-->>PC: 返回属于 runner_id 的任务和策略快照
-    PC->>TFS: 校验用户情景与 Area Path
+    Cloud-->>PC: 返回待识别的 TFS 编号
+    PC->>TFS: 读取用户情景与 Area Path
+    PC->>PC: 匹配最具体的本机项目预设
+    PC->>Cloud: 回传项目标识
+    Cloud-->>PC: 建立 queued 任务并返回策略快照
+    PC->>TFS: 执行完整准入校验
     PC->>Codex: 在隔离 worktree 自动研发
     PC->>TFS: push feature 分支并创建 PR
     PC->>Cloud: 回传步骤、事件和交付物
@@ -55,7 +59,7 @@ PR 创建时关联 TFS 工作项，目标固定为项目策略中的 `dev`（或
 
 `queued → validating → developing → submitting/building → waiting_merge → capturing → delivering → delivered`
 
-- 项目策略在发起时完整快照，后续修改不会改变进行中的任务。
+- 项目匹配成功时完整快照项目策略，后续修改不会改变进行中的任务。
 - 本机 `project-presets` 是项目策略唯一配置源；执行器检测到目录变化后同步云端只读目录，删除的本机预设会在云端停用。
 - `queued` 和 `waiting_merge` 存在云端数据库，本机重启后可以继续领取或轮询。
 - 本机每 20 秒报告心跳；90 秒未上报时控制台显示离线。

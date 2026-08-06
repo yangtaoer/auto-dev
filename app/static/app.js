@@ -8,6 +8,7 @@ const MODE = {
 const STATUS = {queued:'等待执行',validating:'准入校验',developing:'Codex 研发中',submitting:'提交代码',building:'本地构建',waiting_merge:'等待 PR 合并',capturing:'生成合并凭证',delivering:'发送交付邮件',delivered:'已交付',waiting_approval:'等待人工确认',rejected:'准入驳回',failed:'执行失败',cancelled:'已取消'};
 const escapeHtml = (value='') => String(value).replace(/[&<>'"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const fmt = value => value ? new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(value)) : '—';
+const delay = milliseconds => new Promise(resolve=>setTimeout(resolve,milliseconds));
 
 async function api(url, options={}) {
   const response = await fetch(url,{headers:{'Content-Type':'application/json',...(options.headers||{})},...options});
@@ -28,7 +29,7 @@ function switchView(name){
 async function refresh(){
   const userRequest=USER.role==='admin'?api('/api/users'):Promise.resolve({users:[]});
   const [dashboard,projects,me,users]=await Promise.all([api('/api/dashboard'),api('/api/projects'),api('/api/me'),userRequest]);
-  Object.assign(USER,me.user);state.dashboard=dashboard;state.projects=projects.projects;state.users=users.users||[];renderDashboard();renderProjects();renderUsers();fillProjectSelect();renderRequestEmailOptions(false);
+  Object.assign(USER,me.user);state.dashboard=dashboard;state.projects=projects.projects;state.users=users.users||[];renderDashboard();renderProjects();renderUsers();renderRequestEmailOptions(false);
   if(state.selectedRequest) refreshDetail(state.selectedRequest,true);
 }
 function renderDashboard(){
@@ -41,7 +42,7 @@ function renderDashboard(){
   document.querySelector('#recent-table').innerHTML=state.dashboard.recent.slice(0,8).map(recentRow).join('')||'<tr><td colspan="6" class="muted">暂无记录</td></tr>';
   renderAllTable();bindRows();
   const runners=state.dashboard.runners||[],online=runners.filter(r=>r.online),status=document.querySelector('#runner-status');
-  status.classList.toggle('offline',online.length===0);status.querySelector('span').textContent=online.length?`本机执行器在线 · ${online.map(r=>r.runner_id).join('、')}`:'本机执行器未连接';
+  status.classList.toggle('offline',online.length===0);status.querySelector('span').textContent=online.length?'执行器在线':'执行器离线';
 }
 function runCard(r){return `<article class="run-card clickable-row" data-id="${r.id}"><div class="run-top"><span class="work-id">TFS #${r.work_item_id}</span><span class="status-tag">${STATUS[r.status]||r.status}</span></div><h3>${escapeHtml(r.title||'正在读取需求…')}</h3><div class="project">${escapeHtml(r.project_name)} · ${escapeHtml(r.requester_name)}</div><div class="progress-track"><i style="width:${r.progress}%"></i></div><div class="progress-meta"><span>${MODE[r.delivery_mode]?.[0]||r.delivery_mode}</span><b>${r.progress}%</b></div></article>`}
 function recentRow(r){return `<tr class="clickable-row" data-id="${r.id}"><td class="demand-cell"><b>#${r.work_item_id}</b><span>${escapeHtml(r.title||'等待读取')}</span></td><td>${escapeHtml(r.project_name)}</td><td>${MODE[r.delivery_mode]?.[0]||r.delivery_mode}</td><td><span class="status-dot" data-status="${r.status}">${STATUS[r.status]||r.status}</span></td><td><div class="mini-progress"><i style="width:${r.progress}%"></i></div></td><td>${fmt(r.updated_at)}</td></tr>`}
@@ -62,13 +63,17 @@ function renderUsers(){
   document.querySelectorAll('.edit-user').forEach(btn=>btn.onclick=()=>openUser(state.users.find(u=>u.id===Number(btn.dataset.id))));
   document.querySelectorAll('.toggle-user').forEach(btn=>btn.onclick=()=>toggleUser(state.users.find(u=>u.id===Number(btn.dataset.id))));
 }
-function fillProjectSelect(){
-  const select=document.querySelector('#request-project'),submit=document.querySelector('#request-form button[type="submit"]'),current=select.value,available=state.projects.filter(p=>p.enabled);
-  select.innerHTML=available.length?available.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} · ${MODE[p.delivery_mode]?.[0]||p.delivery_mode}</option>`).join(''):'<option value="">暂无已同步的自助开发项目</option>';
-  select.disabled=available.length===0;submit.disabled=available.length===0;if(current&&available.some(p=>String(p.id)===current))select.value=current;updateStrategy();
-}
-function updateStrategy(){const id=Number(document.querySelector('#request-project').value),preview=document.querySelector('#strategy-preview'),p=state.projects.find(x=>x.id===id);if(!p){document.querySelector('#request-mode-row').hidden=true;preview.innerHTML='<b>等待项目目录同步</b><span>本机执行器同步完成后即可发起自动研发。</span>';return}const modeRow=document.querySelector('#request-mode-row'),modeSelect=document.querySelector('#request-mode');const canOverride=USER.role==='admin'&&p.allow_requirement_override;modeRow.hidden=!canOverride;if(!canOverride)modeSelect.value='';const selected=canOverride&&modeSelect.value?modeSelect.value:p.delivery_mode;const [name,desc]=MODE[selected];preview.innerHTML=`<b>${name}${selected!==p.delivery_mode?' · 本需求覆盖':''}</b><span>${desc}</span>`}
 function renderRequestEmailOptions(reset=true){const el=document.querySelector('#request-email-options');if(!el)return;const checked=reset?new Set(USER.emails||[]):new Set([...el.querySelectorAll('input:checked')].map(x=>x.value));const emails=USER.emails||[USER.email].filter(Boolean);el.innerHTML=emails.length?emails.map((email,index)=>`<label class="mail-choice"><input type="checkbox" name="notification_emails" value="${escapeHtml(email)}" ${reset||checked.has(email)?'checked':''}><span><b>${escapeHtml(email)}</b><small>${index===0?'主邮箱':'备用邮箱'}</small></span><i>✓</i></label>`).join(''):'<div class="mail-empty">当前账号尚未配置通知邮箱，请联系管理员。</div>'}
+
+async function waitForRouting(intakeId){
+  for(let attempt=0;attempt<120;attempt+=1){
+    const intake=(await api(`/api/intakes/${intakeId}`)).intake;
+    if(intake.status==='routed')return intake.result_request_id;
+    if(intake.status==='failed')throw new Error(intake.error_message||'未能自动识别该需求所属项目');
+    await delay(1000);
+  }
+  return null;
+}
 
 async function openDetail(id){state.selectedRequest=id;document.querySelector('#detail-backdrop').hidden=false;document.querySelector('#detail-drawer').classList.add('open');document.querySelector('#detail-drawer').setAttribute('aria-hidden','false');await refreshDetail(id)}
 async function refreshDetail(id,silent=false){
@@ -95,15 +100,13 @@ document.querySelectorAll('.nav-item').forEach(btn=>btn.onclick=()=>switchView(b
 document.querySelectorAll('[data-view-link]').forEach(btn=>btn.onclick=()=>switchView(btn.dataset.viewLink));
 document.querySelectorAll('[data-close]').forEach(btn=>btn.onclick=closeModals);
 document.querySelector('#detail-backdrop').onclick=closeDetail;document.querySelector('#close-detail').onclick=closeDetail;
-document.querySelector('#open-request').onclick=()=>{renderRequestEmailOptions(true);document.querySelector('#request-error').hidden=true;document.querySelector('#request-modal').hidden=false;updateStrategy()};
-document.querySelector('#request-project').onchange=updateStrategy;
-document.querySelector('#request-mode').onchange=updateStrategy;
+document.querySelector('#open-request').onclick=()=>{renderRequestEmailOptions(true);document.querySelector('#request-error').hidden=true;document.querySelector('#request-modal').hidden=false;setTimeout(()=>document.querySelector('#request-form [name="work_item_id"]').focus(),0)};
 document.querySelector('#logout').onclick=async()=>{await api('/api/auth/logout',{method:'POST'});location.href='/login'};
 document.querySelectorAll('.chip').forEach(btn=>btn.onclick=()=>{document.querySelectorAll('.chip').forEach(x=>x.classList.remove('active'));btn.classList.add('active');state.filter=btn.dataset.filter;renderAllTable()});
 document.querySelector('#new-user')?.addEventListener('click',()=>openUser());
 document.querySelector('#add-user-email')?.addEventListener('click',()=>addEmailRow());
 
-document.querySelector('#request-form').addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget,error=document.querySelector('#request-error');error.hidden=true;const data=Object.fromEntries(new FormData(form));data.project_id=Number(data.project_id);data.work_item_id=Number(data.work_item_id);data.notification_emails=[...form.querySelectorAll('[name="notification_emails"]:checked')].map(input=>input.value);if(!data.notification_emails.length){error.textContent='请至少选择一个通知邮箱';error.hidden=false;return}if(!data.delivery_mode)delete data.delivery_mode;try{const result=await api('/api/requests',{method:'POST',body:JSON.stringify(data)});closeModals();form.reset();toast('研发任务已进入队列');await refresh();await openDetail(result.id)}catch(err){error.textContent=err.message;error.hidden=false}});
+document.querySelector('#request-form').addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget,error=document.querySelector('#request-error'),button=form.querySelector('button[type="submit"]');error.hidden=true;const data={work_item_id:Number(form.elements.work_item_id.value),notification_emails:[...form.querySelectorAll('[name="notification_emails"]:checked')].map(input=>input.value)};if(!data.notification_emails.length){error.textContent='请至少选择一个通知邮箱';error.hidden=false;return}button.disabled=true;try{const result=await api('/api/requests',{method:'POST',body:JSON.stringify(data)});closeModals();form.reset();toast('正在自动识别需求所属项目…');const requestId=result.routing?await waitForRouting(result.id):result.id;if(requestId){toast('项目已识别，研发任务进入队列');await refresh();await openDetail(requestId)}else{toast('识别仍在后台进行，请稍后查看交付记录')}}catch(err){form.elements.work_item_id.value=data.work_item_id;document.querySelector('#request-modal').hidden=false;error.textContent=err.message;error.hidden=false}finally{button.disabled=false}});
 document.querySelector('#user-form')?.addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget,error=document.querySelector('#user-error');error.hidden=true;const id=Number(form.elements.id.value)||null;const emails=[...form.querySelectorAll('.user-email-input')].map(input=>input.value.trim()).filter(Boolean);const data={username:form.elements.username.value.trim(),display_name:form.elements.display_name.value.trim(),emails,password:form.elements.password.value,role:form.elements.role.value,active:form.elements.active.checked};if(!data.password)delete data.password;try{const result=await api(id?`/api/users/${id}`:'/api/users',{method:id?'PUT':'POST',body:JSON.stringify(data)});if(result.user.id===USER.id)Object.assign(USER,result.user);closeModals();form.reset();toast(id?'账号已更新':'账号已创建');await refresh()}catch(err){error.textContent=err.message;error.hidden=false}});
 
 setInterval(()=>{document.querySelector('#clock').textContent=new Intl.DateTimeFormat('zh-CN',{dateStyle:'medium',timeStyle:'medium',hour12:false}).format(new Date())},1000);

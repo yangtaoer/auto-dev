@@ -99,7 +99,7 @@ AUTODEV_RUNNER_ID=yangtao-pc
 2. 通过 Codex 对话新增或修改 `local-runner/project-presets/*.json`。
 3. 仓库路径填写 Windows 本机的绝对路径，例如 `D:\workspace\sc-project`。
 4. 配置允许的 TFS Area Path、基础分支、构建命令和产物匹配。
-5. 本机执行器会自动把预设同步为云端只读项目目录，所有账号均可查看和选择。
+5. 本机执行器会自动把预设同步为云端只读项目目录，所有账号均可查看；发起时只填 TFS 编号，执行器根据 Area Path 自动识别项目。
 
 ## 5. 运维
 

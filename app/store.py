@@ -118,6 +118,31 @@ class RemoteStore:
         )
         return data.get("projects", [])
 
+    def claim_intake(self) -> dict[str, Any] | None:
+        data = self._json(
+            self.client.post("/api/runner/intakes/claim", json={"runner_id": self.runner_id})
+        )
+        return data.get("intake")
+
+    def route_intake(
+        self,
+        intake_id: str,
+        *,
+        project_key: str | None = None,
+        error_message: str = "",
+    ) -> str | None:
+        data = self._json(
+            self.client.post(
+                f"/api/runner/intakes/{intake_id}/route",
+                json={
+                    "runner_id": self.runner_id,
+                    "project_key": project_key,
+                    "error_message": error_message,
+                },
+            )
+        )
+        return data.get("request_id")
+
     def next_queued(self) -> str | None:
         data = self._json(self.client.post("/api/runner/claim", json={"runner_id": self.runner_id}))
         item = data.get("request")

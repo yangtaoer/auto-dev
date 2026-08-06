@@ -16,6 +16,7 @@ from .services.codex_runner import CodexRunner
 from .services.delivery import ArtifactService, Mailer, changed_files, git, protected_changes, run_command
 from .services.tfs import TfsClient
 from .services.process_env import git_authenticated_env, sanitized_process_env
+from .project_catalog import resolve_project_for_work_item
 from .store import LocalStore
 
 
@@ -61,6 +62,12 @@ class Worker:
             self.stop_event.wait(settings.poll_seconds)
 
     def process_once(self) -> bool:
+        routed = False
+        if self.store.remote:
+            intake = self.store.claim_intake()
+            if intake:
+                routed = True
+                self._route_intake(intake)
         queued = self.store.next_queued()
         if queued:
             logger.info("开始执行研发任务 request_id=%s", queued)
@@ -79,7 +86,23 @@ class Worker:
             finally:
                 self.current_request_id = None
             return True
-        return False
+        return routed
+
+    def _route_intake(self, intake: dict) -> None:
+        try:
+            project, item = resolve_project_for_work_item(intake["work_item_id"])
+            request_id = self.store.route_intake(intake["id"], project_key=project["project_key"])
+            logger.info(
+                "TFS 需求已自动匹配项目 intake_id=%s work_item_id=%s project=%s area_path=%s request_id=%s",
+                intake["id"], intake["work_item_id"], project["project_key"], item.get("area_path", ""), request_id,
+            )
+        except Exception as exc:
+            message = str(exc)[:2000]
+            self.store.route_intake(intake["id"], error_message=message)
+            logger.warning(
+                "TFS 需求自动匹配项目失败 intake_id=%s work_item_id=%s error=%s",
+                intake["id"], intake["work_item_id"], message,
+            )
 
     def run_request(self, request_id: str) -> None:
         detail = self.store.detail(request_id)

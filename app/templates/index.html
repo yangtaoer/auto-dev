@@ -3,13 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#08110e">
   <title>全自助需求研发交付</title>
+  <link rel="icon" href="/static/brand/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
+  <link rel="manifest" href="/static/brand/site.webmanifest">
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/brand-ui.css">
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar">
-      <div class="logo"><div class="logo-glyph">自</div><div><b>AUTODEV</b><span>全自助研发交付</span></div></div>
+      <div class="logo"><div class="logo-glyph"><img src="/static/brand/autodev-mark.png" alt=""></div><div><b>AUTODEV</b><span>全自助研发交付</span></div></div>
       <nav>
         <button class="nav-item active" data-view="dashboard"><span class="nav-index">01</span><span>任务总览</span></button>
         <button class="nav-item" data-view="requests"><span class="nav-index">02</span><span>交付记录</span></button>
@@ -17,7 +22,7 @@
         {% if user.role == 'admin' %}<button class="nav-item" data-view="users"><span class="nav-index">04</span><span>账号管理</span></button>{% endif %}
       </nav>
       <div class="sidebar-foot">
-        <div class="system-status offline" id="runner-status"><i></i><span>本机执行器未连接</span></div>
+        <div class="system-status offline" id="runner-status"><i></i><span>执行器离线</span></div>
         <div class="profile"><div class="avatar">{{ user.display_name[0] }}</div><div><b>{{ user.display_name }}</b><span>{{ '管理员' if user.role == 'admin' else '项目经理' }}</span></div><button id="logout" title="退出">↪</button></div>
       </div>
     </aside>
@@ -57,13 +62,10 @@
   </div>
 
   <div class="modal-backdrop" id="request-modal" hidden>
-    <section class="modal request-modal"><button class="modal-close" data-close>×</button><p class="eyebrow">NEW DEVELOPMENT RUN</p><h2>发起自动研发</h2><p class="muted">输入已在 TFS 录入且符合所选项目准入策略的需求编号。</p>
+    <section class="modal request-modal"><button class="modal-close" data-close>×</button><p class="eyebrow">NEW DEVELOPMENT RUN</p><h2>发起自动研发</h2><p class="muted">输入 TFS 用户情景编号，执行器会自动识别项目和交付策略。</p>
       <form id="request-form" class="form-grid">
         <label class="span-2"><span>TFS 用户情景编号</span><input type="number" name="work_item_id" min="1" placeholder="例如：1551572" required></label>
-        <label class="span-2"><span>自动研发项目</span><select name="project_id" id="request-project" required></select></label>
-        <label class="span-2" id="request-mode-row" hidden><span>本需求交付方式（管理员覆盖）</span><select name="delivery_mode" id="request-mode"><option value="">继承项目默认方式</option><option value="local_package">本地打包交付</option><option value="sichuan_auto_review">四川审核后交付</option><option value="product_manual_review">产品审核后交付</option></select></label>
         <div class="span-2 field-block"><div class="field-label">通知邮箱 <small>可多选，默认全部选中</small></div><div class="mail-choice-grid" id="request-email-options"></div></div>
-        <div class="strategy-preview span-2" id="strategy-preview"></div>
         <p class="form-error span-2" id="request-error" hidden></p>
         <div class="modal-actions span-2"><button type="button" class="btn btn-ghost" data-close>取消</button><button type="submit" class="btn btn-primary">确认并进入队列 ↗</button></div>
       </form>

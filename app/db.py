@@ -127,6 +127,22 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_active_work_item
 ON delivery_requests(project_id, work_item_id)
 WHERE status NOT IN ('delivered','rejected','failed','cancelled');
+CREATE TABLE IF NOT EXISTS request_intakes (
+    id TEXT PRIMARY KEY,
+    work_item_id INTEGER NOT NULL,
+    requester_id INTEGER NOT NULL REFERENCES users(id),
+    runner_id TEXT NOT NULL,
+    notification_emails TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'queued',
+    result_request_id TEXT REFERENCES delivery_requests(id),
+    error_message TEXT NOT NULL DEFAULT '',
+    claimed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_active_intake_work_item
+ON request_intakes(work_item_id)
+WHERE status IN ('queued','claimed');
 CREATE TABLE IF NOT EXISTS delivery_steps (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id TEXT NOT NULL REFERENCES delivery_requests(id) ON DELETE CASCADE,
@@ -392,6 +408,65 @@ def create_delivery_request(
             (request_id, "info", "request.created", "研发申请已进入队列", now),
         )
     return request_id
+
+
+def create_request_intake(
+    user_id: int,
+    work_item_id: int,
+    runner_id: str,
+    notification_emails: list[str],
+) -> str:
+    intake_id = str(uuid.uuid4())
+    now = utc_now()
+    with transaction() as conn:
+        conn.execute(
+            """INSERT INTO request_intakes(
+                id,work_item_id,requester_id,runner_id,notification_emails,status,created_at,updated_at
+            ) VALUES(?,?,?,?,?,'queued',?,?)""",
+            (
+                intake_id, work_item_id, user_id, runner_id,
+                json.dumps(notification_emails, ensure_ascii=False), now, now,
+            ),
+        )
+    return intake_id
+
+
+def request_intake_detail(intake_id: str) -> dict[str, Any] | None:
+    intake = row(
+        """SELECT i.*,u.display_name requester_name
+           FROM request_intakes i JOIN users u ON u.id=i.requester_id WHERE i.id=?""",
+        (intake_id,),
+    )
+    if intake:
+        intake["notification_emails"] = json_value(intake["notification_emails"], [])
+    return intake
+
+
+def claim_request_intake(runner_id: str) -> dict[str, Any] | None:
+    now = utc_now()
+    cutoff = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    with transaction() as conn:
+        conn.execute(
+            """UPDATE request_intakes SET status='queued',claimed_at=NULL,updated_at=?
+               WHERE runner_id=? AND status='claimed' AND claimed_at<?""",
+            (now, runner_id, cutoff),
+        )
+        intake = conn.execute(
+            """SELECT * FROM request_intakes
+               WHERE runner_id=? AND status='queued' ORDER BY created_at LIMIT 1""",
+            (runner_id,),
+        ).fetchone()
+        if not intake:
+            return None
+        conn.execute(
+            "UPDATE request_intakes SET status='claimed',claimed_at=?,updated_at=? WHERE id=? AND status='queued'",
+            (now, now, intake["id"]),
+        )
+        result = dict(intake)
+        result["status"] = "claimed"
+        result["claimed_at"] = now
+        result["notification_emails"] = json_value(result["notification_emails"], [])
+        return result
 
 
 def add_event(request_id: str, event_type: str, message: str, *, level: str = "info", metadata: dict[str, Any] | None = None) -> None:

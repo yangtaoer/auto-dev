@@ -9,26 +9,11 @@ from logging.handlers import RotatingFileHandler
 
 from .config import settings
 from .orchestrator import Worker
+from .project_catalog import load_project_presets
 from .store import RemoteStore
 
 
 logger = logging.getLogger("autodev.runner")
-
-
-def load_project_presets() -> list[dict]:
-    preset_dir = settings.project_preset_dir
-    preset_dir.mkdir(parents=True, exist_ok=True)
-    projects: list[dict] = []
-    for path in sorted(preset_dir.glob("*.json")):
-        try:
-            project = json.loads(path.read_text(encoding="utf-8-sig"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"项目预设无法读取：{path.name}：{exc}") from exc
-        if not isinstance(project, dict):
-            raise RuntimeError(f"项目预设必须是 JSON 对象：{path.name}")
-        project["runner_id"] = settings.runner_id
-        projects.append(project)
-    return projects
 
 
 def configure_logging() -> None:

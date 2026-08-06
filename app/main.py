@@ -20,6 +20,8 @@ from pydantic import BaseModel, Field, field_validator
 from .config import ROOT, settings
 from .db import (
     create_delivery_request,
+    create_request_intake,
+    claim_request_intake,
     add_artifact,
     add_event,
     create_session,
@@ -30,6 +32,7 @@ from .db import (
     public_user,
     replace_user_emails,
     request_detail,
+    request_intake_detail,
     row,
     rows,
     transaction,
@@ -56,7 +59,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="全自助需求研发交付",
-    version="0.3.0",
+    version="0.3.1",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -123,7 +126,7 @@ class ProjectInput(BaseModel):
 
 
 class DeliveryRequestInput(BaseModel):
-    project_id: int
+    project_id: int | None = None
     work_item_id: int = Field(gt=0)
     delivery_mode: DeliveryMode | None = None
     notification_emails: list[str] = Field(default_factory=list)
@@ -132,6 +135,12 @@ class DeliveryRequestInput(BaseModel):
 class RunnerProjectSync(BaseModel):
     runner_id: str = Field(pattern=r"^[a-zA-Z0-9_.-]{2,80}$")
     projects: list[ProjectInput] = Field(max_length=200)
+
+
+class RunnerIntakeRoute(BaseModel):
+    runner_id: str = Field(pattern=r"^[a-zA-Z0-9_.-]{2,80}$")
+    project_key: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{2,60}$")
+    error_message: str = Field(default="", max_length=2000)
 
 
 class RunnerIdentity(BaseModel):
@@ -523,6 +532,30 @@ def update_user(user_id: int, payload: UserUpdateInput, actor: Annotated[dict, D
 
 @app.post("/api/requests")
 def submit_request(payload: DeliveryRequestInput, user: Annotated[dict, Depends(current_user)]) -> dict:
+    configured_emails = public_user(user)["emails"]
+    selected_emails = normalize_emails(payload.notification_emails or configured_emails)
+    configured_lookup = {email.lower() for email in configured_emails}
+    if any(email.lower() not in configured_lookup for email in selected_emails):
+        raise HTTPException(status_code=422, detail="通知邮箱只能从当前账号已配置的邮箱中选择")
+    if payload.project_id is None:
+        runner_rows = rows("SELECT DISTINCT runner_id FROM projects WHERE enabled=1 ORDER BY runner_id")
+        if not runner_rows:
+            raise HTTPException(status_code=409, detail="当前没有可用的自动研发项目")
+        if len(runner_rows) > 1:
+            raise HTTPException(status_code=409, detail="当前项目分布在多个执行器，暂时无法自动识别，请联系管理员")
+        if row(
+            "SELECT 1 FROM delivery_requests WHERE work_item_id=? AND status NOT IN ('delivered','rejected','failed','cancelled')",
+            (payload.work_item_id,),
+        ):
+            raise HTTPException(status_code=409, detail="该需求已有正在执行的研发任务")
+        try:
+            intake_id = create_request_intake(
+                user["id"], payload.work_item_id, runner_rows[0]["runner_id"], selected_emails
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="该需求正在识别项目或等待执行") from exc
+        return {"id": intake_id, "status": "routing", "routing": True}
+
     project = row("SELECT * FROM projects WHERE id=? AND enabled=1", (payload.project_id,))
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在或已停用")
@@ -531,16 +564,21 @@ def submit_request(payload: DeliveryRequestInput, user: Annotated[dict, Depends(
         if user["role"] != "admin" or not project["allow_requirement_override"]:
             raise HTTPException(status_code=403, detail="该项目不允许覆盖交付方式")
         mode = payload.delivery_mode.value
-    configured_emails = public_user(user)["emails"]
-    selected_emails = normalize_emails(payload.notification_emails or configured_emails)
-    configured_lookup = {email.lower() for email in configured_emails}
-    if any(email.lower() not in configured_lookup for email in selected_emails):
-        raise HTTPException(status_code=422, detail="通知邮箱只能从当前账号已配置的邮箱中选择")
     try:
         request_id = create_delivery_request(project, user["id"], payload.work_item_id, mode, selected_emails)
     except sqlite3.IntegrityError as exc:
         raise HTTPException(status_code=409, detail="该需求已有正在执行的研发任务") from exc
     return {"id": request_id, "status": RunStatus.QUEUED.value}
+
+
+@app.get("/api/intakes/{intake_id}")
+def get_request_intake(intake_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
+    intake = request_intake_detail(intake_id)
+    if not intake:
+        raise HTTPException(status_code=404, detail="自动识别任务不存在")
+    if user["role"] != "admin" and intake["requester_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="无权访问该自动识别任务")
+    return {"intake": intake}
 
 
 @app.get("/api/requests/{request_id}")
@@ -590,6 +628,69 @@ def runner_heartbeat(payload: RunnerHeartbeat) -> dict:
             ),
         )
     return {"ok": True, "server_time": now}
+
+
+@app.post("/api/runner/intakes/claim", dependencies=[Depends(runner_auth)])
+def runner_claim_intake(payload: RunnerIdentity) -> dict:
+    return {"intake": claim_request_intake(payload.runner_id)}
+
+
+@app.post("/api/runner/intakes/{intake_id}/route", dependencies=[Depends(runner_auth)])
+def runner_route_intake(intake_id: str, payload: RunnerIntakeRoute) -> dict:
+    intake = request_intake_detail(intake_id)
+    if not intake:
+        raise HTTPException(status_code=404, detail="自动识别任务不存在")
+    if intake["runner_id"] != payload.runner_id:
+        raise HTTPException(status_code=403, detail="该自动识别任务不属于当前执行器")
+    if intake["status"] == "routed":
+        return {"ok": True, "request_id": intake["result_request_id"]}
+    if intake["status"] != "claimed":
+        raise HTTPException(status_code=409, detail="自动识别任务当前不可提交结果")
+
+    if not payload.project_key:
+        message = payload.error_message or "未找到符合准入范围的自动研发项目"
+        with transaction() as conn:
+            conn.execute(
+                "UPDATE request_intakes SET status='failed',error_message=?,updated_at=? WHERE id=?",
+                (message, utc_now(), intake_id),
+            )
+        return {"ok": True, "request_id": None}
+
+    project = row(
+        "SELECT * FROM projects WHERE project_key=? AND runner_id=? AND enabled=1",
+        (payload.project_key, payload.runner_id),
+    )
+    if not project:
+        message = f"本机识别到项目 {payload.project_key}，但云端目录不存在或已停用"
+        with transaction() as conn:
+            conn.execute(
+                "UPDATE request_intakes SET status='failed',error_message=?,updated_at=? WHERE id=?",
+                (message, utc_now(), intake_id),
+            )
+        return {"ok": True, "request_id": None}
+    try:
+        request_id = create_delivery_request(
+            project,
+            intake["requester_id"],
+            intake["work_item_id"],
+            project["delivery_mode"],
+            intake["notification_emails"],
+        )
+    except sqlite3.IntegrityError:
+        message = "该需求已有正在执行的研发任务"
+        with transaction() as conn:
+            conn.execute(
+                "UPDATE request_intakes SET status='failed',error_message=?,updated_at=? WHERE id=?",
+                (message, utc_now(), intake_id),
+            )
+        return {"ok": True, "request_id": None}
+    with transaction() as conn:
+        conn.execute(
+            """UPDATE request_intakes SET status='routed',result_request_id=?,error_message='',updated_at=?
+               WHERE id=?""",
+            (request_id, utc_now(), intake_id),
+        )
+    return {"ok": True, "request_id": request_id}
 
 
 @app.post("/api/runner/claim", dependencies=[Depends(runner_auth)])

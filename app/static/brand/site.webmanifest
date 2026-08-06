@@ -1,0 +1,12 @@
+{
+  "name": "AUTODEV 全自助研发交付",
+  "short_name": "AUTODEV",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#08110e",
+  "theme_color": "#08110e",
+  "icons": [
+    {"src": "/static/brand/autodev-mark.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "/static/brand/apple-touch-icon.png", "sizes": "180x180", "type": "image/png"}
+  ]
+}

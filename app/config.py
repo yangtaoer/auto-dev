@@ -61,7 +61,7 @@ class Settings:
     ).resolve()
     runner_token: str = env_secret("AUTODEV_RUNNER_TOKEN")
     cloud_url: str = os.getenv("AUTODEV_CLOUD_URL", "").rstrip("/")
-    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "0.3.0")
+    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "0.3.1")
     max_artifact_mb: int = max(1, int(os.getenv("AUTODEV_MAX_ARTIFACT_MB", "200")))
     aliyun_access_key_id: str = env_secret("ALIYUN_ACCESS_KEY_ID")
     aliyun_access_key_secret: str = env_secret("ALIYUN_ACCESS_KEY_SECRET")

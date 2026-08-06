@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 TEST_DATA = tempfile.TemporaryDirectory()
@@ -16,8 +17,8 @@ os.environ["AUTODEV_RUNNER_TOKEN"] = "test-runner-token"
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
-from app.local_runner_main import load_project_presets  # noqa: E402
 from app.orchestrator import worker  # noqa: E402
+from app.project_catalog import load_project_presets, resolve_project_for_work_item  # noqa: E402
 
 
 class WorkflowTests(unittest.TestCase):
@@ -168,6 +169,59 @@ class WorkflowTests(unittest.TestCase):
         )
         self.assertEqual(unauthenticated.status_code, 401)
 
+    def test_number_only_request_is_routed_by_local_runner(self) -> None:
+        self.create_project("test-auto-route", "local_package")
+        created = self.client.post("/api/requests", json={"work_item_id": 910008})
+        self.assertEqual(created.status_code, 200, created.text)
+        self.assertTrue(created.json()["routing"])
+        intake_id = created.json()["id"]
+        headers = {"Authorization": "Bearer test-runner-token"}
+
+        claimed = self.client.post(
+            "/api/runner/intakes/claim",
+            headers=headers,
+            json={"runner_id": "yangtao-pc"},
+        )
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        self.assertEqual(claimed.json()["intake"]["id"], intake_id)
+
+        routed = self.client.post(
+            f"/api/runner/intakes/{intake_id}/route",
+            headers=headers,
+            json={"runner_id": "yangtao-pc", "project_key": "test-auto-route"},
+        )
+        self.assertEqual(routed.status_code, 200, routed.text)
+        request_id = routed.json()["request_id"]
+        intake = self.client.get(f"/api/intakes/{intake_id}").json()["intake"]
+        self.assertEqual(intake["status"], "routed")
+        self.assertEqual(intake["result_request_id"], request_id)
+
+        worker.process_once()
+        detail = self.client.get(f"/api/requests/{request_id}").json()["request"]
+        self.assertEqual(detail["project_key"], "test-auto-route")
+        self.assertEqual(detail["delivery_mode"], "local_package")
+        self.assertEqual(detail["status"], "delivered")
+
+    @patch("app.project_catalog.TfsClient.get_work_item")
+    def test_local_catalog_routes_to_most_specific_area_path(self, get_work_item) -> None:
+        get_work_item.return_value = {
+            "id": 910009,
+            "area_path": "XiNanArea-New\\四川省区团队\\巴中",
+        }
+        common = {
+            "enabled": True,
+            "simulation_mode": False,
+            "tfs_collection_url": "http://dev.tellhowsoft.com/DefaultCollection",
+        }
+        projects = [
+            {**common, "project_key": "root", "tfs_area_path": "XiNanArea-New\\四川省区团队"},
+            {**common, "project_key": "bazhong", "tfs_area_path": "XiNanArea-New\\四川省区团队\\巴中"},
+        ]
+        project, item = resolve_project_for_work_item(910009, projects)
+        self.assertEqual(project["project_key"], "bazhong")
+        self.assertEqual(item["id"], 910009)
+        get_work_item.assert_called_once_with(910009)
+
     def test_runner_syncs_read_only_project_catalog(self) -> None:
         headers = {"Authorization": "Bearer test-runner-token"}
 
@@ -216,6 +270,12 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("catalog-two", visible_keys)
         synced = next(item for item in visible if item["project_key"] == "catalog-one")
         self.assertEqual(synced["name"], "目录项目一（已更新）")
+        cleared = self.client.put(
+            "/api/runner/projects",
+            headers=headers,
+            json={"runner_id": "catalog-test-runner", "projects": []},
+        )
+        self.assertEqual(cleared.status_code, 200, cleared.text)
 
     def test_local_project_preset_catalog_contains_bazhong(self) -> None:
         projects = load_project_presets()
