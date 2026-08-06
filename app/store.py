@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import socket
+import time
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +11,9 @@ import httpx
 from .config import settings
 from .db import add_artifact, add_event, request_detail, row, update_request, update_step, utc_now
 from .services.oss_storage import OssArtifactStorage, cleanup_local_deliveries
+
+
+logger = logging.getLogger("autodev.remote_store")
 
 
 class LocalStore:
@@ -102,7 +107,8 @@ class RemoteStore:
         codex_usage: dict[str, Any] | None = None,
     ) -> None:
         self._json(
-            self.client.post(
+            self._request(
+                "POST",
                 "/api/runner/heartbeat",
                 json={
                     "runner_id": self.runner_id,
@@ -117,7 +123,8 @@ class RemoteStore:
 
     def sync_projects(self, projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
         data = self._json(
-            self.client.put(
+            self._request(
+                "PUT",
                 "/api/runner/projects",
                 json={"runner_id": self.runner_id, "projects": projects},
             )
@@ -126,7 +133,7 @@ class RemoteStore:
 
     def claim_intake(self) -> dict[str, Any] | None:
         data = self._json(
-            self.client.post("/api/runner/intakes/claim", json={"runner_id": self.runner_id})
+            self._request("POST", "/api/runner/intakes/claim", json={"runner_id": self.runner_id})
         )
         return data.get("intake")
 
@@ -138,7 +145,8 @@ class RemoteStore:
         error_message: str = "",
     ) -> str | None:
         data = self._json(
-            self.client.post(
+            self._request(
+                "POST",
                 f"/api/runner/intakes/{intake_id}/route",
                 json={
                     "runner_id": self.runner_id,
@@ -150,47 +158,49 @@ class RemoteStore:
         return data.get("request_id")
 
     def next_queued(self) -> str | None:
-        data = self._json(self.client.post("/api/runner/claim", json={"runner_id": self.runner_id}))
+        data = self._json(self._request("POST", "/api/runner/claim", json={"runner_id": self.runner_id}))
         item = data.get("request")
         return item["id"] if item else None
 
     def next_waiting(self) -> str | None:
-        data = self._json(self.client.get("/api/runner/pollable", params={"runner_id": self.runner_id}))
+        data = self._json(self._request("GET", "/api/runner/pollable", params={"runner_id": self.runner_id}))
         item = data.get("request")
         return item["id"] if item else None
 
     def detail(self, request_id: str) -> dict[str, Any] | None:
-        response = self.client.get(f"/api/runner/requests/{request_id}")
+        response = self._request("GET", f"/api/runner/requests/{request_id}")
         if response.status_code == 404:
             return None
         return self._json(response)["request"]
 
     def list_tasks(self, limit: int = 80) -> list[dict[str, Any]]:
         data = self._json(
-            self.client.get("/api/runner/tasks", params={"runner_id": self.runner_id, "limit": limit})
+            self._request("GET", "/api/runner/tasks", params={"runner_id": self.runner_id, "limit": limit})
         )
         return data.get("tasks", [])
 
     def codex_watch_active(self, request_id: str) -> bool:
-        data = self._json(self.client.get(f"/api/runner/requests/{request_id}/codex-watch/active"))
+        data = self._json(self._request("GET", f"/api/runner/requests/{request_id}/codex-watch/active"))
         return bool(data.get("active"))
 
     def publish_codex_events(self, request_id: str, events: list[dict[str, Any]]) -> None:
         if not events:
             return
         self._json(
-            self.client.post(
+            self._request(
+                "POST",
                 f"/api/runner/requests/{request_id}/codex-watch/events",
                 json={"events": events},
             )
         )
 
     def update_request(self, request_id: str, **fields: Any) -> None:
-        self._json(self.client.patch(f"/api/runner/requests/{request_id}", json={"fields": fields}))
+        self._json(self._request("PATCH", f"/api/runner/requests/{request_id}", json={"fields": fields}))
 
     def update_step(self, request_id: str, step_code: str, status: str, message: str = "") -> None:
         self._json(
-            self.client.patch(
+            self._request(
+                "PATCH",
                 f"/api/runner/requests/{request_id}/steps/{step_code}",
                 json={"status": status, "message": message},
             )
@@ -206,7 +216,8 @@ class RemoteStore:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         self._json(
-            self.client.post(
+            self._request(
+                "POST",
                 f"/api/runner/requests/{request_id}/events",
                 json={"event_type": event_type, "message": message, "level": level, "metadata": metadata or {}},
             )
@@ -224,7 +235,7 @@ class RemoteStore:
             if self.oss_storage:
                 _, oss_url = self.oss_storage.upload(request_id, kind, name, path)
                 data["external_url"] = oss_url
-                response = self.client.post(f"/api/runner/requests/{request_id}/artifacts", data=data)
+                response = self._request("POST", f"/api/runner/requests/{request_id}/artifacts", data=data)
             else:
                 with path.open("rb") as stream:
                     response = self.client.post(
@@ -234,7 +245,7 @@ class RemoteStore:
                         timeout=httpx.Timeout(900, connect=15),
                     )
         else:
-            response = self.client.post(f"/api/runner/requests/{request_id}/artifacts", data=data)
+            response = self._request("POST", f"/api/runner/requests/{request_id}/artifacts", data=data)
         return int(self._json(response)["artifact_id"])
 
     def cleanup_expired_artifacts(self) -> tuple[int, int]:
@@ -248,11 +259,37 @@ class RemoteStore:
 
     def notify(self, request_id: str, *, action_required: bool) -> None:
         self._json(
-            self.client.post(
+            self._request(
+                "POST",
                 f"/api/runner/requests/{request_id}/notify",
                 json={"action_required": action_required},
             )
         )
+
+    def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        transient_statuses = {429, 502, 503, 504}
+        last_error: Exception | None = None
+        for attempt in range(4):
+            try:
+                response = self.client.request(method, url, **kwargs)
+                if response.status_code not in transient_statuses or attempt == 3:
+                    return response
+                last_error = RuntimeError(f"HTTP {response.status_code}")
+            except httpx.TransportError as exc:
+                last_error = exc
+                if attempt == 3:
+                    raise RuntimeError(f"云端连接失败：{exc}") from exc
+            delay = 0.4 * (2 ** attempt)
+            logger.warning(
+                "云端接口暂时不可用，%.1f 秒后重试 (%s/4) method=%s path=%s error=%s",
+                delay,
+                attempt + 2,
+                method,
+                url,
+                last_error,
+            )
+            time.sleep(delay)
+        raise RuntimeError(f"云端接口调用失败：{last_error}")
 
     @staticmethod
     def _json(response: httpx.Response) -> dict[str, Any]:

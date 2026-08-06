@@ -99,6 +99,13 @@ class AutoDevConsole:
             font=(MONO, 9, "bold"),
         )
         style.map("Auto.Treeview", background=[("selected", "#214632")], foreground=[("selected", PAPER)])
+        style.configure(
+            "Auto.Vertical.TScrollbar",
+            background="#355a47",
+            troughcolor=INK,
+            bordercolor=INK,
+            arrowcolor=ACID,
+        )
 
     def _build_ui(self) -> None:
         header = tk.Frame(self.root, bg=DEEP, height=92, highlightbackground=LINE, highlightthickness=1)
@@ -149,14 +156,21 @@ class AutoDevConsole:
             row, text="刷新", command=lambda: self._tick_tasks(force=True), bg=PANEL_2, fg=ACID,
             activebackground="#214632", activeforeground=PAPER, relief="flat", padx=12, pady=5,
         ).pack(side="right")
+        tree_frame = tk.Frame(parent, bg=PANEL)
+        tree_frame.pack(fill="both", expand=True, padx=1, pady=(0, 1))
         self.task_tree = ttk.Treeview(
-            parent, style="Auto.Treeview", columns=("id", "status"), show="headings", selectmode="browse"
+            tree_frame, style="Auto.Treeview", columns=("id", "status"), show="headings", selectmode="browse"
         )
+        self.task_scrollbar = ttk.Scrollbar(
+            tree_frame, orient="vertical", style="Auto.Vertical.TScrollbar", command=self.task_tree.yview
+        )
+        self.task_tree.configure(yscrollcommand=self.task_scrollbar.set)
         self.task_tree.heading("id", text="TFS / 项目")
         self.task_tree.heading("status", text="状态")
         self.task_tree.column("id", width=285, anchor="w")
         self.task_tree.column("status", width=120, anchor="w")
-        self.task_tree.pack(fill="both", expand=True, padx=1, pady=(0, 1))
+        self.task_tree.pack(side="left", fill="both", expand=True)
+        self.task_scrollbar.pack(side="right", fill="y")
         self.task_tree.bind("<<TreeviewSelect>>", self._select_task)
 
     def _build_detail(self, parent: tk.Frame) -> None:
@@ -187,13 +201,25 @@ class AutoDevConsole:
         content = tk.Frame(parent, bg=INK)
         content.pack(fill="both", expand=True)
         self.texts: dict[str, tk.Text] = {}
+        self.text_panels: dict[str, tk.Frame] = {}
+        self.text_scrollbars: dict[str, ttk.Scrollbar] = {}
         for key in ("session", "detail", "logs"):
+            panel = tk.Frame(content, bg=INK)
             text = tk.Text(
-                content, bg=INK, fg=PAPER, insertbackground=ACID, relief="flat", wrap="word",
+                panel, bg=INK, fg=PAPER, insertbackground=ACID, relief="flat", wrap="word",
                 padx=24, pady=22, font=("Microsoft YaHei UI", 10), spacing1=2, spacing3=7,
             )
+            scrollbar = ttk.Scrollbar(
+                panel, orient="vertical", style="Auto.Vertical.TScrollbar", command=text.yview
+            )
+            text.configure(yscrollcommand=scrollbar.set)
             text.tag_configure("label", foreground=ACID, font=(MONO, 9, "bold"), spacing1=12)
             text.tag_configure("assistant", foreground=PAPER)
+            text.tag_configure(
+                "assistant_heading", foreground=ACID,
+                font=("Microsoft YaHei UI", 12, "bold"), spacing1=12, spacing3=4,
+            )
+            text.tag_configure("assistant_bullet", foreground=PAPER, lmargin1=18, lmargin2=34)
             text.tag_configure("reasoning", foreground="#afd2c0")
             text.tag_configure("command", foreground="#b9d8ff", font=(MONO, 9))
             text.tag_configure("file", foreground=AMBER, font=(MONO, 9))
@@ -201,6 +227,10 @@ class AutoDevConsole:
             text.tag_configure("error", foreground=RED)
             text.configure(state="disabled")
             self.texts[key] = text
+            self.text_panels[key] = panel
+            self.text_scrollbars[key] = scrollbar
+            text.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
         self._switch_tab("session")
         self._set_text("session", "打开任务即开始接收此后产生的 Codex 输出。\n关闭客户端或切换任务后立即停止采集，不会保存历史会话。", "status")
 
@@ -212,11 +242,11 @@ class AutoDevConsole:
 
     def _switch_tab(self, name: str) -> None:
         self.current_tab = name
-        for key, text in self.texts.items():
+        for key, panel in self.text_panels.items():
             if key == name:
-                text.pack(fill="both", expand=True)
+                panel.pack(fill="both", expand=True)
             else:
-                text.pack_forget()
+                panel.pack_forget()
         for key, button in self.tab_buttons.items():
             button.configure(fg=ACID if key == name else MUTED, bg=PANEL_2 if key == name else DEEP)
 
@@ -349,20 +379,25 @@ class AutoDevConsole:
         self.watch_cursor = max(self.watch_cursor, int(data.get("cursor") or 0))
         for event in data.get("events") or []:
             kind = event.get("kind") or "status"
+            if kind == "status":
+                continue
             group = event.get("group") or f"seq-{event.get('seq')}"
             delta = bool(event.get("delta"))
             if not delta or group != self.last_live_group or kind != self.last_live_kind:
                 label = {
-                    "assistant": "CODEX",
-                    "reasoning": "ANALYSIS SUMMARY",
-                    "command": "TERMINAL",
-                    "file": "FILE CHANGE",
-                    "plan": "PLAN",
-                    "status": "SYSTEM",
-                }.get(kind, "SYSTEM")
+                    "assistant": "CODEX 研发结论",
+                    "reasoning": "分析摘要",
+                    "command": "终端执行",
+                    "file": "文件变更",
+                    "plan": "研发计划",
+                }.get(kind, "研发过程")
                 self._append_text("session", f"\n{label}  {self._format_time(event.get('at'))}\n", "label")
-            self._append_text("session", str(event.get("content") or ""), kind)
-            if not str(event.get("content") or "").endswith("\n") and not delta:
+            content = str(event.get("content") or "")
+            if event.get("format") == "markdown" and not delta:
+                self._append_markdown("session", content)
+            else:
+                self._append_text("session", content, kind)
+            if not content.endswith("\n") and not delta:
                 self._append_text("session", "\n", kind)
             self.last_live_group, self.last_live_kind = group, kind
 
@@ -499,6 +534,19 @@ class AutoDevConsole:
         text = self.texts[name]
         text.configure(state="normal")
         text.insert("end", value, tag)
+        text.see("end")
+        text.configure(state="disabled")
+
+    def _append_markdown(self, name: str, value: str) -> None:
+        text = self.texts[name]
+        text.configure(state="normal")
+        for line in value.splitlines():
+            if line.startswith("### "):
+                text.insert("end", line[4:] + "\n", "assistant_heading")
+            elif line.startswith("- "):
+                text.insert("end", "• " + line[2:] + "\n", "assistant_bullet")
+            else:
+                text.insert("end", line + "\n", "assistant")
         text.see("end")
         text.configure(state="disabled")
 

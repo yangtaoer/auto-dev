@@ -118,6 +118,12 @@
 .chat-label { display: flex; justify-content: space-between; gap: 14px; margin-bottom: 9px; color: var(--acid); font: 700 9px Consolas, monospace; letter-spacing: .13em; }
 .chat-label time { color: #577366; font-weight: 400; letter-spacing: 0; }
 .chat-message pre { margin: 0; color: #d9e5de; font: 12px/1.68 "Microsoft YaHei UI", sans-serif; white-space: pre-wrap; word-break: break-word; }
+.chat-rendered { color: #d9e5de; font: 12px/1.72 "Microsoft YaHei UI", sans-serif; }
+.chat-rendered h3 { margin: 17px 0 7px; color: var(--acid); font-size: 13px; line-height: 1.45; }
+.chat-rendered h3:first-child { margin-top: 0; }
+.chat-rendered p { margin: 0 0 9px; white-space: pre-wrap; word-break: break-word; }
+.chat-rendered ul { margin: 0 0 12px; padding-left: 20px; }
+.chat-rendered li { margin: 4px 0; word-break: break-word; }
 .chat-message.command pre,
 .chat-message.file pre { color: #b9d7ff; font-family: Consolas, monospace; font-size: 11px; }
 .chat-message.file pre { color: #e8cc86; }

@@ -196,7 +196,18 @@ class Worker:
             self._check_cancelled(request_id)
 
             self.store.update_request(request_id, status=RunStatus.SUBMITTING.value, current_step="submit", progress=62)
-            self.store.update_step(request_id, "submit", "running", "正在提交并推送代码")
+            submit_message = (
+                "本地交付策略已锁定：正在强制提交并推送代码"
+                if mode == DeliveryMode.LOCAL_PACKAGE
+                else "正在提交并推送代码"
+            )
+            self.store.update_step(request_id, "submit", "running", submit_message)
+            if mode == DeliveryMode.LOCAL_PACKAGE:
+                self.store.add_event(
+                    request_id,
+                    "delivery.policy_enforced",
+                    "本地交付不按改动大小或接口影响跳过：必须提交代码并执行构建打包",
+                )
             if project.get("simulation_mode"):
                 commit_hash = "demo" + request_id.replace("-", "")[:8]
             else:
@@ -372,7 +383,7 @@ class Worker:
 
     def _deliver_local_package(self, request_id: str, detail: dict, project: dict, worktree: Path | None, work_item: dict) -> None:
         self.store.update_request(request_id, status=RunStatus.BUILDING.value, current_step="deliver", progress=74)
-        self.store.update_step(request_id, "deliver", "running", "正在本机打包并归集交付物")
+        self.store.update_step(request_id, "deliver", "running", "代码已提交；正在按本地交付标准强制构建并归集交付物")
         if project.get("simulation_mode"):
             self._create_demo_artifacts(request_id, include_package=True)
         else:

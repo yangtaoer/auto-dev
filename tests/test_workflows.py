@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+import httpx
 
 
 TEST_DATA = tempfile.TemporaryDirectory()
@@ -19,6 +22,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
 from app.orchestrator import worker  # noqa: E402
 from app.project_catalog import load_project_presets, resolve_project_for_work_item  # noqa: E402
+from app.services.codex_runner import CodexRunner  # noqa: E402
+from app.store import RemoteStore  # noqa: E402
 
 
 class WorkflowTests(unittest.TestCase):
@@ -73,6 +78,51 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(detail["status"], "delivered")
         kinds = {artifact["kind"] for artifact in detail["artifacts"]}
         self.assertTrue({"package", "sql", "config", "report"}.issubset(kinds))
+        self.assertTrue(any(event["event_type"] == "delivery.policy_enforced" for event in detail["events"]))
+
+    def test_codex_live_result_is_chinese_markdown_without_raw_json_or_system_events(self) -> None:
+        raw = json.dumps(
+            {
+                "summary": "已完成测试注释修改。",
+                "changed_files": ["src/Test.java"],
+                "acceptance_mapping": ["已覆盖自动研发验证"],
+                "risks": [],
+                "sql_changes": [],
+                "config_changes": [],
+            },
+            ensure_ascii=False,
+        )
+        runner = CodexRunner()
+        self.assertIsNone(
+            runner._live_event("item/agentMessage/delta", {"delta": raw, "itemId": "agent-1"})
+        )
+        event = runner._live_event(
+            "item/completed",
+            {"item": {"id": "agent-1", "type": "agentMessage", "text": raw}},
+        )
+        self.assertEqual(event["kind"], "assistant")
+        self.assertEqual(event["format"], "markdown")
+        self.assertIn("### 研发结论", event["content"])
+        self.assertIn("### 变更文件", event["content"])
+        self.assertNotIn('"summary"', event["content"])
+        self.assertIsNone(runner._live_event("turn/completed", {"turn": {"status": "completed"}}))
+
+    def test_remote_store_retries_transient_gateway_failure(self) -> None:
+        request = httpx.Request("PATCH", "https://cloud.test/api/runner/requests/request-1")
+        responses = [
+            httpx.Response(502, request=request),
+            httpx.Response(200, json={"ok": True}, request=request),
+        ]
+        store = RemoteStore("https://cloud.test", "runner-token", "runner-1")
+        try:
+            with patch.object(store.client, "request", side_effect=responses) as mocked, patch(
+                "app.store.time.sleep"
+            ) as sleeper:
+                store.update_request("request-1", status="building")
+            self.assertEqual(mocked.call_count, 2)
+            sleeper.assert_called_once_with(0.4)
+        finally:
+            store.close()
 
     def test_sichuan_review_then_merge(self) -> None:
         project_id = self.create_project("test-sichuan", "sichuan_auto_review")
@@ -218,7 +268,7 @@ class WorkflowTests(unittest.TestCase):
             json={
                 "runner_id": "quota-test-runner",
                 "hostname": "quota-pc",
-                "version": "0.3.2",
+                "version": "0.3.3",
                 "state": "idle",
                 "codex_usage": {
                     "available": True,

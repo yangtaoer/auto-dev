@@ -60,10 +60,14 @@ class CodexRunner:
 4. SQL 与配置变更必须独立、明确，并在最终结果中列出。
 5. 不接触密钥、生产配置和真实数据。
 6. 实现需求并进行必要的低风险自检；项目构建命令由外层系统统一执行。
+7. 所有面向用户的分析摘要和最终结果必须使用简体中文（文件路径、代码和命令除外）。
+8. 不要根据改动大小或是否改变接口行为决定是否交付；只要产生有效代码变更，外层系统都会继续提交代码并执行既定构建。
+9. 最终结果只描述研发修改与自检，不要把“未提交代码”或“未打包”列为未完成事项，这两步由外层交付流程强制执行。
 """.strip()
 
         developer_instructions = (
             "你是全自助研发执行器。修改应最小、可审计、可回滚。"
+            "所有可展示给用户的分析摘要、计划与最终回复必须使用简体中文。"
             "发现需求不完整、共享代码影响或高风险操作时停止修改，并在 risks 中说明。"
         )
         codex_config = CodexConfig(cwd=str(cwd), env=sanitized_process_env())
@@ -207,7 +211,6 @@ class CodexRunner:
     def _live_event(self, method: str, payload) -> dict[str, Any] | None:
         data = self._dump(payload)
         delta_map = {
-            "item/agentMessage/delta": "assistant",
             "item/commandExecution/outputDelta": "command",
             "item/fileChange/outputDelta": "file",
             "item/plan/delta": "plan",
@@ -234,25 +237,62 @@ class CodexRunner:
                     return {"kind": "command", "content": f"$ {command}\n", "group": group, "delta": False}
                 exit_code = item.get("exitCode")
                 return {
-                    "kind": "status",
-                    "content": f"命令执行{phase}" + (f" · 退出码 {exit_code}" if exit_code is not None else ""),
-                    "group": f"{group}:status",
-                    "delta": False,
+                    "kind": "command",
+                    "content": f"\n[命令执行{phase}" + (f"，退出码 {exit_code}" if exit_code is not None else "") + "]\n",
+                    "group": group,
+                    "delta": True,
                 }
             if item_type == "fileChange":
                 changes = item.get("changes") or []
                 paths = [str(change.get("path") or "") for change in changes if isinstance(change, dict)]
                 content = "代码文件变更" + ("：\n" + "\n".join(f"• {path}" for path in paths[:20]) if paths else "")
                 return {"kind": "file", "content": content, "group": group, "delta": False}
-            if item_type in {"agentMessage", "reasoning", "plan"}:
+            if item_type == "agentMessage":
+                if method != "item/completed" or not item.get("text"):
+                    return None
+                return {
+                    "kind": "assistant",
+                    "content": self._format_live_result(str(item["text"])),
+                    "group": group,
+                    "delta": False,
+                    "format": "markdown",
+                }
+            if item_type in {"reasoning", "plan"}:
                 return None
-            return {"kind": "status", "content": f"{item_type} · {phase}", "group": group, "delta": False}
-        if method == "turn/completed":
-            turn = data.get("turn") or {}
-            return {
-                "kind": "status",
-                "content": f"本轮研发执行结束 · {turn.get('status', 'completed')}",
-                "group": "turn-completed",
-                "delta": False,
-            }
+            return None
         return None
+
+    @staticmethod
+    def _format_live_result(raw: str) -> str:
+        """Turn the structured SDK result into safe, readable Chinese Markdown."""
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError:
+            if raw.lstrip().startswith(("{", "[")):
+                return "### 研发结论\n\nCodex 已返回结果，系统正在校验结构化内容。"
+            return f"### Codex 回复\n\n{raw.strip()}"
+        if not isinstance(result, dict):
+            return "### 研发结论\n\nCodex 已完成本轮研发，系统正在校验结果。"
+
+        def section(title: str, value: Any, *, empty: str = "无") -> list[str]:
+            lines = [f"### {title}", ""]
+            if isinstance(value, list):
+                items = [str(item).strip() for item in value if str(item).strip()]
+                lines.extend([f"- {item}" for item in items] or [empty])
+            else:
+                text = str(value or "").strip()
+                lines.append(text or empty)
+            return lines
+
+        blocks: list[str] = []
+        for title, field, empty in (
+            ("研发结论", "summary", "Codex 已完成本轮研发。"),
+            ("变更文件", "changed_files", "无代码文件变更"),
+            ("验收覆盖", "acceptance_mapping", "未提供验收映射"),
+            ("风险提示", "risks", "无"),
+            ("SQL 变更", "sql_changes", "无"),
+            ("配置变更", "config_changes", "无"),
+        ):
+            blocks.extend(section(title, result.get(field), empty=empty))
+            blocks.append("")
+        return "\n".join(blocks).strip()

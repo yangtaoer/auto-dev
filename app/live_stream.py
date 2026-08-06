@@ -52,6 +52,7 @@ class LiveCodexHub:
                 "content": str(event.get("content") or "")[:12000],
                 "group": str(event.get("group") or "")[:160],
                 "delta": bool(event.get("delta")),
+                "format": "markdown" if event.get("format") == "markdown" else "plain",
             }
             events = self._events.setdefault(request_id, deque(maxlen=self.max_events))
             events.append(item)

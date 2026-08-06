@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="全自助需求研发交付",
-    version="0.3.2",
+    version="0.3.3",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -182,6 +182,7 @@ class LiveCodexEvent(BaseModel):
     content: str = Field(max_length=12000)
     group: str = Field(default="", max_length=160)
     delta: bool = False
+    format: str = Field(default="plain", pattern=r"^(plain|markdown)$")
 
 
 class RunnerLiveCodexEvents(BaseModel):
