@@ -10,7 +10,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/cloud/Dockerfile
-    image: autodev-backend:0.4.1
+    image: autodev-backend:0.4.2
     restart: unless-stopped
     depends_on:
       permissions:

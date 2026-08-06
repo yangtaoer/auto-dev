@@ -438,6 +438,12 @@ class Worker:
         configured_area = project.get("tfs_area_path", "")
         if configured_area and not item["area_path"].startswith(configured_area):
             raise RuntimeError(f"需求区域 {item['area_path']} 不在项目准入范围 {configured_area} 内")
+        title_keywords = [str(value).strip() for value in project.get("routing_title_keywords", []) if str(value).strip()]
+        if title_keywords and not any(keyword.casefold() in item["title"].casefold() for keyword in title_keywords):
+            raise RuntimeError(
+                f"需求标题“{item['title']}”未命中项目“{project.get('name', project.get('project_key', ''))}”"
+                f"的路由关键字：{'、'.join(title_keywords)}"
+            )
         if not item.get("description"):
             raise RuntimeError("需求描述为空，无法自动研发")
         return item

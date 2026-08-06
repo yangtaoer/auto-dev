@@ -403,7 +403,7 @@ class WorkflowTests(unittest.TestCase):
             json={
                 "runner_id": "quota-test-runner",
                 "hostname": "quota-pc",
-                "version": "0.4.1",
+                "version": "0.4.2",
                 "state": "idle",
                 "current_request_ids": [],
                 "max_concurrency": 5,
@@ -437,10 +437,12 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
 
         page = self.client.get("/")
-        self.assertIn("SYSTEM v0.4.1", page.text)
+        self.assertIn("SYSTEM v0.4.2", page.text)
         self.assertIn("control-strip", page.text)
         script = self.client.get("/static/app.js").text
         self.assertIn("addOptimisticIntake", script)
+        self.assertIn("renderActiveRuns", script)
+        self.assertNotIn("activeEl.innerHTML=state.dashboard.active", script)
 
         headers = {"Authorization": "Bearer test-runner-token"}
         claimed = self.client.post(
@@ -585,6 +587,56 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(item["id"], 910009)
         get_work_item.assert_called_once_with(910009)
 
+    @patch("app.project_catalog.TfsClient.get_work_item")
+    def test_local_catalog_routes_same_area_by_title_keyword(self, get_work_item) -> None:
+        get_work_item.return_value = {
+            "id": 1642902,
+            "title": "【成都网络下令】自动化研发测试",
+            "area_path": "XiNanArea-New\\四川省区团队",
+        }
+        common = {
+            "enabled": True,
+            "simulation_mode": False,
+            "tfs_collection_url": "http://dev.tellhowsoft.com/DefaultCollection",
+            "tfs_area_path": "XiNanArea-New\\四川省区团队",
+        }
+        projects = [
+            {**common, "project_key": "bazhong", "routing_title_keywords": ["巴中"]},
+            {
+                **common,
+                "project_key": "chengdu-network-command",
+                "routing_title_keywords": ["成都网络下令", "成都网络发令"],
+            },
+        ]
+        project, item = resolve_project_for_work_item(1642902, projects)
+        self.assertEqual(project["project_key"], "chengdu-network-command")
+        self.assertEqual(item["title"], "【成都网络下令】自动化研发测试")
+
+    @patch("app.orchestrator.TfsClient.get_work_item")
+    def test_worker_rejects_a_stale_wrong_project_snapshot(self, get_work_item) -> None:
+        get_work_item.return_value = {
+            "id": 1642902,
+            "revision": 1,
+            "title": "【成都网络下令】自动化研发测试",
+            "description": "用于验证项目路由。",
+            "acceptance_criteria": "路由至成都项目。",
+            "state": "新建",
+            "work_item_type": "用户情景",
+            "area_path": "XiNanArea-New\\四川省区团队",
+        }
+        project = {
+            "enabled": True,
+            "simulation_mode": False,
+            "name": "巴中自巡航-自研",
+            "tfs_collection_url": "http://dev.tellhowsoft.com/DefaultCollection",
+            "tfs_area_path": "XiNanArea-New\\四川省区团队",
+            "routing_title_keywords": ["巴中"],
+            "allowed_work_item_types": ["用户情景"],
+            "allowed_states": ["新建", "已评审"],
+        }
+        with self.assertRaisesRegex(RuntimeError, "未命中项目"):
+            worker._validate({"work_item_id": 1642902}, project)
+
     def test_runner_syncs_read_only_project_catalog(self) -> None:
         headers = {"Authorization": "Bearer test-runner-token"}
 
@@ -600,6 +652,7 @@ class WorkflowTests(unittest.TestCase):
                 "tfs_project": "XiNanArea-New",
                 "tfs_area_path": "XiNanArea-New\\四川省区团队",
                 "reviewer_name": "朱星舟",
+                "routing_title_keywords": ["成都网络下令"],
                 "repository_path": "C:\\work\\demo",
                 "repository_paths": ["C:\\work\\demo", "C:\\work\\demo-api"],
                 "base_branch": "dev",
@@ -637,6 +690,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(synced["name"], "目录项目一（已更新）")
         self.assertEqual(synced["reviewer_name"], "朱星舟")
         self.assertEqual(synced["repository_paths"], ["C:\\work\\demo", "C:\\work\\demo-api"])
+        self.assertEqual(synced["routing_title_keywords"], ["成都网络下令"])
         cleared = self.client.put(
             "/api/runner/projects",
             headers=headers,
@@ -654,7 +708,8 @@ class WorkflowTests(unittest.TestCase):
         projects = load_project_presets()
         chengdu = next(item for item in projects if item["project_key"] == "chengdu-network-command")
         self.assertEqual(chengdu["name"], "成都网络发令")
-        self.assertEqual(chengdu["tfs_area_path"], "DCS\\国网网络发令")
+        self.assertEqual(chengdu["tfs_area_path"], "XiNanArea-New\\四川省区团队")
+        self.assertIn("成都网络下令", chengdu["routing_title_keywords"])
         self.assertEqual(chengdu["delivery_mode"], "sichuan_auto_review")
         self.assertEqual(chengdu["reviewer_name"], "朱星舟")
         self.assertEqual(chengdu["base_branch"], "dev")

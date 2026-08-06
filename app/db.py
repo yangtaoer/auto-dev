@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS projects (
     tfs_project TEXT NOT NULL,
     tfs_area_path TEXT NOT NULL DEFAULT '',
     reviewer_name TEXT NOT NULL DEFAULT '',
+    routing_title_keywords TEXT NOT NULL DEFAULT '[]',
     allowed_work_item_types TEXT NOT NULL DEFAULT '["用户情景"]',
     allowed_states TEXT NOT NULL DEFAULT '["已评审"]',
     repository_path TEXT NOT NULL DEFAULT '',
@@ -241,6 +242,8 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE projects ADD COLUMN allowed_states TEXT NOT NULL DEFAULT '[\"已评审\"]'")
     if "reviewer_name" not in project_columns:
         conn.execute("ALTER TABLE projects ADD COLUMN reviewer_name TEXT NOT NULL DEFAULT ''")
+    if "routing_title_keywords" not in project_columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN routing_title_keywords TEXT NOT NULL DEFAULT '[]'")
     if "repository_paths" not in project_columns:
         conn.execute("ALTER TABLE projects ADD COLUMN repository_paths TEXT NOT NULL DEFAULT '[]'")
     request_columns = {item["name"] for item in conn.execute("PRAGMA table_info(delivery_requests)")}
@@ -376,7 +379,7 @@ def project_for_api(project: dict[str, Any]) -> dict[str, Any]:
     result = dict(project)
     for key in (
         "allowed_work_item_types", "allowed_states", "package_patterns",
-        "sql_patterns", "config_patterns", "protected_patterns", "repository_paths",
+        "sql_patterns", "config_patterns", "protected_patterns", "repository_paths", "routing_title_keywords",
     ):
         result[key] = json_value(result[key], [])
     result["enabled"] = bool(result["enabled"])

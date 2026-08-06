@@ -148,6 +148,7 @@
 .status-dot[data-status=queued]:before { background: var(--blue); animation: runner-pulse 2s ease-in-out infinite; }
 
 .run-card { min-height: 250px; display: flex; flex-direction: column; }
+.run-card.run-leaving { pointer-events: none; animation: card-leave .28s ease forwards; }
 .run-card h3 { margin-top: 22px; }
 .live-activity { display: grid; grid-template-columns: 9px 1fr; gap: 11px; align-items: start; margin-top: auto; padding: 14px; background: #0b1913; border: 1px solid #263f34; }
 .live-activity > i { width: 7px; height: 7px; margin-top: 4px; border-radius: 50%; background: var(--acid); box-shadow: 0 0 10px rgba(121, 242, 173, .8); animation: runner-pulse 2s ease-in-out infinite; }
@@ -155,6 +156,8 @@
 .live-activity b { display: block; }
 .live-activity span { color: #678477; font: 9px Consolas, monospace; letter-spacing: .12em; text-transform: uppercase; }
 .live-activity b { color: #bdd1c7; font-size: 11px; line-height: 1.5; margin-top: 4px; font-weight: 500; max-height: 34px; overflow: hidden; }
+.live-activity b.activity-updated { animation: activity-signal .72s ease; }
+.status-tag.status-updated { animation: status-signal .55s ease; }
 .run-mode { color: #738f82; font: 10px Consolas, monospace; margin-top: 11px; }
 .activity-cell { display: block; max-width: 280px; color: #9db3a8; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -441,6 +444,20 @@
 @keyframes card-arrive {
   from { opacity: 0; transform: translateY(9px); }
   to { opacity: 1; transform: none; }
+}
+
+@keyframes card-leave {
+  to { opacity: 0; transform: translateY(-7px) scale(.985); }
+}
+
+@keyframes activity-signal {
+  0% { color: var(--acid); text-shadow: 0 0 12px rgba(121, 242, 173, .75); transform: translateX(3px); }
+  100% { color: #bdd1c7; text-shadow: none; transform: none; }
+}
+
+@keyframes status-signal {
+  0% { border-color: var(--acid); box-shadow: 0 0 13px rgba(121, 242, 173, .34); }
+  100% { box-shadow: none; }
 }
 
 @media (max-width: 1380px) {

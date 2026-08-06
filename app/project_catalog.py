@@ -31,6 +31,7 @@ def resolve_project_for_work_item(
     fetched: dict[str, dict[str, Any]] = {}
     fetch_errors: list[str] = []
     candidates: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+    area_matched = False
 
     for project in catalog:
         if not project.get("enabled", True) or project.get("simulation_mode"):
@@ -54,12 +55,26 @@ def resolve_project_for_work_item(
             normalized_prefix = match_prefix.casefold()
             if normalized_area != normalized_prefix and not normalized_area.startswith(f"{normalized_prefix}\\"):
                 continue
-        candidates.append((len(match_prefix), project, item))
+        area_matched = True
+        title = str(item.get("title", "")).casefold()
+        keywords = [str(value).strip() for value in project.get("routing_title_keywords", []) if str(value).strip()]
+        matched_keywords = [value for value in keywords if value.casefold() in title]
+        if keywords and not matched_keywords:
+            continue
+        keyword_score = max((len(value) for value in matched_keywords), default=0)
+        score = len(match_prefix) * 1000 + (500 + keyword_score if matched_keywords else 0)
+        candidates.append((score, project, item))
 
     if not candidates:
         if not fetched and fetch_errors:
             raise RuntimeError(f"无法读取 TFS #{work_item_id}：{fetch_errors[0]}")
-        area = next(iter(fetched.values()), {}).get("area_path", "未知")
+        fetched_item = next(iter(fetched.values()), {})
+        area = fetched_item.get("area_path", "未知")
+        if area_matched:
+            raise RuntimeError(
+                f"TFS #{work_item_id} 的 Area Path“{area}”已进入自助范围，"
+                f"但标题“{fetched_item.get('title', '')}”未命中任何项目路由关键字"
+            )
         raise RuntimeError(f"TFS #{work_item_id} 的 Area Path“{area}”未匹配任何本机项目预设")
 
     candidates.sort(key=lambda entry: entry[0], reverse=True)

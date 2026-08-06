@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="全自助需求研发交付",
-    version="0.4.1",
+    version="0.4.2",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -108,6 +108,7 @@ class ProjectInput(BaseModel):
     tfs_project: str
     tfs_area_path: str = ""
     reviewer_name: str = ""
+    routing_title_keywords: list[str] = Field(default_factory=list, max_length=30)
     allowed_work_item_types: list[str] = ["用户情景"]
     allowed_states: list[str] = ["已评审"]
     repository_path: str = ""
