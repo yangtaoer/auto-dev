@@ -3,6 +3,7 @@ from __future__ import annotations
 import fnmatch
 import html
 import mimetypes
+import re
 import shutil
 import smtplib
 import ssl
@@ -59,8 +60,10 @@ def git(worktree: Path, *args: str, env: dict[str, str] | None = None) -> str:
 
 
 def changed_files(worktree: Path, base_commit: str) -> list[str]:
-    output = git(worktree, "diff", "--name-only", base_commit, "--")
-    return [line.replace("\\", "/") for line in output.splitlines() if line.strip()]
+    tracked = git(worktree, "diff", "--name-only", base_commit, "--")
+    untracked = git(worktree, "ls-files", "--others", "--exclude-standard")
+    paths = [line.replace("\\", "/") for output in (tracked, untracked) for line in output.splitlines() if line.strip()]
+    return list(dict.fromkeys(paths))
 
 
 def matches_any(path: str, patterns: Iterable[str]) -> bool:
@@ -92,7 +95,15 @@ class ArtifactService:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def collect_changed_assets(self, request_id: str, worktree: Path, base_commit: str, project: dict) -> list[int]:
+    def collect_changed_assets(
+        self,
+        request_id: str,
+        worktree: Path,
+        base_commit: str,
+        project: dict,
+        *,
+        repository_name: str = "",
+    ) -> list[int]:
         ids: list[int] = []
         paths = changed_files(worktree, base_commit)
         groups = {
@@ -103,10 +114,11 @@ class ArtifactService:
             for relative in paths:
                 source = worktree / relative
                 if source.is_file() and matches_any(relative, patterns):
-                    target = self.request_dir(request_id) / kind / relative
+                    delivery_relative = Path(repository_name) / relative if repository_name else Path(relative)
+                    target = self.request_dir(request_id) / kind / delivery_relative
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source, target)
-                    ids.append(self.record(request_id, kind, relative, str(target)))
+                    ids.append(self.record(request_id, kind, delivery_relative.as_posix(), str(target)))
         return ids
 
     def collect_packages(self, request_id: str, worktree: Path, patterns: list[str]) -> list[int]:
@@ -127,11 +139,20 @@ class ArtifactService:
             ids.append(self.record(request_id, "package_note", marker.name, str(marker)))
         return ids
 
-    def create_merge_evidence(self, request_id: str, pr: dict, pr_url: str) -> int:
+    def create_merge_evidence(
+        self,
+        request_id: str,
+        pr: dict,
+        pr_url: str,
+        *,
+        repository_name: str = "",
+    ) -> int:
         target_dir = self.request_dir(request_id)
-        html_path = target_dir / "merge-evidence.html"
-        image_path = target_dir / "merge-evidence.png"
-        tfs_image_path = target_dir / "tfs-pr-merged.png"
+        slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", repository_name).strip("-") if repository_name else ""
+        suffix = f"-{slug}" if slug else ""
+        html_path = target_dir / f"merge-evidence{suffix}.html"
+        image_path = target_dir / f"merge-evidence{suffix}.png"
+        tfs_image_path = target_dir / f"tfs-pr-merged{suffix}.png"
         completed = pr.get("closed_date") or datetime.now(UTC).isoformat()
         page = f"""<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><style>
         *{{box-sizing:border-box}}body{{margin:0;width:1440px;height:900px;background:#07110e;color:#eef9f2;font-family:'Microsoft YaHei',sans-serif;padding:72px}}
@@ -163,7 +184,8 @@ class ArtifactService:
                         if str(pr.get("id", "")) in visible_text or pr.get("title", "") in visible_text:
                             tfs_page.screenshot(path=str(tfs_image_path), full_page=True)
                             browser.close()
-                            return self.record(request_id, "merge_screenshot", "TFS-PR合并完成截图.png", str(tfs_image_path))
+                            name = f"{repository_name}-PR合并截图.png" if repository_name else "TFS-PR合并完成截图.png"
+                            return self.record(request_id, "merge_screenshot", name, str(tfs_image_path))
                         context.close()
                     except Exception:
                         # TFS Web 登录方式因部署而异；REST 已确认完成时退回系统生成凭证。
@@ -172,9 +194,11 @@ class ArtifactService:
                 page_obj.goto(html_path.as_uri())
                 page_obj.screenshot(path=str(image_path), full_page=True)
                 browser.close()
-            return self.record(request_id, "merge_screenshot", "PR合并完成凭证.png", str(image_path))
+            name = f"{repository_name}-PR合并凭证.png" if repository_name else "PR合并完成凭证.png"
+            return self.record(request_id, "merge_screenshot", name, str(image_path))
         except Exception:
-            return self.record(request_id, "merge_evidence", "PR合并完成凭证.html", str(html_path))
+            name = f"{repository_name}-PR合并凭证.html" if repository_name else "PR合并完成凭证.html"
+            return self.record(request_id, "merge_evidence", name, str(html_path))
 
 
 class Mailer:
@@ -297,11 +321,13 @@ class Mailer:
             "config": "配置文件",
             "merge_screenshot": "合并截图",
             "merge_evidence": "合并凭证",
+            "pull_request": "代码 PR",
         }
         artifact_lines = []
         for item in detail.get("artifacts", []):
             artifact_url = item.get("external_url") or f"{settings.public_base_url}/api/artifacts/{item['id']}"
             kind = kind_labels.get(item.get("kind"), item.get("kind") or "交付文件")
+            action_label = "打开链接" if item.get("kind") == "pull_request" else "下载产物"
             artifact_lines.append(
                 f"""<tr><td style="padding:0 0 7px 0">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d8e5dd;background:#f8fbf9">
@@ -312,7 +338,7 @@ class Mailer:
                       <div style="margin-top:2px;color:#6c8479;font-size:10px;letter-spacing:.04em">{safe_text(kind)}</div>
                     </td>
                     <td width="94" align="right" style="padding:9px 12px 9px 7px">
-                      <a href="{html.escape(artifact_url, quote=True)}" style="display:inline-block;padding:7px 10px;background:#0d2b20;color:#79f2ad;text-decoration:none;font-size:11px;font-weight:700;white-space:nowrap">下载产物</a>
+                      <a href="{html.escape(artifact_url, quote=True)}" style="display:inline-block;padding:7px 10px;background:#0d2b20;color:#79f2ad;text-decoration:none;font-size:11px;font-weight:700;white-space:nowrap">{action_label}</a>
                     </td>
                   </tr>
                 </table></td></tr>"""

@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="全自助需求研发交付",
-    version="0.3.9",
+    version="0.4.0",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -107,9 +107,11 @@ class ProjectInput(BaseModel):
     tfs_collection_url: str
     tfs_project: str
     tfs_area_path: str = ""
+    reviewer_name: str = ""
     allowed_work_item_types: list[str] = ["用户情景"]
     allowed_states: list[str] = ["已评审"]
     repository_path: str = ""
+    repository_paths: list[str] = Field(default_factory=list, max_length=30)
     base_branch: str = "dev"
     build_command: str = ""
     package_patterns: list[str] = []
@@ -1015,7 +1017,7 @@ def runner_publish_codex_events(request_id: str, payload: RunnerLiveCodexEvents)
 RUNNER_MUTABLE_FIELDS = {
     "work_item_revision", "title", "requirement_summary", "status", "current_step", "progress",
     "branch_name", "base_commit", "commit_hash", "pr_id", "pr_url", "merge_commit", "codex_thread_id",
-    "result_summary", "error_message", "started_at", "completed_at", "next_poll_at", "email_sent_at",
+    "result_summary", "error_message", "repository_states", "started_at", "completed_at", "next_poll_at", "email_sent_at",
 }
 
 

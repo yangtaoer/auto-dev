@@ -164,12 +164,25 @@ class Worker:
 
             self.store.update_request(request_id, current_step="prepare", progress=22)
             self.store.update_step(request_id, "prepare", "running", "正在创建隔离工作区")
+            repository_states: list[dict] = []
             if project.get("simulation_mode"):
                 worktree, base_commit, branch = None, "demo-base-commit", f"feature/{work_item['id']}-demo"
             else:
-                worktree, base_commit, branch = self._prepare_worktree(request_id, work_item, project)
-            self.store.update_request(request_id, branch_name=branch, base_commit=base_commit)
-            self.store.update_step(request_id, "prepare", "completed", f"分支 {branch} 已从最新 origin/{project.get('base_branch','dev')} 创建")
+                worktree, repository_states, branch = self._prepare_worktrees(request_id, work_item, project)
+                base_commit = repository_states[0]["base_commit"]
+            self.store.update_request(
+                request_id,
+                branch_name=branch,
+                base_commit=base_commit,
+                repository_states=repository_states,
+            )
+            repository_count = len(repository_states) or 1
+            self.store.update_step(
+                request_id,
+                "prepare",
+                "completed",
+                f"已从最新 origin/{project.get('base_branch','dev')} 创建分支 {branch}，隔离仓库 {repository_count} 个",
+            )
             self._check_cancelled(request_id)
 
             self.store.update_request(request_id, status=RunStatus.DEVELOPING.value, current_step="develop", progress=32)
@@ -190,7 +203,15 @@ class Worker:
                 finally:
                     live_publisher.close()
                 result, codex_thread_id = run.result, run.thread_id
-                paths = changed_files(worktree, base_commit)
+                for state in repository_states:
+                    state["changed_files"] = changed_files(Path(state["worktree_path"]), state["base_commit"])
+                changed_states = [state for state in repository_states if state["changed_files"]]
+                paths = [
+                    f"{state['name']}/{relative}"
+                    for state in changed_states
+                    for relative in state["changed_files"]
+                ]
+                self.store.update_request(request_id, repository_states=repository_states)
                 blocked = protected_changes(paths, project.get("protected_patterns", []))
                 if blocked:
                     self.store.update_request(
@@ -243,8 +264,24 @@ class Worker:
             if project.get("simulation_mode"):
                 commit_hash = "demo" + request_id.replace("-", "")[:8]
             else:
-                commit_hash = self._commit_and_push(worktree, detail, work_item, project, branch)
-                self.artifacts.collect_changed_assets(request_id, worktree, base_commit, project)
+                commits: list[str] = []
+                for state in changed_states:
+                    state_worktree = Path(state["worktree_path"])
+                    commit_hash = self._commit_and_push(
+                        state_worktree, detail, work_item, project, state["branch"]
+                    )
+                    state["commit_hash"] = commit_hash
+                    state["status"] = "pushed"
+                    commits.append(commit_hash)
+                    self.artifacts.collect_changed_assets(
+                        request_id,
+                        state_worktree,
+                        state["base_commit"],
+                        project,
+                        repository_name=state["name"],
+                    )
+                commit_hash = commits[0]
+                self.store.update_request(request_id, repository_states=repository_states)
             self.store.update_request(request_id, commit_hash=commit_hash)
 
             if mode == DeliveryMode.LOCAL_PACKAGE:
@@ -259,17 +296,48 @@ class Worker:
                 output = run_command(verification_command, worktree)
                 self.store.add_event(request_id, "verification.completed", "PR 前构建/校验通过", metadata={"output_tail": output[-1000:]})
 
-            pr = self._create_pr(request_id, detail, project, worktree, work_item, branch)
-            self.store.update_request(request_id, pr_id=pr["id"], pr_url=pr["url"], progress=76)
-            self.store.update_step(request_id, "submit", "completed", f"PR #{pr['id']} 已创建并关联需求")
-            self.store.add_artifact(request_id, "pull_request", f"PR #{pr['id']}", external_url=pr["url"])
+            if project.get("simulation_mode"):
+                pr = self._create_pr(request_id, detail, project, worktree, work_item, branch)
+                pull_requests = [(None, pr)]
+            else:
+                pull_requests = []
+                for state in changed_states:
+                    pr = self._create_pr(
+                        request_id,
+                        detail,
+                        project,
+                        Path(state["worktree_path"]),
+                        work_item,
+                        state["branch"],
+                    )
+                    state.update({"pr_id": pr["id"], "pr_url": pr["url"], "status": "waiting_merge"})
+                    pull_requests.append((state, pr))
+                    self.store.add_artifact(
+                        request_id,
+                        "pull_request",
+                        f"{state['name']} · PR #{pr['id']}",
+                        external_url=pr["url"],
+                    )
+                self.store.update_request(request_id, repository_states=repository_states)
+            primary_pr = pull_requests[0][1]
+            self.store.update_request(request_id, pr_id=primary_pr["id"], pr_url=primary_pr["url"], progress=76)
+            if project.get("simulation_mode"):
+                self.store.add_artifact(request_id, "pull_request", f"PR #{primary_pr['id']}", external_url=primary_pr["url"])
+            pr_numbers = "、".join(f"#{item[1]['id']}" for item in pull_requests)
+            self.store.update_step(request_id, "submit", "completed", f"PR {pr_numbers} 已创建并关联需求")
 
             if mode == DeliveryMode.SICHUAN_AUTO_REVIEW:
                 if project.get("simulation_mode"):
                     self.store.add_event(request_id, "pr.approved", "演示模式：四川审核服务账号已批准 PR")
                 else:
-                    TfsClient(project["tfs_collection_url"]).approve_pull_request(project["repository_path"], pr["id"])
-                    self.store.add_event(request_id, "pr.approved", "四川审核服务账号已批准 PR；操作已记录审计")
+                    tfs = TfsClient(project["tfs_collection_url"])
+                    for state, pr in pull_requests:
+                        tfs.approve_pull_request(state["repository_path"], pr["id"])
+                    self.store.add_event(
+                        request_id,
+                        "pr.approved",
+                        f"四川审核人 {project.get('reviewer_name') or settings.tfs_reviewer_name} 已批准 {len(pull_requests)} 个 PR；操作已记录审计",
+                    )
             else:
                 self._send_status_email(request_id, action_required=True)
                 self.store.add_event(request_id, "mail.action_required", "已邮件通知项目经理安排产品部审核并合并 PR")
@@ -282,7 +350,7 @@ class Worker:
                 next_poll_at=(datetime.now(UTC) + timedelta(seconds=settings.poll_seconds)).isoformat(),
             )
             self.store.update_step(request_id, "deliver", "running", "本机执行器正在循环检测 PR 合并状态")
-            self.store.add_event(request_id, "pr.waiting_merge", f"开始监控 PR #{pr['id']} 合并状态")
+            self.store.add_event(request_id, "pr.waiting_merge", f"开始监控 PR {pr_numbers} 合并状态")
         except Cancelled:
             self._cancel(request_id)
         except Exception as exc:
@@ -304,15 +372,42 @@ class Worker:
                     "source_branch": detail.get("branch_name"), "target_branch": project.get("base_branch", "dev"),
                     "merge_commit": detail["merge_commit"], "closed_date": utc_now(),
                 }
-            else:
-                pr = TfsClient(project["tfs_collection_url"]).get_pull_request(project["repository_path"], detail["pr_id"])
-            if pr["status"] == "completed":
-                self._finish_merged_request(request_id, pr)
-            elif pr["status"] == "abandoned":
-                raise RuntimeError(f"PR #{detail['pr_id']} 已被放弃，无法完成交付")
-            else:
-                self.store.add_event(request_id, "pr.polled", f"PR #{detail['pr_id']} 尚未合并")
+                if pr["status"] == "completed":
+                    self._finish_merged_request(request_id, pr)
+                else:
+                    self._schedule_next_poll(request_id)
+                return
+
+            repository_states = [state for state in detail.get("repository_states", []) if state.get("pr_id")]
+            if not repository_states:
+                repository_states = [
+                    {
+                        "name": Path(project["repository_path"]).name,
+                        "repository_path": project["repository_path"],
+                        "pr_id": detail["pr_id"],
+                        "pr_url": detail["pr_url"],
+                    }
+                ]
+            tfs = TfsClient(project["tfs_collection_url"])
+            completed: list[tuple[dict, dict]] = []
+            pending: list[int] = []
+            for state in repository_states:
+                pr = tfs.get_pull_request(state["repository_path"], int(state["pr_id"]))
+                if pr["status"] == "abandoned":
+                    raise RuntimeError(f"{state['name']} 的 PR #{state['pr_id']} 已被放弃，无法完成交付")
+                if pr["status"] == "completed":
+                    completed.append((state, pr))
+                else:
+                    pending.append(int(state["pr_id"]))
+            if pending:
+                self.store.add_event(
+                    request_id,
+                    "pr.polled",
+                    f"仍有 {len(pending)} 个 PR 尚未合并：" + "、".join(f"#{pr_id}" for pr_id in pending),
+                )
                 self._schedule_next_poll(request_id)
+            else:
+                self._finish_merged_repositories(request_id, repository_states, completed)
         except Exception as exc:
             self.store.add_event(request_id, "pr.poll_failed", str(exc), level="warning")
             self._schedule_next_poll(request_id, backoff=True)
@@ -347,41 +442,93 @@ class Worker:
             raise RuntimeError("需求描述为空，无法自动研发")
         return item
 
-    def _prepare_worktree(self, request_id: str, work_item: dict, project: dict) -> tuple[Path, str, str]:
-        repo = Path(project.get("repository_path", "")).resolve()
-        if not repo.is_dir() or not (repo / ".git").exists():
-            raise RuntimeError(f"项目仓库路径无效：{repo}")
+    @staticmethod
+    def _configured_repository_paths(project: dict) -> list[Path]:
+        configured = project.get("repository_paths") or [project.get("repository_path", "")]
+        repositories: list[Path] = []
+        seen: set[str] = set()
+        for value in configured:
+            if not str(value).strip():
+                continue
+            repo = Path(value).resolve()
+            key = str(repo).casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            if not repo.is_dir() or not (repo / ".git").exists():
+                raise RuntimeError(f"项目仓库路径无效：{repo}")
+            repositories.append(repo)
+        if not repositories:
+            raise RuntimeError("项目未配置可用的 Git 仓库")
+        names = [repo.name.casefold() for repo in repositories]
+        if len(names) != len(set(names)):
+            raise RuntimeError("多仓项目存在同名仓库目录，无法创建隔离工作区")
+        return repositories
+
+    def _prepare_worktrees(
+        self,
+        request_id: str,
+        work_item: dict,
+        project: dict,
+    ) -> tuple[Path, list[dict], str]:
+        repositories = self._configured_repository_paths(project)
         base_branch = project.get("base_branch", "dev")
         fetch_env = git_authenticated_env(settings.tfs_pat) if settings.tfs_pat else sanitized_process_env()
+        base_branch_name = f"feature/{work_item['id']}-{settings.tfs_user_alias}"
+        workspace_root = settings.worktree_dir / request_id
+        states: list[dict] = []
         # 同一仓库的 fetch/worktree 元数据共用 Git 锁；只串行化准备阶段，Codex 与构建仍可并行。
         with self._workspace_lock:
-            subprocess.run(
-                ["git", "-C", str(repo), "fetch", "origin", base_branch],
-                check=True,
-                capture_output=True,
-                env=fetch_env,
+            for repo in repositories:
+                subprocess.run(
+                    ["git", "-C", str(repo), "fetch", "origin", base_branch],
+                    check=True,
+                    capture_output=True,
+                    env=fetch_env,
+                )
+            branch_exists = any(
+                subprocess.run(
+                    ["git", "-C", str(repo), "show-ref", "--verify", "--quiet", f"refs/heads/{base_branch_name}"],
+                    env=sanitized_process_env(),
+                ).returncode == 0
+                for repo in repositories
             )
-            base_commit = git(repo, "rev-parse", f"origin/{base_branch}")
-            branch = f"feature/{work_item['id']}-{settings.tfs_user_alias}"
-            branch_check = subprocess.run(
-                ["git", "-C", str(repo), "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
-                env=sanitized_process_env(),
-            )
-            if branch_check.returncode == 0:
+            branch = base_branch_name
+            if branch_exists:
                 suffix = datetime.now().strftime("%Y%m%d-%H%M%S")
                 branch = f"{branch}-{suffix}"
-            worktree = settings.worktree_dir / request_id / repo.name
-            worktree.parent.mkdir(parents=True, exist_ok=True)
-            if worktree.exists():
-                raise RuntimeError(f"任务工作区已存在，需要人工确认后重试：{worktree}")
-            subprocess.run(
-                ["git", "-C", str(repo), "worktree", "add", "-b", branch, str(worktree), f"origin/{base_branch}"],
-                check=True,
-                capture_output=True,
-                env=sanitized_process_env(),
-            )
-        self.store.add_event(request_id, "workspace.prepared", f"隔离工作区：{worktree}", metadata={"base_commit": base_commit})
-        return worktree, base_commit, branch
+            workspace_root.mkdir(parents=True, exist_ok=True)
+            for repo in repositories:
+                base_commit = git(repo, "rev-parse", f"origin/{base_branch}")
+                worktree = workspace_root / repo.name
+                if worktree.exists():
+                    raise RuntimeError(f"任务工作区已存在，需要人工确认后重试：{worktree}")
+                subprocess.run(
+                    ["git", "-C", str(repo), "worktree", "add", "-b", branch, str(worktree), f"origin/{base_branch}"],
+                    check=True,
+                    capture_output=True,
+                    env=sanitized_process_env(),
+                )
+                states.append(
+                    {
+                        "name": repo.name,
+                        "repository_path": str(repo),
+                        "worktree_path": str(worktree),
+                        "base_branch": base_branch,
+                        "base_commit": base_commit,
+                        "branch": branch,
+                        "changed_files": [],
+                        "status": "prepared",
+                    }
+                )
+        codex_workspace = states[0]["worktree_path"] if len(states) == 1 else str(workspace_root)
+        self.store.add_event(
+            request_id,
+            "workspace.prepared",
+            f"已准备 {len(states)} 个隔离仓库：{'、'.join(state['name'] for state in states)}",
+            metadata={"repositories": states},
+        )
+        return Path(codex_workspace), states, branch
 
     def _commit_and_push(self, worktree: Path, detail: dict, work_item: dict, project: dict, branch: str) -> str:
         title = re.sub(r"[\r\n]+", " ", work_item["title"]).strip()[:72]
@@ -436,6 +583,38 @@ class Worker:
         self.artifacts.create_merge_evidence(request_id, pr, detail["pr_url"])
         if detail["policy_snapshot"].get("simulation_mode"):
             self._create_demo_artifacts(request_id, include_package=False)
+        self._complete_delivery(request_id)
+
+    def _finish_merged_repositories(
+        self,
+        request_id: str,
+        repository_states: list[dict],
+        completed: list[tuple[dict, dict]],
+    ) -> None:
+        self.store.update_request(request_id, status=RunStatus.CAPTURING.value, progress=91)
+        merge_commits: list[str] = []
+        for state, pr in completed:
+            state["status"] = "completed"
+            state["merge_commit"] = pr.get("merge_commit")
+            if pr.get("merge_commit"):
+                merge_commits.append(pr["merge_commit"])
+            self.store.add_event(
+                request_id,
+                "pr.merged",
+                f"{state['name']} 的 PR #{pr['id']} 已合并",
+                metadata=pr,
+            )
+            self.artifacts.create_merge_evidence(
+                request_id,
+                pr,
+                state.get("pr_url", ""),
+                repository_name=state["name"],
+            )
+        self.store.update_request(
+            request_id,
+            repository_states=repository_states,
+            merge_commit=merge_commits[0] if merge_commits else None,
+        )
         self._complete_delivery(request_id)
 
     def _complete_delivery(self, request_id: str) -> None:

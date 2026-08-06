@@ -44,6 +44,14 @@ class CodexRunner:
         from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox
 
         protected = ", ".join(project.get("protected_patterns", [])) or "无"
+        repository_paths = project.get("repository_paths") or [project.get("repository_path", "")]
+        repository_names = [Path(path).name for path in repository_paths if str(path).strip()]
+        repository_scope = "、".join(repository_names) or "当前仓库"
+        repository_rule = (
+            "当前工作区是多仓库根目录。先判断需求涉及哪些仓库，只修改必要仓库；需求需要时允许跨仓修改。"
+            if len(repository_names) > 1
+            else "当前工作区是单仓库，只在该仓库内完成需求。"
+        )
         prompt = f"""
 你正在执行一个经过准入的 TFS 自动研发任务。
 
@@ -52,17 +60,19 @@ class CodexRunner:
 需求描述：{work_item.get('description', '')}
 验收标准：{work_item.get('acceptance_criteria', '')}
 区域：{work_item.get('area_path', '')}
+仓库范围：{repository_scope}
 
 约束：
 1. 只修改当前工作区，不执行 git commit、git push、创建 PR 或发送通知。
-2. 不修改受保护路径：{protected}。
-3. 优先使用项目/区域专属扩展点，不改变其他区域的现有行为。
-4. SQL 与配置变更必须独立、明确，并在最终结果中列出。
-5. 不接触密钥、生产配置和真实数据。
-6. 实现需求并进行必要的低风险自检；项目构建命令由外层系统统一执行。
-7. 所有面向用户的分析摘要和最终结果必须使用简体中文（文件路径、代码和命令除外）。
-8. 不要根据改动大小或是否改变接口行为决定是否交付；只要产生有效代码变更，外层系统都会继续提交代码并执行既定构建。
-9. 最终结果只描述研发修改与自检，不要把“未提交代码”或“未打包”列为未完成事项，这两步由外层交付流程强制执行。
+2. {repository_rule}
+3. 不修改受保护路径：{protected}。
+4. 优先使用项目/区域专属扩展点，不改变其他区域的现有行为。
+5. SQL 与配置变更必须独立、明确，并在最终结果中列出。
+6. 不接触密钥、生产配置和真实数据。
+7. 实现需求并进行必要的低风险自检；项目构建命令由外层系统统一执行。
+8. 所有面向用户的分析摘要和最终结果必须使用简体中文（文件路径、代码和命令除外）。
+9. 不要根据改动大小或是否改变接口行为决定是否交付；只要产生有效代码变更，外层系统都会继续提交代码并执行既定构建。
+10. 最终结果只描述研发修改与自检，不要把“未提交代码”或“未打包”列为未完成事项，这两步由外层交付流程强制执行。
 """.strip()
 
         developer_instructions = (

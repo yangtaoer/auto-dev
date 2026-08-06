@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tempfile
 import threading
 import time
@@ -26,7 +27,7 @@ from app.main import app  # noqa: E402
 from app.orchestrator import Worker, worker  # noqa: E402
 from app.project_catalog import load_project_presets, resolve_project_for_work_item  # noqa: E402
 from app.services.codex_runner import CodexRunner  # noqa: E402
-from app.services.delivery import Mailer  # noqa: E402
+from app.services.delivery import Mailer, changed_files  # noqa: E402
 from app.store import RemoteStore  # noqa: E402
 
 
@@ -218,6 +219,29 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn('"summary"', event["content"])
         self.assertIsNone(runner._live_event("turn/completed", {"turn": {"status": "completed"}}))
 
+    def test_changed_files_includes_new_untracked_delivery_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = Path(temporary)
+            subprocess.run(["git", "-C", str(repository), "init", "-q"], check=True)
+            subprocess.run(["git", "-C", str(repository), "config", "user.name", "AutoDev Test"], check=True)
+            subprocess.run(
+                ["git", "-C", str(repository), "config", "user.email", "autodev-test@example.com"], check=True
+            )
+            tracked = repository / "README.md"
+            tracked.write_text("initial\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repository), "add", "README.md"], check=True)
+            subprocess.run(["git", "-C", str(repository), "commit", "-q", "-m", "initial"], check=True)
+            base_commit = subprocess.run(
+                ["git", "-C", str(repository), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            new_sql = repository / "sql" / "upgrade.sql"
+            new_sql.parent.mkdir()
+            new_sql.write_text("SELECT 1;\n", encoding="utf-8")
+            self.assertIn("sql/upgrade.sql", changed_files(repository, base_commit))
+
     def test_remote_store_retries_transient_gateway_failure(self) -> None:
         request = httpx.Request("PATCH", "https://cloud.test/api/runner/requests/request-1")
         responses = [
@@ -379,7 +403,7 @@ class WorkflowTests(unittest.TestCase):
             json={
                 "runner_id": "quota-test-runner",
                 "hostname": "quota-pc",
-                "version": "0.3.9",
+                "version": "0.4.0",
                 "state": "idle",
                 "current_request_ids": [],
                 "max_concurrency": 5,
@@ -413,7 +437,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
 
         page = self.client.get("/")
-        self.assertIn("SYSTEM v0.3.9", page.text)
+        self.assertIn("SYSTEM v0.4.0", page.text)
         self.assertIn("control-strip", page.text)
         script = self.client.get("/static/app.js").text
         self.assertIn("addOptimisticIntake", script)
@@ -575,7 +599,9 @@ class WorkflowTests(unittest.TestCase):
                 "tfs_collection_url": "http://dev.tellhowsoft.com/DefaultCollection",
                 "tfs_project": "XiNanArea-New",
                 "tfs_area_path": "XiNanArea-New\\四川省区团队",
+                "reviewer_name": "朱星舟",
                 "repository_path": "C:\\work\\demo",
+                "repository_paths": ["C:\\work\\demo", "C:\\work\\demo-api"],
                 "base_branch": "dev",
                 "build_command": "echo test",
                 "package_patterns": ["target/*.jar"],
@@ -609,6 +635,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("catalog-two", visible_keys)
         synced = next(item for item in visible if item["project_key"] == "catalog-one")
         self.assertEqual(synced["name"], "目录项目一（已更新）")
+        self.assertEqual(synced["reviewer_name"], "朱星舟")
+        self.assertEqual(synced["repository_paths"], ["C:\\work\\demo", "C:\\work\\demo-api"])
         cleared = self.client.put(
             "/api/runner/projects",
             headers=headers,
@@ -621,6 +649,79 @@ class WorkflowTests(unittest.TestCase):
         bazhong = next(item for item in projects if item["project_key"] == "bazhong-self-developed")
         self.assertEqual(bazhong["name"], "巴中自巡航-自研")
         self.assertEqual(bazhong["runner_id"], "yangtao-pc")
+
+    def test_local_project_preset_catalog_contains_chengdu_multi_repository_review(self) -> None:
+        projects = load_project_presets()
+        chengdu = next(item for item in projects if item["project_key"] == "chengdu-network-command")
+        self.assertEqual(chengdu["name"], "成都网络发令")
+        self.assertEqual(chengdu["tfs_area_path"], "DCS\\国网网络发令")
+        self.assertEqual(chengdu["delivery_mode"], "sichuan_auto_review")
+        self.assertEqual(chengdu["reviewer_name"], "朱星舟")
+        self.assertEqual(chengdu["base_branch"], "dev")
+        self.assertEqual(len(chengdu["repository_paths"]), 9)
+
+    def test_multi_repository_merge_waits_for_all_prs_then_delivers(self) -> None:
+        class Store:
+            remote = False
+
+            def __init__(self) -> None:
+                self.updates: list[dict] = []
+                self.events: list[tuple[str, str]] = []
+                self.request = {
+                    "id": "multi-pr-request",
+                    "status": "waiting_merge",
+                    "policy_snapshot": {
+                        "simulation_mode": False,
+                        "tfs_collection_url": "http://dev.tellhowsoft.com/DefaultCollection",
+                    },
+                    "repository_states": [
+                        {
+                            "name": "repo-one",
+                            "repository_path": "C:\\work\\repo-one",
+                            "pr_id": 101,
+                            "pr_url": "https://tfs.test/pr/101",
+                        },
+                        {
+                            "name": "repo-two",
+                            "repository_path": "C:\\work\\repo-two",
+                            "pr_id": 102,
+                            "pr_url": "https://tfs.test/pr/102",
+                        },
+                    ],
+                }
+
+            def detail(self, request_id: str) -> dict:
+                return self.request
+
+            def update_request(self, request_id: str, **fields) -> None:
+                self.request.update(fields)
+                self.updates.append(fields)
+
+            def add_event(self, request_id: str, event_type: str, message: str, **kwargs) -> None:
+                self.events.append((event_type, message))
+
+            def add_artifact(self, *args, **kwargs) -> int:
+                return 1
+
+        store = Store()
+        multi_worker = Worker(store=store)
+        pull_requests = [
+            {"id": 101, "status": "completed", "merge_commit": "merge-one"},
+            {"id": 102, "status": "completed", "merge_commit": "merge-two"},
+        ]
+        with patch("app.orchestrator.TfsClient.get_pull_request", side_effect=pull_requests), patch.object(
+            multi_worker.artifacts, "create_merge_evidence"
+        ) as evidence, patch.object(multi_worker, "_complete_delivery") as completed:
+            multi_worker.poll_merge("multi-pr-request")
+
+        completed.assert_called_once_with("multi-pr-request")
+        self.assertEqual(evidence.call_count, 2)
+        self.assertEqual(store.request["merge_commit"], "merge-one")
+        self.assertTrue(all(item["status"] == "completed" for item in store.request["repository_states"]))
+        self.assertEqual(
+            [event for event, _ in store.events].count("pr.merged"),
+            2,
+        )
 
     def test_user_multiple_emails_edit_disable_and_request_selection(self) -> None:
         username = "multi_mail_pm"

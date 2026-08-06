@@ -79,9 +79,11 @@ CREATE TABLE IF NOT EXISTS projects (
     tfs_collection_url TEXT NOT NULL,
     tfs_project TEXT NOT NULL,
     tfs_area_path TEXT NOT NULL DEFAULT '',
+    reviewer_name TEXT NOT NULL DEFAULT '',
     allowed_work_item_types TEXT NOT NULL DEFAULT '["用户情景"]',
     allowed_states TEXT NOT NULL DEFAULT '["已评审"]',
     repository_path TEXT NOT NULL DEFAULT '',
+    repository_paths TEXT NOT NULL DEFAULT '[]',
     base_branch TEXT NOT NULL DEFAULT 'dev',
     build_command TEXT NOT NULL DEFAULT '',
     package_patterns TEXT NOT NULL DEFAULT '[]',
@@ -112,6 +114,7 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
     pr_id INTEGER,
     pr_url TEXT,
     merge_commit TEXT,
+    repository_states TEXT NOT NULL DEFAULT '[]',
     codex_thread_id TEXT,
     result_summary TEXT NOT NULL DEFAULT '',
     error_message TEXT NOT NULL DEFAULT '',
@@ -236,11 +239,17 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE projects ADD COLUMN allowed_work_item_types TEXT NOT NULL DEFAULT '[\"用户情景\"]'")
     if "allowed_states" not in project_columns:
         conn.execute("ALTER TABLE projects ADD COLUMN allowed_states TEXT NOT NULL DEFAULT '[\"已评审\"]'")
+    if "reviewer_name" not in project_columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN reviewer_name TEXT NOT NULL DEFAULT ''")
+    if "repository_paths" not in project_columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN repository_paths TEXT NOT NULL DEFAULT '[]'")
     request_columns = {item["name"] for item in conn.execute("PRAGMA table_info(delivery_requests)")}
     if "runner_id" not in request_columns:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN runner_id TEXT NOT NULL DEFAULT 'yangtao-pc'")
     if "notification_emails" not in request_columns:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN notification_emails TEXT NOT NULL DEFAULT '[]'")
+    if "repository_states" not in request_columns:
+        conn.execute("ALTER TABLE delivery_requests ADD COLUMN repository_states TEXT NOT NULL DEFAULT '[]'")
     for user in conn.execute("SELECT id,email,created_at FROM users").fetchall():
         if not conn.execute("SELECT 1 FROM user_emails WHERE user_id=? LIMIT 1", (user["id"],)).fetchone():
             conn.execute(
@@ -367,7 +376,7 @@ def project_for_api(project: dict[str, Any]) -> dict[str, Any]:
     result = dict(project)
     for key in (
         "allowed_work_item_types", "allowed_states", "package_patterns",
-        "sql_patterns", "config_patterns", "protected_patterns",
+        "sql_patterns", "config_patterns", "protected_patterns", "repository_paths",
     ):
         result[key] = json_value(result[key], [])
     result["enabled"] = bool(result["enabled"])
@@ -480,6 +489,8 @@ def add_event(request_id: str, event_type: str, message: str, *, level: str = "i
 def update_request(request_id: str, **fields: Any) -> None:
     if not fields:
         return
+    if "repository_states" in fields and not isinstance(fields["repository_states"], str):
+        fields["repository_states"] = json.dumps(fields["repository_states"], ensure_ascii=False)
     fields["updated_at"] = utc_now()
     assignments = ",".join(f"{key}=?" for key in fields)
     with transaction() as conn:
@@ -533,5 +544,6 @@ def request_detail(request_id: str) -> dict[str, Any] | None:
         (request_id,),
     )
     request["policy_snapshot"] = json_value(request["policy_snapshot"], {})
+    request["repository_states"] = json_value(request.get("repository_states"), [])
     request["notification_emails"] = json_value(request.get("notification_emails"), [request["requester_email"]])
     return request

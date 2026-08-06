@@ -71,7 +71,7 @@ AUTODEV_RUNNER_ID=yangtao-pc
 
 1. 把云端 `secrets/runner_token.txt` 的内容安全写入本机 `local-runner\secrets\runner-token.txt`。
 2. 把 TFS PAT 写入 `tfs-pat.txt`。
-3. 仅四川自动审核需要把专用审核账号 PAT 写入 `tfs-reviewer-pat.txt`，并配置 `TFS_REVIEWER_ID`。
+3. 仅四川自动审核需要把专用审核账号 PAT 写入 `tfs-reviewer-pat.txt`，并配置 `TFS_REVIEWER_ID` 与 `TFS_REVIEWER_NAME`。
 4. 确认当前 Windows 用户可以正常使用 Codex；默认复用本机已有登录态。
 5. 先运行 `.\local-runner\start.ps1`，云端左下角应在约 20 秒内显示 `yangtao-pc` 在线。
 

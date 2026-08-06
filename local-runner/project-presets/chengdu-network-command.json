@@ -1,0 +1,54 @@
+{
+  "project_key": "chengdu-network-command",
+  "name": "成都网络发令",
+  "enabled": true,
+  "simulation_mode": false,
+  "delivery_mode": "sichuan_auto_review",
+  "allow_requirement_override": false,
+  "tfs_collection_url": "http://dev.tellhowsoft.com/DefaultCollection",
+  "tfs_project": "DCS",
+  "tfs_area_path": "DCS\\国网网络发令",
+  "reviewer_name": "朱星舟",
+  "allowed_work_item_types": [
+    "用户情景"
+  ],
+  "allowed_states": [
+    "新建",
+    "已评审"
+  ],
+  "repository_path": "C:\\work\\workSpaceTellHow\\dcsd-sichan-cd\\dcsd-certify-ui-sichuancd-dm",
+  "repository_paths": [
+    "C:\\work\\workSpaceTellHow\\dcsd-sichan-cd\\dcsd-certify-ui-sichuancd-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-sichan-cd\\dcsd-direct-ui-sichuancd-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-sichan-cd\\dcsd-extrawork-ui-sichuancd-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-sichan-cd\\dcsd-homepage-ui-sichuancd-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-sichan-cd\\dcsd-notice-srv-sichuancd-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-sichan-cd\\dcsd-notice-ui-sichuancd-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-sichan-cd\\dcsd-permit-ui-sichuancd-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-sichan-cd\\dcsd-report-ui-sichuancd-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-sichan-cd\\dcsd-springboot-starter"
+  ],
+  "base_branch": "dev",
+  "build_command": "pwsh.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\yangt\\Documents\\全自助需求研发交付\\local-runner\\project-scripts\\chengdu-network-command-review.ps1\"",
+  "package_patterns": [],
+  "sql_patterns": [
+    "**/*.sql"
+  ],
+  "config_patterns": [
+    "**/*.yml",
+    "**/*.yaml",
+    "**/*.properties",
+    "**/*.xml",
+    "**/config/*.js",
+    "deploy/*.conf",
+    "deploy/*.sh"
+  ],
+  "protected_patterns": [
+    "**/production/**",
+    "**/*prod*.yml",
+    "**/*prod*.yaml",
+    "**/*prod*.properties"
+  ],
+  "notification_cc": "",
+  "runner_id": "yangtao-pc"
+}
