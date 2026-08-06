@@ -22,6 +22,7 @@
         <button class="nav-item" data-view="users"><span class="nav-index">04</span><span>账号管理</span></button>{% endif %}
       </nav>
       <div class="sidebar-foot">
+        <div class="sidebar-version" title="当前系统版本"><span>系统版本 / VERSION</span><b>v{{ app_version }}</b></div>
         <div class="system-status offline" id="runner-status"><i></i><span>执行器离线</span></div>
         <div class="profile"><div class="avatar">{{ user.display_name[0] }}</div><div><b>{{ user.display_name }}</b><span>{{ '管理员' if user.role == 'admin' else '项目经理' }}</span></div><button id="logout" title="退出">↪</button></div>
       </div>

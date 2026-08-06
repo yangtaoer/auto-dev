@@ -84,7 +84,7 @@ class LocalStore:
         item = row("SELECT status FROM delivery_requests WHERE id=?", (request_id,))
         return item["status"] if item else None
 
-    def notify(self, request_id: str, *, action_required: bool) -> None:
+    def notify(self, request_id: str, *, action_required: bool, terminal: bool = False) -> None:
         raise RuntimeError("本地存储不使用远程通知接口")
 
 
@@ -282,12 +282,12 @@ class RemoteStore:
         detail = self.detail(request_id)
         return detail["status"] if detail else None
 
-    def notify(self, request_id: str, *, action_required: bool) -> None:
+    def notify(self, request_id: str, *, action_required: bool, terminal: bool = False) -> None:
         self._json(
             self._request(
                 "POST",
                 f"/api/runner/requests/{request_id}/notify",
-                json={"action_required": action_required},
+                json={"action_required": action_required, "terminal": terminal},
             )
         )
 

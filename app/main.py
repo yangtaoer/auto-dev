@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="全自助需求研发交付",
-    version="0.4.2",
+    version="0.4.3",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -180,6 +180,7 @@ class RunnerEventInput(BaseModel):
 
 class RunnerNotifyInput(BaseModel):
     action_required: bool = False
+    terminal: bool = False
 
 
 class RunnerTestEmailInput(BaseModel):
@@ -259,28 +260,50 @@ def request_recipients(detail: dict[str, Any]) -> list[str]:
     return result
 
 
-def send_cloud_email(request_id: str, *, action_required: bool) -> None:
+def send_cloud_email(request_id: str, *, action_required: bool, terminal: bool = False) -> bool:
     detail = runner_request(request_id)
+    if terminal and action_required:
+        raise HTTPException(status_code=422, detail="终态通知不能同时标记为待审核")
+    if terminal and detail["status"] not in {"failed", "rejected", "cancelled"}:
+        raise HTTPException(status_code=409, detail="当前任务不是失败、驳回或取消状态")
+    if terminal and detail.get("email_sent_at"):
+        return False
     recipients = request_recipients(detail)
     mailer = Mailer()
-    subject = mailer.delivery_subject(detail, action_required=action_required)
-    html_body = mailer.delivery_html(detail, action_required=action_required)
+    terminal_status = detail["status"] if terminal else None
+    subject = mailer.delivery_subject(
+        detail,
+        action_required=action_required,
+        terminal_status=terminal_status,
+    )
+    html_body = mailer.delivery_html(
+        detail,
+        action_required=action_required,
+        terminal_status=terminal_status,
+    )
     if not mailer.configured():
         artifacts = ArtifactService()
-        name = "review-email-preview.html" if action_required else "delivery-email-preview.html"
+        name = (
+            "terminal-email-preview.html"
+            if terminal
+            else ("review-email-preview.html" if action_required else "delivery-email-preview.html")
+        )
         path = artifacts.request_dir(request_id) / name
         path.write_text(html_body, encoding="utf-8")
         add_artifact(request_id, "email_preview", name, str(path))
         add_event(request_id, "mail.preview", "SMTP 尚未配置，云端已生成邮件预览", level="warning")
-        return
+        if terminal:
+            update_request(request_id, email_sent_at=utc_now())
+        return True
     attachments = [
         Path(item["local_path"])
         for item in detail["artifacts"]
         if item["kind"] == "merge_screenshot" and item["local_path"]
     ]
     mailer.send(to=recipients, subject=subject, html_body=html_body, attachments=attachments)
-    if not action_required:
+    if terminal or not action_required:
         update_request(request_id, email_sent_at=utc_now())
+    return True
 
 
 def can_access_request(user: dict, request_id: str) -> dict:
@@ -828,6 +851,12 @@ def cancel_request(request_id: str, user: Annotated[dict, Depends(current_user)]
     if detail["status"] in {"delivered", "failed", "rejected", "cancelled"}:
         raise HTTPException(status_code=409, detail="任务已经结束")
     update_request(request_id, status=RunStatus.CANCELLED.value, completed_at=utc_now())
+    add_event(request_id, "request.cancelled", f"{user['display_name']} 取消了任务", level="warning")
+    try:
+        if send_cloud_email(request_id, action_required=False, terminal=True):
+            add_event(request_id, "mail.terminal_sent", "已发送任务取消通知邮件", level="warning")
+    except Exception as exc:
+        add_event(request_id, "mail.terminal_failed", f"任务取消通知邮件发送失败：{str(exc)[:1000]}", level="error")
     return {"ok": True}
 
 
@@ -1092,13 +1121,20 @@ async def runner_upload_artifact(
 
 @app.post("/api/runner/requests/{request_id}/notify", dependencies=[Depends(runner_auth)])
 def runner_notify(request_id: str, payload: RunnerNotifyInput) -> dict:
-    send_cloud_email(request_id, action_required=payload.action_required)
-    add_event(
+    sent = send_cloud_email(
         request_id,
-        "mail.action_required" if payload.action_required else "mail.delivery_sent",
-        "已发送 PR 待审核邮件" if payload.action_required else "已发送最终交付邮件",
+        action_required=payload.action_required,
+        terminal=payload.terminal,
     )
-    return {"ok": True}
+    if sent:
+        event_type = "mail.terminal_sent" if payload.terminal else (
+            "mail.action_required" if payload.action_required else "mail.delivery_sent"
+        )
+        message = "已发送任务终态通知邮件" if payload.terminal else (
+            "已发送 PR 待审核邮件" if payload.action_required else "已发送最终交付邮件"
+        )
+        add_event(request_id, event_type, message, level="warning" if payload.terminal else "info")
+    return {"ok": True, "sent": sent}
 
 
 @app.post("/api/runner/requests/{request_id}/test-email", dependencies=[Depends(runner_auth)])

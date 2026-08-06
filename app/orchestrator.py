@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import threading
 import zipfile
@@ -483,50 +484,75 @@ class Worker:
         base_branch_name = f"feature/{work_item['id']}-{settings.tfs_user_alias}"
         workspace_root = settings.worktree_dir / request_id
         states: list[dict] = []
+        attempted: list[tuple[Path, Path]] = []
         # 同一仓库的 fetch/worktree 元数据共用 Git 锁；只串行化准备阶段，Codex 与构建仍可并行。
         with self._workspace_lock:
-            for repo in repositories:
-                subprocess.run(
-                    ["git", "-C", str(repo), "fetch", "origin", base_branch],
-                    check=True,
-                    capture_output=True,
-                    env=fetch_env,
-                )
-            branch_exists = any(
-                subprocess.run(
-                    ["git", "-C", str(repo), "show-ref", "--verify", "--quiet", f"refs/heads/{base_branch_name}"],
-                    env=sanitized_process_env(),
-                ).returncode == 0
-                for repo in repositories
-            )
+            current_action = "准备 Git 隔离工作区"
             branch = base_branch_name
-            if branch_exists:
-                suffix = datetime.now().strftime("%Y%m%d-%H%M%S")
-                branch = f"{branch}-{suffix}"
-            workspace_root.mkdir(parents=True, exist_ok=True)
-            for repo in repositories:
-                base_commit = git(repo, "rev-parse", f"origin/{base_branch}")
-                worktree = workspace_root / repo.name
-                if worktree.exists():
-                    raise RuntimeError(f"任务工作区已存在，需要人工确认后重试：{worktree}")
-                subprocess.run(
-                    ["git", "-C", str(repo), "worktree", "add", "-b", branch, str(worktree), f"origin/{base_branch}"],
-                    check=True,
-                    capture_output=True,
-                    env=sanitized_process_env(),
+            try:
+                for repo in repositories:
+                    current_action = f"启用仓库长路径支持（{repo.name}）"
+                    subprocess.run(
+                        ["git", "-C", str(repo), "config", "core.longpaths", "true"],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        env=sanitized_process_env(),
+                    )
+                    current_action = f"更新基础分支（{repo.name}）"
+                    subprocess.run(
+                        ["git", "-C", str(repo), "fetch", "origin", base_branch],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        env=fetch_env,
+                    )
+                branch_exists = any(
+                    subprocess.run(
+                        ["git", "-C", str(repo), "show-ref", "--verify", "--quiet", f"refs/heads/{base_branch_name}"],
+                        env=sanitized_process_env(),
+                    ).returncode == 0
+                    for repo in repositories
                 )
-                states.append(
-                    {
-                        "name": repo.name,
-                        "repository_path": str(repo),
-                        "worktree_path": str(worktree),
-                        "base_branch": base_branch,
-                        "base_commit": base_commit,
-                        "branch": branch,
-                        "changed_files": [],
-                        "status": "prepared",
-                    }
-                )
+                if branch_exists:
+                    suffix = datetime.now().strftime("%Y%m%d-%H%M%S")
+                    branch = f"{branch}-{suffix}"
+                workspace_root.mkdir(parents=True, exist_ok=True)
+                for repo in repositories:
+                    base_commit = git(repo, "rev-parse", f"origin/{base_branch}")
+                    worktree = workspace_root / repo.name
+                    if worktree.exists():
+                        raise RuntimeError(f"任务工作区已存在，需要人工确认后重试：{worktree}")
+                    current_action = f"创建隔离工作区（{repo.name}）"
+                    attempted.append((repo, worktree))
+                    subprocess.run(
+                        ["git", "-C", str(repo), "worktree", "add", "-b", branch, str(worktree), f"origin/{base_branch}"],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        env=sanitized_process_env(),
+                    )
+                    states.append(
+                        {
+                            "name": repo.name,
+                            "repository_path": str(repo),
+                            "worktree_path": str(worktree),
+                            "base_branch": base_branch,
+                            "base_commit": base_commit,
+                            "branch": branch,
+                            "changed_files": [],
+                            "status": "prepared",
+                        }
+                    )
+            except subprocess.CalledProcessError as exc:
+                self._rollback_worktrees(attempted, workspace_root, branch)
+                output = exc.stderr or exc.stdout or ""
+                lines = [line.strip() for line in str(output).replace("\r", "\n").splitlines() if line.strip()]
+                detail = "\n".join(lines[-8:]) or str(exc)
+                raise RuntimeError(f"{current_action}失败：{detail}") from exc
+            except Exception:
+                self._rollback_worktrees(attempted, workspace_root, branch)
+                raise
         codex_workspace = states[0]["worktree_path"] if len(states) == 1 else str(workspace_root)
         self.store.add_event(
             request_id,
@@ -535,6 +561,42 @@ class Worker:
             metadata={"repositories": states},
         )
         return Path(codex_workspace), states, branch
+
+    @staticmethod
+    def _rollback_worktrees(attempted: list[tuple[Path, Path]], workspace_root: Path, branch: str) -> None:
+        """Rollback only the worktrees and branches created by the current preparation attempt."""
+        clean_env = sanitized_process_env()
+        for repo, worktree in reversed(attempted):
+            subprocess.run(
+                ["git", "-C", str(repo), "worktree", "remove", "--force", str(worktree)],
+                capture_output=True,
+                text=True,
+                env=clean_env,
+            )
+            subprocess.run(
+                ["git", "-C", str(repo), "worktree", "prune"],
+                capture_output=True,
+                text=True,
+                env=clean_env,
+            )
+            if subprocess.run(
+                ["git", "-C", str(repo), "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+                capture_output=True,
+                env=clean_env,
+            ).returncode == 0:
+                subprocess.run(
+                    ["git", "-C", str(repo), "branch", "-D", branch],
+                    capture_output=True,
+                    text=True,
+                    env=clean_env,
+                )
+            if worktree.exists():
+                shutil.rmtree(worktree, ignore_errors=True)
+        try:
+            workspace_root.rmdir()
+        except OSError:
+            # 只移除本次创建后已为空的任务根目录，绝不清理预先存在的未知内容。
+            pass
 
     def _commit_and_push(self, worktree: Path, detail: dict, work_item: dict, project: dict, branch: str) -> str:
         title = re.sub(r"[\r\n]+", " ", work_item["title"]).strip()[:72]
@@ -630,26 +692,57 @@ class Worker:
         self.store.update_step(request_id, "deliver", "completed", "交付邮件和产物已生成")
         self.store.add_event(request_id, "delivery.completed", "需求研发交付完成")
 
-    def _send_status_email(self, request_id: str, *, action_required: bool) -> None:
+    def _send_status_email(self, request_id: str, *, action_required: bool, terminal: bool = False) -> None:
         if self.store.remote:
-            self.store.notify(request_id, action_required=action_required)
+            self.store.notify(request_id, action_required=action_required, terminal=terminal)
             return
         detail = self.store.detail(request_id)
+        if terminal and detail.get("email_sent_at"):
+            return
         project = detail["policy_snapshot"]
         recipients = list(detail.get("notification_emails") or [detail["requester_email"]])
         recipients.extend(email.strip() for email in project.get("notification_cc", "").split(",") if email.strip())
         recipients = list(dict.fromkeys(email.strip() for email in recipients if email and email.strip()))
-        subject = self.mailer.delivery_subject(detail, action_required=action_required)
-        html_body = self.mailer.delivery_html(detail, action_required=action_required)
+        terminal_status = detail["status"] if terminal else None
+        subject = self.mailer.delivery_subject(
+            detail,
+            action_required=action_required,
+            terminal_status=terminal_status,
+        )
+        html_body = self.mailer.delivery_html(
+            detail,
+            action_required=action_required,
+            terminal_status=terminal_status,
+        )
         if not self.mailer.configured():
-            path = self.artifacts.request_dir(request_id) / ("review-email-preview.html" if action_required else "delivery-email-preview.html")
+            name = (
+                "terminal-email-preview.html"
+                if terminal
+                else ("review-email-preview.html" if action_required else "delivery-email-preview.html")
+            )
+            path = self.artifacts.request_dir(request_id) / name
             path.write_text(html_body, encoding="utf-8")
             self.store.add_artifact(request_id, "email_preview", path.name, str(path))
             self.store.add_event(request_id, "mail.preview", "SMTP 尚未配置，已生成邮件预览", level="warning")
+            if terminal:
+                self.store.update_request(request_id, email_sent_at=utc_now())
             return
         attachments = [Path(item["local_path"]) for item in detail["artifacts"] if item["kind"] == "merge_screenshot" and item["local_path"]]
         self.mailer.send(to=recipients, subject=subject, html_body=html_body, attachments=attachments)
-        self.store.update_request(request_id, email_sent_at=utc_now())
+        if terminal or not action_required:
+            self.store.update_request(request_id, email_sent_at=utc_now())
+
+    def _send_terminal_email(self, request_id: str) -> None:
+        try:
+            self._send_status_email(request_id, action_required=False, terminal=True)
+        except Exception as exc:
+            logger.exception("任务终态通知邮件发送失败 request_id=%s", request_id)
+            self.store.add_event(
+                request_id,
+                "mail.terminal_failed",
+                f"任务终态通知邮件发送失败：{str(exc)[:1000]}",
+                level="error",
+            )
 
     def _simulate_development(self, request_id: str, work_item: dict) -> dict:
         self.store.add_event(request_id, "codex.thread", "演示模式：Codex 研发线程已启动")
@@ -693,6 +786,7 @@ class Worker:
     def _cancel(self, request_id: str) -> None:
         self.store.update_request(request_id, status=RunStatus.CANCELLED.value, completed_at=utc_now())
         self.store.add_event(request_id, "request.cancelled", "任务已取消", level="warning")
+        self._send_terminal_email(request_id)
 
     def _fail(self, request_id: str, exc: Exception) -> None:
         message = str(exc)[:3000]
@@ -702,6 +796,7 @@ class Worker:
         if detail and detail.get("current_step"):
             self.store.update_step(request_id, detail["current_step"], "failed", message[:1000])
         self.store.add_event(request_id, "request.failed", message, level="error")
+        self._send_terminal_email(request_id)
 
 
 worker = Worker()

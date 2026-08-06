@@ -9,7 +9,7 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 import httpx
 
@@ -142,6 +142,21 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("打开 PR 并安排合并", waiting)
         self.assertIn("进行中", waiting)
 
+        failed_detail = {**detail, "status": "failed", "error_message": "Filename too long"}
+        failed = mailer.delivery_html(failed_detail, terminal_status="failed")
+        self.assertEqual(
+            mailer.delivery_subject(failed_detail, terminal_status="failed"),
+            "【AutoDev · 执行失败】TFS #910014｜优化交付邮件",
+        )
+        self.assertIn("AUTODEV · TERMINAL SIGNAL", failed)
+        self.assertIn("研发执行失败", failed)
+        self.assertIn("Filename too long", failed)
+        self.assertIn("终止原因 / TERMINATION REASON", failed)
+        self.assertIn("任务耗时", failed)
+        self.assertIn("已有产物 / AVAILABLE FILES", failed)
+        self.assertIn("任务已取消", mailer.delivery_subject(failed_detail, terminal_status="cancelled"))
+        self.assertIn("准入驳回", mailer.delivery_subject(failed_detail, terminal_status="rejected"))
+
     def test_runner_can_send_branded_test_email(self) -> None:
         project_id = self.create_project("test-branded-email", "local_package")
         detail = self.submit_and_process(project_id, 910015)
@@ -161,6 +176,40 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(template.status_code, 200, template.text)
         self.assertEqual(template.json()["template"], "compact-wide")
         self.assertEqual(template.json()["card_width"], 860)
+
+    def test_cancelled_and_failed_tasks_send_terminal_email_once(self) -> None:
+        project_id = self.create_project("test-terminal-mail", "local_package")
+        cancelled_request = self.client.post(
+            "/api/requests",
+            json={"project_id": project_id, "work_item_id": 910016},
+        ).json()["id"]
+        with patch("app.main.Mailer.configured", return_value=True), patch("app.main.Mailer.send") as sender:
+            cancelled = self.client.post(f"/api/requests/{cancelled_request}/cancel")
+        self.assertEqual(cancelled.status_code, 200, cancelled.text)
+        sender.assert_called_once()
+        self.assertIn("【AutoDev · 任务已取消】", sender.call_args.kwargs["subject"])
+        self.assertIn("研发任务已取消", sender.call_args.kwargs["html_body"])
+        cancelled_detail = self.client.get(f"/api/requests/{cancelled_request}").json()["request"]
+        self.assertEqual(cancelled_detail["status"], "cancelled")
+        self.assertTrue(cancelled_detail["email_sent_at"])
+        self.assertTrue(any(event["event_type"] == "mail.terminal_sent" for event in cancelled_detail["events"]))
+        repeated_cancel = self.client.post(f"/api/requests/{cancelled_request}/cancel")
+        self.assertEqual(repeated_cancel.status_code, 409, repeated_cancel.text)
+
+        failed_request = self.client.post(
+            "/api/requests",
+            json={"project_id": project_id, "work_item_id": 910017},
+        ).json()["id"]
+        with patch("app.orchestrator.Mailer.configured", return_value=True), patch(
+            "app.orchestrator.Mailer.send"
+        ) as failed_sender:
+            worker._fail(failed_request, RuntimeError("模拟 Git 工作区创建失败"))
+        failed_sender.assert_called_once()
+        self.assertIn("【AutoDev · 执行失败】", failed_sender.call_args.kwargs["subject"])
+        self.assertIn("模拟 Git 工作区创建失败", failed_sender.call_args.kwargs["html_body"])
+        failed_detail = self.client.get(f"/api/requests/{failed_request}").json()["request"]
+        self.assertEqual(failed_detail["status"], "failed")
+        self.assertTrue(failed_detail["email_sent_at"])
 
     def test_two_requests_can_be_submitted_concurrently_and_both_delivered(self) -> None:
         project_id = self.create_project("test-concurrent", "local_package")
@@ -241,6 +290,93 @@ class WorkflowTests(unittest.TestCase):
             new_sql.parent.mkdir()
             new_sql.write_text("SELECT 1;\n", encoding="utf-8")
             self.assertIn("sql/upgrade.sql", changed_files(repository, base_commit))
+
+    def test_prepare_worktrees_enables_long_paths_and_rolls_back_partial_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            def create_repository(name: str) -> Path:
+                repository = root / name
+                origin = root / f"{name}.git"
+                subprocess.run(["git", "init", "--bare", "-q", str(origin)], check=True)
+                subprocess.run(["git", "init", "-q", "-b", "dev", str(repository)], check=True)
+                subprocess.run(["git", "-C", str(repository), "config", "user.name", "AutoDev Test"], check=True)
+                subprocess.run(
+                    ["git", "-C", str(repository), "config", "user.email", "autodev-test@example.com"],
+                    check=True,
+                )
+                (repository / "README.md").write_text("initial\n", encoding="utf-8")
+                subprocess.run(["git", "-C", str(repository), "add", "README.md"], check=True)
+                subprocess.run(["git", "-C", str(repository), "commit", "-q", "-m", "initial"], check=True)
+                subprocess.run(["git", "-C", str(repository), "remote", "add", "origin", str(origin)], check=True)
+                subprocess.run(["git", "-C", str(repository), "push", "-q", "-u", "origin", "dev"], check=True)
+                return repository
+
+            first = create_repository("first-repo")
+            second = create_repository("second-repo")
+            worktree_root = root / "worktrees"
+
+            class RecordingStore:
+                remote = False
+
+                @staticmethod
+                def detail(*_args, **_kwargs):
+                    return None
+
+                @staticmethod
+                def add_event(*_args, **_kwargs) -> None:
+                    return None
+
+                @staticmethod
+                def add_artifact(*_args, **_kwargs) -> int:
+                    return 1
+
+            worktree_worker = Worker(store=RecordingStore())
+            original_run = subprocess.run
+
+            def fail_second_worktree(command, *args, **kwargs):
+                if (
+                    isinstance(command, list)
+                    and "worktree" in command
+                    and "add" in command
+                    and str(second) in command
+                ):
+                    raise subprocess.CalledProcessError(
+                        128,
+                        command,
+                        stderr="error: unable to create file deep/path: Filename too long",
+                    )
+                return original_run(command, *args, **kwargs)
+
+            project = {
+                "repository_paths": [str(first), str(second)],
+                "base_branch": "dev",
+            }
+            with patch(
+                "app.config.Settings.worktree_dir",
+                new_callable=PropertyMock,
+                return_value=worktree_root,
+            ), patch("app.orchestrator.subprocess.run", side_effect=fail_second_worktree):
+                with self.assertRaisesRegex(RuntimeError, "Filename too long"):
+                    worktree_worker._prepare_worktrees(
+                        "rollback-request",
+                        {"id": 910099},
+                        project,
+                    )
+
+            for repository in (first, second):
+                longpaths = original_run(
+                    ["git", "-C", str(repository), "config", "--get", "core.longpaths"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                self.assertEqual(longpaths, "true")
+                branch = original_run(
+                    ["git", "-C", str(repository), "show-ref", "--verify", "--quiet", "refs/heads/feature/910099-yangtao"]
+                ).returncode
+                self.assertNotEqual(branch, 0)
+            self.assertFalse(worktree_root.joinpath("rollback-request").exists())
 
     def test_remote_store_retries_transient_gateway_failure(self) -> None:
         request = httpx.Request("PATCH", "https://cloud.test/api/runner/requests/request-1")
@@ -403,7 +539,7 @@ class WorkflowTests(unittest.TestCase):
             json={
                 "runner_id": "quota-test-runner",
                 "hostname": "quota-pc",
-                "version": "0.4.2",
+                "version": "0.4.3",
                 "state": "idle",
                 "current_request_ids": [],
                 "max_concurrency": 5,
@@ -437,7 +573,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
 
         page = self.client.get("/")
-        self.assertIn("SYSTEM v0.4.2", page.text)
+        self.assertIn("SYSTEM v0.4.3", page.text)
         self.assertIn("control-strip", page.text)
         script = self.client.get("/static/app.js").text
         self.assertIn("addOptimisticIntake", script)
@@ -527,6 +663,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("自助项目", pm_page.text)
+        self.assertIn("系统版本 / VERSION", pm_page.text)
+        self.assertIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
         self.assertEqual(pm_dashboard.status_code, 200, pm_dashboard.text)
         self.assertIn("stats", pm_dashboard.json())

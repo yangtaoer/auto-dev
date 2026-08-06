@@ -74,6 +74,19 @@
   white-space: nowrap;
 }
 
+.sidebar-version {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px;
+  border-top: 1px solid var(--line);
+  color: #607f70;
+  font: 9px Consolas, monospace;
+  letter-spacing: .08em;
+}
+.sidebar-version b { color: var(--acid); font-size: 10px; font-weight: 700; }
+
 .control-strip {
   display: grid;
   grid-template-columns: minmax(430px, .95fr) minmax(720px, 1.65fr);

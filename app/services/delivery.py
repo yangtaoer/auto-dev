@@ -208,8 +208,15 @@ class Mailer:
     def sender_address(self) -> Address:
         return Address(display_name=settings.smtp_from_name or "AutoDev 全自助研发交付", addr_spec=settings.smtp_from)
 
-    def delivery_subject(self, detail: dict, *, action_required: bool = False) -> str:
-        status = "待审核" if action_required else "已交付"
+    def delivery_subject(
+        self,
+        detail: dict,
+        *,
+        action_required: bool = False,
+        terminal_status: str | None = None,
+    ) -> str:
+        terminal_labels = {"failed": "执行失败", "cancelled": "任务已取消", "rejected": "准入驳回"}
+        status = terminal_labels.get(terminal_status) or ("待审核" if action_required else "已交付")
         title = str(detail.get("title") or "研发任务").strip()[:80]
         return f"【AutoDev · {status}】TFS #{detail['work_item_id']}｜{title}"
 
@@ -269,10 +276,21 @@ class Mailer:
                 smtp.login(settings.smtp_username, settings.smtp_password)
             smtp.send_message(message)
 
-    def delivery_html(self, detail: dict, *, action_required: bool = False) -> str:
+    def delivery_html(
+        self,
+        detail: dict,
+        *,
+        action_required: bool = False,
+        terminal_status: str | None = None,
+    ) -> str:
         mode = DELIVERY_MODE_LABELS[DeliveryMode(detail["delivery_mode"])]
         started_at = detail.get("started_at") or detail["created_at"]
         end_at = detail.get("completed_at") or datetime.now(UTC).isoformat()
+        terminal_labels = {"failed": "研发执行失败", "cancelled": "研发任务已取消", "rejected": "需求准入驳回"}
+        terminal_colors = {"failed": "#ff7b72", "cancelled": "#ffc857", "rejected": "#ffad5c"}
+        status_label = terminal_labels.get(terminal_status) or ("等待代码合并" if action_required else "研发交付完成")
+        status_color = terminal_colors.get(terminal_status) or ("#ffc857" if action_required else "#79f2ad")
+        terminal = terminal_status in terminal_labels
 
         def parse_datetime(value: str | None) -> datetime | None:
             if not value:
@@ -363,11 +381,19 @@ class Mailer:
             action = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;background:#fff7df;border-left:4px solid #e8a318">
               <tr><td style="padding:11px 13px;color:#694b0d;font-size:12px;line-height:1.55"><b style="color:#392a0c;font-size:13px">需要项目经理协同处理：</b> 请联系有权限的同事审核并合并 PR；AutoDev 将持续检测。{action_button}</td></tr>
             </table>"""
+        elif terminal:
+            reason = safe_text(detail.get("error_message"), "任务已终止，暂无更多错误说明。", limit=3000)
+            action = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;background:#fff4f1;border-left:4px solid {status_color}">
+              <tr><td style="padding:11px 13px;color:#6f302b;font-size:12px;line-height:1.65"><b style="display:block;margin-bottom:3px;color:#3d1d19;font-size:13px">终止原因 / TERMINATION REASON</b>{reason}</td></tr>
+            </table>"""
 
-        status_label = "等待代码合并" if action_required else "研发交付完成"
-        status_color = "#ffc857" if action_required else "#79f2ad"
         completed_text = format_datetime(detail.get("completed_at"), "进行中")
         console_url = html.escape(settings.public_base_url, quote=True)
+        signal_label = "TERMINAL SIGNAL" if terminal else "DELIVERY SIGNAL"
+        duration_label = "任务耗时" if terminal else ("当前耗时" if action_required else "开发耗时")
+        notes_label = "执行摘要 / EXECUTION NOTES" if terminal else "开发说明 / DEVELOPMENT NOTES"
+        notes_value = detail.get("result_summary") or ("任务在完成前终止，请查看上方终止原因及研发控制台中的执行记录。" if terminal else "—")
+        artifact_heading = "已有产物 / AVAILABLE FILES" if terminal else "交付产物 / DELIVERABLES"
         return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{safe_text(status_label)}</title></head>
 <body style="margin:0;padding:0;background:#edf3ef;color:#163026;font-family:'Microsoft YaHei UI','Microsoft YaHei',sans-serif">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0">TFS #{detail['work_item_id']} · {safe_text(detail.get('title'))} · {status_label}</div>
@@ -376,7 +402,7 @@ class Mailer:
     <tr><td style="padding:18px 24px;background:#0c1a14;border-bottom:4px solid {status_color}">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
         <td width="54" valign="top"><div style="width:42px;height:42px;background:#eef6f0;text-align:center"><img src="cid:{BRAND_MARK_CID}" width="42" height="42" alt="AutoDev" style="display:block;width:42px;height:42px;border:0;object-fit:contain"></div></td>
-        <td valign="top"><div style="color:#79f2ad;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.16em">AUTODEV · DELIVERY SIGNAL</div><div style="margin-top:5px;color:#f0f7f2;font-size:20px;font-weight:700">{status_label}</div></td>
+        <td valign="top"><div style="color:#79f2ad;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.16em">AUTODEV · {signal_label}</div><div style="margin-top:5px;color:#f0f7f2;font-size:20px;font-weight:700">{status_label}</div></td>
         <td width="110" align="right" valign="top"><span style="display:inline-block;padding:6px 9px;border:1px solid {status_color};color:{status_color};font:700 10px Consolas,'Courier New',monospace">TFS #{detail['work_item_id']}</span></td>
       </tr></table>
     </td></tr>
@@ -389,13 +415,13 @@ class Mailer:
           <td width="25%" style="padding:10px 12px;border-right:1px solid #dce7e0"><div style="color:#72887d;font-size:9px">项目</div><div style="margin-top:3px;color:#17392c;font-size:12px;font-weight:700">{safe_text(detail.get('project_name'))}</div></td>
           <td width="25%" style="padding:10px 12px;border-right:1px solid #dce7e0"><div style="color:#72887d;font-size:9px">交付方式</div><div style="margin-top:3px;color:#17392c;font-size:12px;font-weight:700">{safe_text(mode)}</div></td>
           <td width="25%" style="padding:10px 12px;border-right:1px solid #dce7e0"><div style="color:#72887d;font-size:9px">提交人</div><div style="margin-top:3px;color:#17392c;font-size:12px;font-weight:700">{safe_text(detail.get('requester_name'))}</div></td>
-          <td width="25%" style="padding:10px 12px"><div style="color:#72887d;font-size:9px">{'当前耗时' if action_required else '开发耗时'}</div><div style="margin-top:3px;color:#087a49;font-size:12px;font-weight:700">{safe_text(duration_text)}</div></td>
+          <td width="25%" style="padding:10px 12px"><div style="color:#72887d;font-size:9px">{duration_label}</div><div style="margin-top:3px;color:#087a49;font-size:12px;font-weight:700">{safe_text(duration_text)}</div></td>
         </tr>
       </table>
 
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px"><tr>
         <td width="50%" valign="top" style="padding-right:6px"><div style="margin-bottom:5px;color:#698176;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">需求说明 / BRIEF</div><div style="padding:10px 12px;background:#f7faf8;border-left:3px solid #6ea98a;color:#29493d;font-size:12px;line-height:1.6">{safe_text(detail.get('requirement_summary'), limit=2000)}</div></td>
-        <td width="50%" valign="top" style="padding-left:6px"><div style="margin-bottom:5px;color:#698176;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">开发说明 / DEVELOPMENT NOTES</div><div style="padding:10px 12px;background:#f7faf8;border-left:3px solid #79f2ad;color:#29493d;font-size:12px;line-height:1.6">{safe_text(detail.get('result_summary'))}</div></td>
+        <td width="50%" valign="top" style="padding-left:6px"><div style="margin-bottom:5px;color:#698176;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">{notes_label}</div><div style="padding:10px 12px;background:#f7faf8;border-left:3px solid {status_color};color:#29493d;font-size:12px;line-height:1.6">{safe_text(notes_value)}</div></td>
       </tr></table>
 
       <div style="margin-bottom:5px;color:#698176;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">代码信息 / CODE DELIVERY</div>
@@ -416,7 +442,7 @@ class Mailer:
         </tr>
       </table>
 
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:5px"><tr><td style="color:#698176;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">交付产物 / DELIVERABLES</td><td align="right">{expiry_note}</td></tr></table>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:5px"><tr><td style="color:#698176;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">{artifact_heading}</td><td align="right">{expiry_note}</td></tr></table>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">{artifacts}</table>
     </td></tr>
     <tr><td style="padding:12px 26px;background:#f3f7f4;border-top:1px solid #d9e5de;color:#70857a;font-size:10px;line-height:1.5">
