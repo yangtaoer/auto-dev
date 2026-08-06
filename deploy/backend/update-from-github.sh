@@ -6,6 +6,7 @@ cd "$SCRIPT_DIR"
 SCRIPT_DIR=$(pwd -P)
 PROJECT_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd -P)
 RELEASE_BASE="https://github.com/yangtaoer/auto-dev/releases/download/latest"
+CACHE_BUSTER=$(date +%s)
 TEMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TEMP_DIR"' EXIT INT TERM
 MARKER_FILE="$SCRIPT_DIR/data/.installed_release_sha256"
@@ -22,7 +23,7 @@ fi
 echo "[1/6] 获取 GitHub 最新版本信息"
 curl --fail --location --retry 3 --connect-timeout 10 --max-time 120 \
   --header "Cache-Control: no-cache" \
-  "$RELEASE_BASE/SHA256SUMS.txt" \
+  "$RELEASE_BASE/SHA256SUMS.txt?ts=$CACHE_BUSTER" \
   --output "$TEMP_DIR/SHA256SUMS.txt"
 EXPECTED_SHA=$(awk 'NR==1 {print tolower($1)}' "$TEMP_DIR/SHA256SUMS.txt")
 if [ -z "$EXPECTED_SHA" ]; then
@@ -39,7 +40,7 @@ fi
 echo "[2/6] 下载 GitHub 最新部署包"
 curl --fail --location --retry 3 --connect-timeout 10 --max-time 120 \
   --header "Cache-Control: no-cache" \
-  "$RELEASE_BASE/autodev-hybrid-latest.zip" \
+  "$RELEASE_BASE/autodev-hybrid-latest.zip?sha=$EXPECTED_SHA" \
   --output "$TEMP_DIR/autodev-hybrid-latest.zip"
 
 echo "[3/6] 校验 SHA-256"
