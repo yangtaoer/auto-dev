@@ -9,12 +9,15 @@
   <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
   <link rel="manifest" href="/static/brand/site.webmanifest">
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/brand-ui.css">
+  <link rel="stylesheet" href="/static/brand-ui.css?v={{ app_version }}-login-lockup">
 </head>
 <body class="login-body">
   <main class="login-shell">
     <section class="login-brand">
-      <div class="login-logo-mark"><img src="/static/brand/autodev-sidebar-mark.png?v={{ app_version }}" alt="AutoDev 标志"></div>
+      <div class="login-logo-lockup" aria-label="AutoDev">
+        <span class="login-logo-symbol"><img src="/static/brand/autodev-mark.png?v={{ app_version }}" alt=""></span>
+        <strong>Auto<span>Dev</span></strong>
+      </div>
       <div class="login-copy">
         <p class="eyebrow">自主交付 / AUTONOMOUS DELIVERY</p>
         <h1>编号进入，<br>交付离场。</h1>
@@ -27,7 +30,10 @@
     </section>
     <section class="login-panel">
       <div>
-        <div class="mobile-brand"><img src="/static/brand/autodev-sidebar-mark.png?v={{ app_version }}" alt="AutoDev 标志"></div>
+        <div class="mobile-brand" aria-label="AutoDev">
+          <span><img src="/static/brand/autodev-mark.png?v={{ app_version }}" alt=""></span>
+          <strong>Auto<em>Dev</em></strong>
+        </div>
         <p class="eyebrow">登录 / SIGN IN</p>
         <h2>登录</h2>
       </div>

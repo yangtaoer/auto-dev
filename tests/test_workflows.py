@@ -777,8 +777,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("activeEl.innerHTML=state.dashboard.active", script)
 
         login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
-        self.assertIn("login-logo-mark", login_template)
-        self.assertIn("autodev-sidebar-mark.png", login_template)
+        self.assertIn("login-logo-lockup", login_template)
+        self.assertIn("autodev-mark.png", login_template)
+        self.assertIn("Auto<span>Dev</span>", login_template)
+        self.assertNotIn("brand-float", Path("app/static/brand-ui.css").read_text(encoding="utf-8"))
         self.assertNotIn("login-logo-plate", login_template)
         self.assertNotIn("CONTINUOUS CODE DELIVERY", login_template)
 
