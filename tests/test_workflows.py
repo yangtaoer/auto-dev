@@ -732,7 +732,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM v0.4.9"), 1)
+        self.assertEqual(page.text.count("SYSTEM v0.4.10"), 1)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
@@ -746,7 +746,15 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("下载原图", page.text)
         self.assertIn("openArtifactPreview", script)
         self.assertIn("visibleArtifacts", script)
+        self.assertIn("recent.slice(0,5)", script)
+        self.assertNotIn("recent.slice(0,8)", script)
         self.assertNotIn("activeEl.innerHTML=state.dashboard.active", script)
+
+        login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
+        self.assertIn("login-logo-mark", login_template)
+        self.assertIn("autodev-sidebar-mark.png", login_template)
+        self.assertNotIn("login-logo-plate", login_template)
+        self.assertNotIn("CONTINUOUS CODE DELIVERY", login_template)
 
         headers = {"Authorization": "Bearer test-runner-token"}
         claimed = self.client.post(
@@ -831,7 +839,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("自助项目", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM v0.4.9"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM v0.4.10"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")

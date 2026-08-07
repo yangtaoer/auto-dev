@@ -71,7 +71,7 @@ function renderDashboard(){
   const capacityStatus=document.querySelector('#capacity-status');
   if(capacityStatus)capacityStatus.innerHTML=`<b>${Number(capacity.active)||0} / ${Number(capacity.limit)||5}</b><span>并发槽位${capacity.queued?` · ${Number(capacity.queued)} 个排队`:''}</span>`;
   document.body.classList.toggle('has-active-runs',state.dashboard.active.length>0);
-  document.querySelector('#recent-table').innerHTML=state.dashboard.recent.slice(0,8).map(recentRow).join('')||'<tr><td colspan="7" class="muted">暂无记录</td></tr>';
+  document.querySelector('#recent-table').innerHTML=state.dashboard.recent.slice(0,5).map(recentRow).join('')||'<tr><td colspan="7" class="muted">暂无记录</td></tr>';
   renderAllTable();bindRows();
   const runners=state.dashboard.runners||[],online=runners.filter(r=>r.online),status=document.querySelector('#runner-status');
   status.classList.toggle('offline',online.length===0);status.querySelector('span').textContent=online.length?'执行器在线':'执行器离线';

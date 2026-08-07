@@ -144,6 +144,22 @@ class AutoDevConsole:
         self.quota_label.pack(side="right", padx=(12, 28))
         self.status_label = tk.Label(header, text="● 连接中", bg=DEEP, fg=AMBER, font=("Microsoft YaHei UI", 10, "bold"))
         self.status_label.pack(side="right", padx=12)
+        self.alias_button = tk.Button(
+            header, text="项目别名", command=self._open_project_aliases,
+            bg=PANEL_2, fg=VIOLET, activebackground="#27234b", activeforeground=PAPER,
+            relief="flat", padx=15, pady=8, font=("Microsoft YaHei UI", 10, "bold"),
+        )
+        self.alias_button.pack(side="right", padx=(12, 8))
+
+        self.controls = tk.Frame(self.root, bg=DEEP, height=62, highlightbackground=LINE, highlightthickness=1)
+        self.controls.pack(side="bottom", fill="x")
+        self.controls.pack_propagate(False)
+        tk.Label(self.controls, text="执行器控制 / RUNNER CONTROL", bg=DEEP, fg=MUTED, font=(MONO, 9, "bold")).pack(side="left", padx=25)
+        self._control_button(self.controls, "启动执行器", "start.ps1", ACID).pack(side="left", padx=5, pady=12)
+        self._control_button(self.controls, "停止执行器", "stop.ps1", RED).pack(side="left", padx=5, pady=12)
+        self._control_button(self.controls, "重启执行器", "restart.ps1", AMBER).pack(side="left", padx=5, pady=12)
+        self.footer = tk.Label(self.controls, text="本机接口 127.0.0.1:28766 · 详细会话不落盘", bg=DEEP, fg=MUTED, font=(MONO, 9))
+        self.footer.pack(side="right", padx=25)
 
         body = tk.PanedWindow(self.root, orient="horizontal", bg=INK, bd=0, sashwidth=7, sashrelief="flat")
         body.pack(fill="both", expand=True, padx=20, pady=20)
@@ -154,21 +170,6 @@ class AutoDevConsole:
         body.add(right, minsize=560)
         self._build_task_list(left)
         self._build_detail(right)
-
-        controls = tk.Frame(self.root, bg=DEEP, height=62, highlightbackground=LINE, highlightthickness=1)
-        controls.pack(fill="x")
-        controls.pack_propagate(False)
-        tk.Label(controls, text="执行器控制 / RUNNER CONTROL", bg=DEEP, fg=MUTED, font=(MONO, 9, "bold")).pack(side="left", padx=25)
-        self._control_button(controls, "启动执行器", "start.ps1", ACID).pack(side="left", padx=5, pady=12)
-        self._control_button(controls, "停止执行器", "stop.ps1", RED).pack(side="left", padx=5, pady=12)
-        self._control_button(controls, "重启执行器", "restart.ps1", AMBER).pack(side="left", padx=5, pady=12)
-        tk.Button(
-            controls, text="项目别名", command=self._open_project_aliases,
-            bg=PANEL_2, fg=VIOLET, activebackground="#27234b", activeforeground=PAPER,
-            relief="flat", padx=14, pady=7,
-        ).pack(side="left", padx=(18, 5), pady=12)
-        self.footer = tk.Label(controls, text="本机接口 127.0.0.1:28766 · 详细会话不落盘", bg=DEEP, fg=MUTED, font=(MONO, 9))
-        self.footer.pack(side="right", padx=25)
 
     def _open_project_aliases(self) -> None:
         if self.alias_window and self.alias_window.winfo_exists():
@@ -505,7 +506,7 @@ class AutoDevConsole:
         if self.closing:
             return
         self._async(
-            lambda: self._cloud_json("/api/runner/tasks?" + urllib.parse.urlencode({"runner_id": settings.runner_id, "limit": 100})),
+            lambda: self._cloud_json("/api/runner/tasks?" + urllib.parse.urlencode({"runner_id": settings.runner_id, "limit": 5})),
             self._render_tasks,
             lambda exc: self.footer.configure(text=f"云端任务读取失败 · {exc}"),
         )
@@ -513,7 +514,7 @@ class AutoDevConsole:
             self.root.after(5000, self._tick_tasks)
 
     def _render_tasks(self, data: dict[str, Any]) -> None:
-        tasks = data.get("tasks") or []
+        tasks = (data.get("tasks") or [])[:5]
         self.footer.configure(
             text=f"本机接口 {settings.runner_monitor_host}:{settings.runner_monitor_port} · 详细会话不落盘"
         )
