@@ -139,6 +139,11 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("下载产物", rendered)
         self.assertIn("提交人", rendered)
         self.assertIn("cid:autodev-brand-mark", rendered)
+        self.assertIn("background:#0b1020", rendered)
+        self.assertIn("background:#eef1f7", rendered)
+        self.assertIn("#7769ad", mailer.delivery_html(detail, action_required=True))
+        self.assertNotIn("#62e59b", rendered)
+        self.assertNotIn("#087a49", rendered)
         self.assertIn('width="860"', rendered)
         self.assertIn('max-width:860px', rendered)
         self.assertIn('width="25%"', rendered)
@@ -147,6 +152,7 @@ class WorkflowTests(unittest.TestCase):
             to=["recipient@example.com"], subject=mailer.delivery_subject(detail), html_body=rendered
         )
         inline_images = [part for part in message.walk() if part.get_content_type() == "image/png"]
+        self.assertEqual(message["Cc"], "yangtao2@tellhow.com")
         self.assertEqual(len(inline_images), 1)
         self.assertEqual(inline_images[0]["Content-ID"], "<autodev-brand-mark>")
         self.assertEqual(inline_images[0].get_filename(), "autodev-email-mark.png")
@@ -386,11 +392,11 @@ class WorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
 
-            def create_repository(name: str) -> Path:
+            def create_repository(name: str, branch: str = "dev") -> Path:
                 repository = root / name
                 origin = root / f"{name}.git"
                 subprocess.run(["git", "init", "--bare", "-q", str(origin)], check=True)
-                subprocess.run(["git", "init", "-q", "-b", "dev", str(repository)], check=True)
+                subprocess.run(["git", "init", "-q", "-b", branch, str(repository)], check=True)
                 subprocess.run(["git", "-C", str(repository), "config", "user.name", "AutoDev Test"], check=True)
                 subprocess.run(
                     ["git", "-C", str(repository), "config", "user.email", "autodev-test@example.com"],
@@ -400,11 +406,11 @@ class WorkflowTests(unittest.TestCase):
                 subprocess.run(["git", "-C", str(repository), "add", "README.md"], check=True)
                 subprocess.run(["git", "-C", str(repository), "commit", "-q", "-m", "initial"], check=True)
                 subprocess.run(["git", "-C", str(repository), "remote", "add", "origin", str(origin)], check=True)
-                subprocess.run(["git", "-C", str(repository), "push", "-q", "-u", "origin", "dev"], check=True)
+                subprocess.run(["git", "-C", str(repository), "push", "-q", "-u", "origin", branch], check=True)
                 return repository
 
             first = create_repository("first-repo")
-            second = create_repository("second-repo")
+            second = create_repository("second-repo", "chongqing")
             worktree_root = root / "worktrees"
 
             class RecordingStore:
@@ -442,6 +448,7 @@ class WorkflowTests(unittest.TestCase):
             project = {
                 "repository_paths": [str(first), str(second)],
                 "base_branch": "dev",
+                "repository_base_branches": {"second-repo": "chongqing"},
             }
             with patch(
                 "app.config.Settings.worktree_dir",
@@ -468,6 +475,25 @@ class WorkflowTests(unittest.TestCase):
                 ).returncode
                 self.assertNotEqual(branch, 0)
             self.assertFalse(worktree_root.joinpath("rollback-request").exists())
+
+    @patch("app.orchestrator.TfsClient.create_pull_request")
+    def test_repository_specific_base_branch_is_used_as_pr_target(self, create_pull_request) -> None:
+        create_pull_request.return_value = {"PullRequestId": 310, "WebUrl": "https://tfs.test/pr/310"}
+        result = worker._create_pr(
+            "branch-override-request",
+            {"result_summary": "重庆 starter 调整"},
+            {
+                "simulation_mode": False,
+                "tfs_collection_url": "http://dev.tellhowsoft.com/DefaultCollection",
+                "base_branch": "dev",
+            },
+            Path("C:/work/dcsd-springboot-starter"),
+            {"id": 910100, "title": "重庆网络发令"},
+            "feature/910100-yangtao",
+            target_branch="chongqing",
+        )
+        self.assertEqual(result["id"], 310)
+        self.assertEqual(create_pull_request.call_args.args[2], "chongqing")
 
     def test_remote_store_retries_transient_gateway_failure(self) -> None:
         request = httpx.Request("PATCH", "https://cloud.test/api/runner/requests/request-1")
@@ -732,7 +758,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM v0.4.10"), 1)
+        self.assertEqual(page.text.count("SYSTEM v0.4.11"), 1)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
@@ -839,7 +865,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("自助项目", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM v0.4.10"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM v0.4.11"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
@@ -1003,6 +1029,7 @@ class WorkflowTests(unittest.TestCase):
                 "repository_path": "C:\\work\\demo",
                 "repository_paths": ["C:\\work\\demo", "C:\\work\\demo-api"],
                 "base_branch": "dev",
+                "repository_base_branches": {"demo-api": "chongqing"},
                 "build_command": "echo test",
                 "package_patterns": ["target/*.jar"],
                 "sql_patterns": ["**/*.sql"],
@@ -1037,6 +1064,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(synced["name"], "目录项目一（已更新）")
         self.assertEqual(synced["reviewer_name"], "朱星舟")
         self.assertEqual(synced["repository_paths"], ["C:\\work\\demo", "C:\\work\\demo-api"])
+        self.assertEqual(synced["repository_base_branches"], {"demo-api": "chongqing"})
         self.assertEqual(synced["routing_title_keywords"], ["成都网络下令"])
         cleared = self.client.put(
             "/api/runner/projects",
@@ -1072,6 +1100,53 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(nanchong["base_branch"], "dev")
         self.assertEqual(len(nanchong["repository_paths"]), 7)
         self.assertTrue(all(path.startswith("C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuannc\\") for path in nanchong["repository_paths"]))
+
+    def test_local_project_catalog_contains_new_network_command_projects(self) -> None:
+        projects = {item["project_key"]: item for item in load_project_presets()}
+        expected = {
+            "sichuan-dispatch-network-command": ("四川省调网络发令", "product_manual_review", 9),
+            "chongqing-dispatch-network-command": ("重庆市调网络发令", "product_manual_review", 10),
+            "aba-network-command": ("阿坝网络发令", "sichuan_auto_review", 9),
+            "guangan-network-command": ("广安网络发令", "sichuan_auto_review", 9),
+            "bazhong-network-command": ("巴中网络发令", "sichuan_auto_review", 9),
+            "suining-network-command": ("遂宁网络发令", "sichuan_auto_review", 9),
+            "ziyang-network-command": ("资阳网络发令", "sichuan_auto_review", 9),
+        }
+        for key, (name, mode, repository_count) in expected.items():
+            with self.subTest(project=key):
+                project = projects[key]
+                self.assertEqual(project["name"], name)
+                self.assertEqual(project["delivery_mode"], mode)
+                self.assertEqual(project["base_branch"], "dev")
+                self.assertEqual(len(project["repository_paths"]), repository_count)
+                self.assertTrue(project["build_command"])
+        chongqing = projects["chongqing-dispatch-network-command"]
+        self.assertEqual(chongqing["repository_base_branches"], {"dcsd-springboot-starter": "chongqing"})
+        for key in (
+            "aba-network-command",
+            "guangan-network-command",
+            "bazhong-network-command",
+            "suining-network-command",
+            "ziyang-network-command",
+        ):
+            self.assertEqual(projects[key]["reviewer_name"], "朱星舟")
+
+    @patch("app.project_catalog.TfsClient.get_work_item")
+    def test_new_network_command_projects_route_by_title(self, get_work_item) -> None:
+        cases = (
+            ("【四川省调网络发令】功能优化", "sichuan-dispatch-network-command", "XiNanArea-New\\四川省区团队"),
+            ("【重庆市调网络发令】功能优化", "chongqing-dispatch-network-command", "XiNanArea-New\\重庆市调"),
+            ("【阿坝网络发令】功能优化", "aba-network-command", "XiNanArea-New\\四川省区团队"),
+            ("【广安网络发令】功能优化", "guangan-network-command", "XiNanArea-New\\四川省区团队"),
+            ("【巴中网络发令】功能优化", "bazhong-network-command", "XiNanArea-New\\四川省区团队"),
+            ("【遂宁网络发令】功能优化", "suining-network-command", "XiNanArea-New\\四川省区团队"),
+            ("【资阳网络发令】功能优化", "ziyang-network-command", "XiNanArea-New\\四川省区团队"),
+        )
+        for index, (title, expected_key, area_path) in enumerate(cases, start=1):
+            with self.subTest(project=expected_key):
+                get_work_item.return_value = {"id": 920000 + index, "title": title, "area_path": area_path}
+                project, _ = resolve_project_for_work_item(920000 + index)
+                self.assertEqual(project["project_key"], expected_key)
 
     def test_local_controller_can_update_project_aliases_for_title_routing(self) -> None:
         with tempfile.TemporaryDirectory() as preset_dir:

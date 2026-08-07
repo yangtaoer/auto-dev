@@ -190,7 +190,7 @@ class Worker:
                 request_id,
                 "prepare",
                 "completed",
-                f"已从最新 origin/{project.get('base_branch','dev')} 创建分支 {branch}，隔离仓库 {repository_count} 个",
+                self._workspace_prepared_message(project, repository_states, branch, repository_count),
             )
             self._check_cancelled(request_id)
 
@@ -321,6 +321,7 @@ class Worker:
                         Path(state["worktree_path"]),
                         work_item,
                         state["branch"],
+                        target_branch=state["base_branch"],
                     )
                     state.update({"pr_id": pr["id"], "pr_url": pr["url"], "status": "waiting_merge"})
                     pull_requests.append((state, pr))
@@ -478,6 +479,38 @@ class Worker:
             raise RuntimeError("多仓项目存在同名仓库目录，无法创建隔离工作区")
         return repositories
 
+    @staticmethod
+    def _repository_base_branch(project: dict, repository: Path) -> str:
+        default_branch = str(project.get("base_branch") or "dev").strip() or "dev"
+        overrides = project.get("repository_base_branches") or {}
+        if not isinstance(overrides, dict):
+            raise RuntimeError("项目 repository_base_branches 必须是仓库名到分支名的映射")
+        candidates = {repository.name.casefold(), str(repository).casefold()}
+        for key, value in overrides.items():
+            if str(key).strip().casefold() not in candidates:
+                continue
+            branch = str(value).strip()
+            if not branch:
+                raise RuntimeError(f"仓库 {repository.name} 的基础分支配置为空")
+            return branch
+        return default_branch
+
+    @staticmethod
+    def _workspace_prepared_message(
+        project: dict,
+        repository_states: list[dict],
+        branch: str,
+        repository_count: int,
+    ) -> str:
+        if not repository_states:
+            return (
+                f"已从最新 origin/{project.get('base_branch', 'dev')} 创建分支 {branch}，"
+                f"隔离仓库 {repository_count} 个"
+            )
+        branches = list(dict.fromkeys(str(state.get("base_branch") or "dev") for state in repository_states))
+        source = "、".join(f"origin/{item}" for item in branches)
+        return f"已按 {source} 创建分支 {branch}，隔离仓库 {repository_count} 个"
+
     def _prepare_worktrees(
         self,
         request_id: str,
@@ -485,7 +518,6 @@ class Worker:
         project: dict,
     ) -> tuple[Path, list[dict], str]:
         repositories = self._configured_repository_paths(project)
-        base_branch = project.get("base_branch", "dev")
         fetch_env = git_authenticated_env(settings.tfs_pat) if settings.tfs_pat else sanitized_process_env()
         base_branch_name = f"feature/{work_item['id']}-{settings.tfs_user_alias}"
         workspace_root = settings.worktree_dir / request_id
@@ -497,6 +529,7 @@ class Worker:
             branch = base_branch_name
             try:
                 for repo in repositories:
+                    base_branch = self._repository_base_branch(project, repo)
                     current_action = f"启用仓库长路径支持（{repo.name}）"
                     subprocess.run(
                         ["git", "-C", str(repo), "config", "core.longpaths", "true"],
@@ -525,6 +558,7 @@ class Worker:
                     branch = f"{branch}-{suffix}"
                 workspace_root.mkdir(parents=True, exist_ok=True)
                 for repo in repositories:
+                    base_branch = self._repository_base_branch(project, repo)
                     base_commit = git(repo, "rev-parse", f"origin/{base_branch}")
                     worktree = workspace_root / repo.name
                     if worktree.exists():
@@ -625,7 +659,17 @@ class Worker:
         self.store.add_event(detail["id"], "git.pushed", subject, metadata={"branch": branch, "commit": commit_hash})
         return commit_hash
 
-    def _create_pr(self, request_id: str, detail: dict, project: dict, worktree: Path | None, work_item: dict, branch: str) -> dict:
+    def _create_pr(
+        self,
+        request_id: str,
+        detail: dict,
+        project: dict,
+        worktree: Path | None,
+        work_item: dict,
+        branch: str,
+        *,
+        target_branch: str | None = None,
+    ) -> dict:
         if project.get("simulation_mode"):
             pr_id = 8000 + int(work_item["id"]) % 1000
             url = f"{project['tfs_collection_url']}/{project['tfs_project']}/_git/demo/pullrequest/{pr_id}"
@@ -633,7 +677,7 @@ class Worker:
         title = f"feat(#{work_item['id']}):{work_item['title'][:80]}"
         description = f"自动研发任务：{request_id}\n需求：#{work_item['id']}\n\n{detail.get('result_summary','')}"
         result = TfsClient(project["tfs_collection_url"]).create_pull_request(
-            str(worktree), branch, project.get("base_branch", "dev"), title, work_item["id"], description,
+            str(worktree), branch, target_branch or project.get("base_branch", "dev"), title, work_item["id"], description,
         )
         return {"id": int(result["PullRequestId"]), "url": result["WebUrl"]}
 

@@ -62,7 +62,7 @@ class Settings:
     ).resolve()
     runner_token: str = env_secret("AUTODEV_RUNNER_TOKEN")
     cloud_url: str = os.getenv("AUTODEV_CLOUD_URL", "").rstrip("/")
-    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "0.4.10").strip() or "0.4.10"
+    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "0.4.11").strip() or "0.4.11"
     runner_monitor_host: str = os.getenv("AUTODEV_RUNNER_MONITOR_HOST", "127.0.0.1").strip()
     runner_monitor_port: int = int(os.getenv("AUTODEV_RUNNER_MONITOR_PORT", "28766"))
     max_artifact_mb: int = max(1, int(os.getenv("AUTODEV_MAX_ARTIFACT_MB", "200")))
@@ -90,6 +90,7 @@ class Settings:
     smtp_password: str = env_secret("SMTP_PASSWORD")
     smtp_from: str = os.getenv("SMTP_FROM", "autodev@example.com")
     smtp_from_name: str = os.getenv("SMTP_FROM_NAME", "AutoDev · 自主研发交付").strip()
+    task_admin_email: str = os.getenv("AUTODEV_TASK_ADMIN_EMAIL", "yangtao2@tellhow.com").strip()
     smtp_starttls: bool = env_bool("SMTP_STARTTLS", True)
     codex_model: str | None = os.getenv("CODEX_MODEL") or None
     codex_api_key: str = env_secret("CODEX_API_KEY")

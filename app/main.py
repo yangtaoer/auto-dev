@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="0.4.10",
+    version="0.4.11",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -114,6 +114,7 @@ class ProjectInput(BaseModel):
     repository_path: str = ""
     repository_paths: list[str] = Field(default_factory=list, max_length=30)
     base_branch: str = "dev"
+    repository_base_branches: dict[str, str] = Field(default_factory=dict)
     build_command: str = ""
     package_patterns: list[str] = []
     sql_patterns: list[str] = ["**/*.sql"]
@@ -583,7 +584,7 @@ def create_project(payload: ProjectInput, user: Annotated[dict, Depends(admin_us
     values = []
     for key in columns:
         value = data[key]
-        if isinstance(value, list):
+        if isinstance(value, (list, dict)):
             value = json.dumps(value, ensure_ascii=False)
         elif isinstance(value, bool):
             value = int(value)
@@ -610,7 +611,7 @@ def update_project(project_id: int, payload: ProjectInput, user: Annotated[dict,
     data = payload.model_dump(mode="json")
     values = []
     for key, value in data.items():
-        if isinstance(value, list):
+        if isinstance(value, (list, dict)):
             value = json.dumps(value, ensure_ascii=False)
         elif isinstance(value, bool):
             value = int(value)
@@ -652,7 +653,7 @@ def sync_runner_projects(payload: RunnerProjectSync) -> dict:
             columns = list(data)
             values: list[Any] = []
             for value in data.values():
-                if isinstance(value, list):
+                if isinstance(value, (list, dict)):
                     value = json.dumps(value, ensure_ascii=False)
                 elif isinstance(value, bool):
                     value = int(value)
