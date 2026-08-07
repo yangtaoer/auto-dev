@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#070b1c">
+  <meta name="theme-color" content="#0b1120">
   <title>AutoDev · 自主研发交付</title>
-  <link rel="icon" href="/static/brand/favicon.ico" sizes="any">
+  <link rel="icon" href="/static/brand/favicon.ico?v={{ app_version }}" sizes="any">
   <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
   <link rel="manifest" href="/static/brand/site.webmanifest">
   <link rel="stylesheet" href="/static/styles.css">
@@ -44,12 +44,12 @@
           <div class="run-grid" id="active-runs"></div>
         </section>
         <div class="section-heading compact"><div><p class="eyebrow">最近动态 / RECENT SIGNALS</p><h2>最近任务</h2></div><button class="text-button" data-view-link="requests">查看全部 →</button></div>
-        <div class="table-card"><table><thead><tr><th>需求</th><th>项目</th><th>交付方式</th><th>状态</th><th>最新动态</th><th>更新时间</th></tr></thead><tbody id="recent-table"></tbody></table></div>
+        <div class="table-card"><table><thead><tr><th>需求</th><th>项目</th><th>交付方式</th><th>状态</th><th>最新动态</th><th>总耗时</th><th>更新时间</th></tr></thead><tbody id="recent-table"></tbody></table></div>
       </section>
 
       <section class="view" id="view-requests">
         <div class="section-heading"><div><p class="eyebrow">交付台账 / DELIVERY LEDGER</p><h2>全部交付记录</h2></div><div class="filter-chips"><button class="chip active" data-filter="all">全部</button><button class="chip" data-filter="waiting_merge">等待合并</button><button class="chip" data-filter="delivered">已交付</button><button class="chip" data-filter="failed">失败</button></div></div>
-        <div class="table-card delivery-table"><table><thead><tr><th>需求 / 项目</th><th>当前状态</th><th>提交人</th><th>提交时间</th><th>完成时间</th><th>耗时</th><th>交付产物</th></tr></thead><tbody id="all-table"></tbody></table></div>
+        <div class="table-card delivery-table"><table><thead><tr><th>需求 / 项目</th><th>当前状态</th><th>提交人</th><th>提交时间</th><th>完成时间</th><th>总耗时</th><th>交付产物</th></tr></thead><tbody id="all-table"></tbody></table></div>
       </section>
 
       {% if user.role == 'admin' %}<section class="view" id="view-projects">

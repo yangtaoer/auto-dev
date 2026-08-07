@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 
 from ..config import settings
 from ..db import add_artifact, request_detail
-from ..domain import DELIVERY_MODE_LABELS, DeliveryMode
+from ..domain import DELIVERY_MODE_LABELS, DeliveryMode, visible_delivery_artifacts
 from .process_env import sanitized_process_env
 
 
@@ -66,6 +66,25 @@ def changed_files(worktree: Path, base_commit: str) -> list[str]:
     untracked = git(worktree, "ls-files", "--others", "--exclude-standard")
     paths = [line.replace("\\", "/") for output in (tracked, untracked) for line in output.splitlines() if line.strip()]
     return list(dict.fromkeys(paths))
+
+
+def added_files(worktree: Path, base_commit: str) -> list[str]:
+    tracked = git(worktree, "diff", "--name-only", "--diff-filter=A", base_commit, "--")
+    untracked = git(worktree, "ls-files", "--others", "--exclude-standard")
+    paths = [line.replace("\\", "/") for output in (tracked, untracked) for line in output.splitlines() if line.strip()]
+    return list(dict.fromkeys(paths))
+
+
+def menu_link_from_view_path(path: str) -> str | None:
+    normalized = path.replace("\\", "/")
+    match = re.search(
+        r"(?:^|/)tbp_config/runtime/module/(?P<module>[^/]+)/views/(?P<view>[^/]+)\.view\.xml$",
+        normalized,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return f"/{match.group('module')}/views/{match.group('view')}"
 
 
 def matches_any(path: str, patterns: Iterable[str]) -> bool:
@@ -137,6 +156,53 @@ class ArtifactService:
                     shutil.copy2(source, target)
                     ids.append(self.record(request_id, kind, delivery_relative.as_posix(), str(target)))
         return ids
+
+    def collect_menu_links(self, request_id: str, worktree: Path, base_commit: str) -> list[int]:
+        ids: list[int] = []
+        existing = {
+            str(item.get("name") or "")
+            for item in (self.detail_loader(request_id) or {}).get("artifacts", [])
+            if item.get("kind") == "menu_link"
+        }
+        for relative in added_files(worktree, base_commit):
+            menu_link = menu_link_from_view_path(relative)
+            if not menu_link or menu_link in existing:
+                continue
+            ids.append(self.record(request_id, "menu_link", menu_link, external_url=menu_link))
+            existing.add(menu_link)
+        return ids
+
+    def artifact_url(self, artifact: dict) -> str:
+        return str(artifact.get("external_url") or f"{self.public_base_url}/api/artifacts/{artifact['id']}")
+
+    def delivery_manifest_html(self, detail: dict) -> str:
+        kind_labels = {
+            "package": "安装包",
+            "package_note": "构建说明",
+            "sql": "SQL 脚本",
+            "config": "配置文件",
+            "merge_screenshot": "PR 合并截图",
+            "menu_link": "新增视图菜单链接",
+        }
+        lines: list[str] = []
+        items = visible_delivery_artifacts(str(detail.get("delivery_mode") or ""), detail.get("artifacts", []))
+        for item in items:
+            safe_name = html.escape(str(item.get("name") or "交付产物"))
+            label = html.escape(kind_labels.get(str(item.get("kind") or ""), str(item.get("kind") or "交付产物")))
+            if item.get("kind") == "menu_link":
+                value = f"<code>{safe_name}</code>"
+            else:
+                url = html.escape(self.artifact_url(item), quote=True)
+                value = f'<a href="{url}">{safe_name}</a>'
+            lines.append(f"<li><strong>{label}：</strong>{value}</li>")
+        if not lines:
+            lines.append("<li>本次交付无独立下载产物，请查看 AutoDev 任务记录。</li>")
+        console_url = html.escape(f"{self.public_base_url}/", quote=True)
+        return (
+            "<div><p><strong>AutoDev 自动研发交付</strong></p><ul>"
+            + "".join(lines)
+            + f'</ul><p><a href="{console_url}">打开 AutoDev 研发控制台</a></p></div>'
+        )
 
     def collect_packages(self, request_id: str, worktree: Path, patterns: list[str]) -> list[int]:
         ids: list[int] = []
@@ -414,12 +480,19 @@ class Mailer:
             "sql": "SQL 脚本",
             "config": "配置文件",
             "merge_screenshot": "合并截图",
+            "menu_link": "新增视图菜单链接",
         }
         artifact_lines = []
-        for item in detail.get("artifacts", []):
+        deliverable_items = visible_delivery_artifacts(str(detail.get("delivery_mode") or ""), detail.get("artifacts", []))
+        for item in deliverable_items:
             artifact_url = item.get("external_url") or f"{settings.public_base_url}/api/artifacts/{item['id']}"
             kind = kind_labels.get(item.get("kind"), item.get("kind") or "交付文件")
             action_label = "下载截图" if item.get("kind") == "merge_screenshot" else "下载产物"
+            if item.get("kind") == "menu_link":
+                artifact_lines.append(
+                    f"""<tr><td style="padding:0 0 7px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d8e5dd;background:#f8fbf9"><tr><td width="42" align="center" style="padding:10px 6px;color:#5b83ad;font:700 16px Consolas,'Courier New',monospace">↗</td><td style="padding:9px 12px"><div style="font-size:13px;font-weight:700;color:#123428;word-break:break-all">{safe_text(item.get('name'))}</div><div style="margin-top:2px;color:#6c8479;font-size:10px;letter-spacing:.04em">{safe_text(kind)}</div></td></tr></table></td></tr>"""
+                )
+                continue
             artifact_lines.append(
                 f"""<tr><td style="padding:0 0 7px 0">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d8e5dd;background:#f8fbf9">
@@ -438,7 +511,7 @@ class Mailer:
         artifacts = "".join(artifact_lines) or """<tr><td style="padding:11px;border:1px dashed #c7d8ce;color:#71877c;text-align:center;font-size:12px">当前阶段暂无可下载产物</td></tr>"""
         expiry_note = (
             f"<span style=\"color:#8a6110;font-size:10px;font-weight:400;letter-spacing:0\">OSS 下载链接 {settings.oss_retention_days} 天内有效</span>"
-            if any(item.get("external_url") and "aliyuncs.com" in item["external_url"] for item in detail.get("artifacts", []))
+            if any(item.get("external_url") and "aliyuncs.com" in item["external_url"] for item in deliverable_items)
             else ""
         )
         pr_url = str(detail.get("pr_url") or "")
@@ -479,6 +552,16 @@ class Mailer:
         notes_label = "执行摘要 / EXECUTION NOTES" if terminal else "开发说明 / DEVELOPMENT NOTES"
         notes_value = detail.get("result_summary") or ("任务在完成前终止，请查看上方终止原因及研发控制台中的执行记录。" if terminal else "—")
         artifact_heading = "已有产物 / AVAILABLE FILES" if terminal else "交付产物 / DELIVERABLES"
+        code_section = ""
+        if not (action_required and detail.get("delivery_mode") == DeliveryMode.PRODUCT_MANUAL_REVIEW.value):
+            code_section = f"""<div style="margin-bottom:5px;color:#698176;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">代码信息 / CODE DELIVERY</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;border:1px solid #dce7e0;background:#f9fbfa">
+        <tr>
+          <td width="38%" valign="top" style="padding:9px 11px;border-right:1px solid #dce7e0"><div style="color:#6c8277;font-size:9px">分支</div><div style="margin-top:3px;color:#17392c;font:11px Consolas,'Courier New',monospace;word-break:break-all">{safe_text(detail.get('branch_name'))}</div></td>
+          <td width="38%" valign="top" style="padding:9px 11px;border-right:1px solid #dce7e0"><div style="color:#6c8277;font-size:9px">提交</div><div style="margin-top:3px;color:#17392c;font:11px Consolas,'Courier New',monospace;word-break:break-all">{safe_text(detail.get('commit_hash'))}</div></td>
+          <td width="24%" valign="top" style="padding:9px 11px"><div style="color:#6c8277;font-size:9px">PR</div><div style="margin-top:3px;color:#17392c;font-size:11px;word-break:break-all">{pr_value}</div></td>
+        </tr>
+      </table>"""
         return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{safe_text(status_label)}</title></head>
 <body style="margin:0;padding:0;background:#edf3ef;color:#163026;font-family:'Microsoft YaHei UI','Microsoft YaHei',sans-serif">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0">TFS #{detail['work_item_id']} · {safe_text(detail.get('title'))} · {status_label}</div>
@@ -509,14 +592,7 @@ class Mailer:
         <td width="50%" valign="top" style="padding-left:6px"><div style="margin-bottom:5px;color:#698176;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">{notes_label}</div><div style="padding:10px 12px;background:#f7faf8;border-left:3px solid {status_color};color:#29493d;font-size:12px;line-height:1.6">{safe_text(notes_value)}</div></td>
       </tr></table>
 
-      <div style="margin-bottom:5px;color:#698176;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">代码信息 / CODE DELIVERY</div>
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;border:1px solid #dce7e0;background:#f9fbfa">
-        <tr>
-          <td width="38%" valign="top" style="padding:9px 11px;border-right:1px solid #dce7e0"><div style="color:#6c8277;font-size:9px">分支</div><div style="margin-top:3px;color:#17392c;font:11px Consolas,'Courier New',monospace;word-break:break-all">{safe_text(detail.get('branch_name'))}</div></td>
-          <td width="38%" valign="top" style="padding:9px 11px;border-right:1px solid #dce7e0"><div style="color:#6c8277;font-size:9px">提交</div><div style="margin-top:3px;color:#17392c;font:11px Consolas,'Courier New',monospace;word-break:break-all">{safe_text(detail.get('commit_hash'))}</div></td>
-          <td width="24%" valign="top" style="padding:9px 11px"><div style="color:#6c8277;font-size:9px">PR</div><div style="margin-top:3px;color:#17392c;font-size:11px;word-break:break-all">{pr_value}</div></td>
-        </tr>
-      </table>
+      {code_section}
 
       <div style="margin-bottom:5px;color:#698176;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">时间记录 / TIMELINE</div>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;background:#0f211a;color:#dce9e1">

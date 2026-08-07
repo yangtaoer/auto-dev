@@ -41,7 +41,7 @@ from .db import (
     update_step,
     utc_now,
 )
-from .domain import DELIVERY_MODE_LABELS, DeliveryMode, STATUS_LABELS, RunStatus
+from .domain import DELIVERY_MODE_LABELS, DeliveryMode, STATUS_LABELS, RunStatus, visible_delivery_artifacts
 from .orchestrator import worker
 from .live_stream import live_codex_streams
 from .security import hash_password, verify_password
@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="0.4.6",
+    version="0.4.7",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -469,8 +469,9 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     terminal_statuses = {"delivered", "failed", "rejected", "cancelled"}
     current_time = datetime.now(UTC)
     for item in (*active_requests, *recent_requests):
-        item["artifacts"] = artifact_map.get(item["id"], [])
-        started_value = item.get("started_at") or item.get("created_at")
+        item["artifacts"] = visible_delivery_artifacts(item["delivery_mode"], artifact_map.get(item["id"], []))
+        item["repository_states"] = json_value(item.get("repository_states"), [])
+        started_value = item.get("created_at") or item.get("started_at")
         ended_value = item.get("completed_at")
         if not ended_value and item.get("status") in terminal_statuses:
             ended_value = item.get("updated_at")

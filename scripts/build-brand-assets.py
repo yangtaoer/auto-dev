@@ -89,7 +89,7 @@ def main() -> None:
     app_icon = icon(mark, 512, 54)
     app_icon.save(BRAND_DIR / "autodev-app-icon.png", optimize=True)
     icon(mark, 180, 19).save(BRAND_DIR / "apple-touch-icon.png", optimize=True)
-    app_icon.save(
+    fitted(mark, 512, 512, 22).save(
         BRAND_DIR / "favicon.ico",
         format="ICO",
         sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],

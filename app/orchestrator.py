@@ -282,13 +282,16 @@ class Worker:
                     state["commit_hash"] = commit_hash
                     state["status"] = "pushed"
                     commits.append(commit_hash)
-                    self.artifacts.collect_changed_assets(
-                        request_id,
-                        state_worktree,
-                        state["base_commit"],
-                        project,
-                        repository_name=state["name"],
-                    )
+                    if mode == DeliveryMode.LOCAL_PACKAGE:
+                        self.artifacts.collect_changed_assets(
+                            request_id,
+                            state_worktree,
+                            state["base_commit"],
+                            project,
+                            repository_name=state["name"],
+                        )
+                    else:
+                        self.artifacts.collect_menu_links(request_id, state_worktree, state["base_commit"])
                 commit_hash = commits[0]
                 self.store.update_request(request_id, repository_states=repository_states)
             self.store.update_request(request_id, commit_hash=commit_hash)
@@ -410,8 +413,11 @@ class Worker:
             else:
                 self._finish_merged_repositories(request_id, repository_states, completed)
         except Exception as exc:
-            self.store.add_event(request_id, "pr.poll_failed", str(exc), level="warning")
-            self._schedule_next_poll(request_id, backoff=True)
+            if self.store.get_status(request_id) != RunStatus.WAITING_MERGE.value:
+                self._fail(request_id, exc)
+            else:
+                self.store.add_event(request_id, "pr.poll_failed", str(exc), level="warning")
+                self._schedule_next_poll(request_id, backoff=True)
 
     def _validate(self, detail: dict, project: dict) -> dict:
         if not project.get("enabled"):
@@ -706,9 +712,15 @@ class Worker:
 
     def _complete_delivery(self, request_id: str) -> None:
         self.store.update_request(request_id, status=RunStatus.DELIVERING.value, progress=96, completed_at=utc_now())
+        detail = self.store.detail(request_id)
+        project = detail["policy_snapshot"]
+        if not project.get("simulation_mode"):
+            manifest = self.artifacts.delivery_manifest_html(detail)
+            TfsClient(project["tfs_collection_url"]).update_delivery_artifacts(detail["work_item_id"], manifest)
+            self.store.add_event(request_id, "tfs.delivery_path_updated", "已将全部交付产物写入 TFS 交付包获取路径")
         self._send_status_email(request_id, action_required=False)
         self.store.update_request(request_id, status=RunStatus.DELIVERED.value, current_step="deliver", progress=100, completed_at=utc_now())
-        self.store.update_step(request_id, "deliver", "completed", "交付邮件及每个已合并 PR 的浏览器截图已生成")
+        self.store.update_step(request_id, "deliver", "completed", "交付产物、通知邮件及 TFS 交付路径已生成")
         self.store.add_event(request_id, "delivery.completed", "需求研发交付完成")
 
     def _send_status_email(self, request_id: str, *, action_required: bool, terminal: bool = False) -> None:
@@ -775,15 +787,15 @@ class Worker:
 
     def _create_demo_artifacts(self, request_id: str, *, include_package: bool) -> None:
         target = self.artifacts.request_dir(request_id)
-        sql = target / "sql" / "upgrade.sql"
-        config = target / "config" / "application-demo.yml"
-        sql.parent.mkdir(parents=True, exist_ok=True)
-        config.parent.mkdir(parents=True, exist_ok=True)
-        sql.write_text("-- 演示 SQL，正式任务将交付真实变更\nSELECT 1;\n", encoding="utf-8")
-        config.write_text("autodev:\n  enabled: true\n", encoding="utf-8")
-        self.store.add_artifact(request_id, "sql", "upgrade.sql", str(sql))
-        self.store.add_artifact(request_id, "config", "application-demo.yml", str(config))
         if include_package:
+            sql = target / "sql" / "upgrade.sql"
+            config = target / "config" / "application-demo.yml"
+            sql.parent.mkdir(parents=True, exist_ok=True)
+            config.parent.mkdir(parents=True, exist_ok=True)
+            sql.write_text("-- 演示 SQL，正式任务将交付真实变更\nSELECT 1;\n", encoding="utf-8")
+            config.write_text("autodev:\n  enabled: true\n", encoding="utf-8")
+            self.store.add_artifact(request_id, "sql", "upgrade.sql", str(sql))
+            self.store.add_artifact(request_id, "config", "application-demo.yml", str(config))
             archive = target / "package" / "demo-delivery.zip"
             archive.parent.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:

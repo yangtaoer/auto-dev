@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import PropertyMock, patch
 
 import httpx
+from PIL import Image
 
 
 TEST_DATA = tempfile.TemporaryDirectory()
@@ -31,8 +32,10 @@ from app.services.delivery import (  # noqa: E402
     ArtifactService,
     Mailer,
     changed_files,
+    menu_link_from_view_path,
     repository_short_name,
 )
+from app.services.tfs import DELIVERY_ARTIFACTS_FIELD, TfsClient  # noqa: E402
 from app.store import RemoteStore  # noqa: E402
 
 
@@ -162,6 +165,77 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("已有产物 / AVAILABLE FILES", failed)
         self.assertIn("任务已取消", mailer.delivery_subject(failed_detail, terminal_status="cancelled"))
         self.assertIn("准入驳回", mailer.delivery_subject(failed_detail, terminal_status="rejected"))
+
+    def test_product_review_waiting_email_lists_every_pr_without_code_files(self) -> None:
+        detail = {
+            "id": "product-review-mail",
+            "work_item_id": 910017,
+            "title": "新增网络发令总览",
+            "requirement_summary": "新增总览视图。",
+            "project_name": "南充网络发令",
+            "requester_name": "杨涛",
+            "delivery_mode": "product_manual_review",
+            "result_summary": "已完成开发，等待产品审核。",
+            "created_at": "2026-08-07T01:00:00+00:00",
+            "started_at": "2026-08-07T01:01:00+00:00",
+            "completed_at": None,
+            "branch_name": "feature/910017-yangtao",
+            "commit_hash": "abcdef1234567890",
+            "pr_id": 201,
+            "pr_url": "https://tfs.test/pr/201",
+            "repository_states": [
+                {"name": "dcsd-direct-ui", "repository_short_name": "direct-ui", "pr_id": 201, "pr_url": "https://tfs.test/pr/201"},
+                {"name": "dcsd-notice-srv", "repository_short_name": "notice-srv", "pr_id": 202, "pr_url": "https://tfs.test/pr/202"},
+            ],
+            "artifacts": [
+                {"id": 1, "kind": "config", "name": "secret-source.yml", "external_url": "https://files.test/source.yml"},
+                {"id": 2, "kind": "menu_link", "name": "/direct/views/operationTicketOverview", "external_url": "/direct/views/operationTicketOverview"},
+            ],
+        }
+        rendered = Mailer().delivery_html(detail, action_required=True)
+        self.assertIn("direct-ui · PR #201", rendered)
+        self.assertIn("notice-srv · PR #202", rendered)
+        self.assertIn("https://tfs.test/pr/201", rendered)
+        self.assertIn("https://tfs.test/pr/202", rendered)
+        self.assertIn("/direct/views/operationTicketOverview", rendered)
+        self.assertIn("新增视图菜单链接", rendered)
+        self.assertNotIn("secret-source.yml", rendered)
+        self.assertNotIn("代码信息 / CODE DELIVERY", rendered)
+
+    def test_view_xml_path_becomes_menu_link_and_tfs_manifest_contains_artifacts(self) -> None:
+        source = "src/main/resources/META-INF/resources/tbp_config/runtime/module/direct/views/operationTicketOverview.view.xml"
+        self.assertEqual(menu_link_from_view_path(source), "/direct/views/operationTicketOverview")
+        self.assertIsNone(menu_link_from_view_path(source.replace(".view.xml", ".form.xml")))
+        service = ArtifactService(public_base_url="https://auto.example.test")
+        detail = {
+            "delivery_mode": "product_manual_review",
+            "artifacts": [
+                {"id": 7, "kind": "merge_screenshot", "name": "notice-srv · PR #202 · 合并截图.png", "external_url": "https://oss.test/pr-202.png"},
+                {"id": 8, "kind": "menu_link", "name": "/direct/views/operationTicketOverview", "external_url": "/direct/views/operationTicketOverview"},
+                {"id": 9, "kind": "config", "name": "source.yml", "external_url": "https://oss.test/source.yml"},
+            ],
+        }
+        manifest = service.delivery_manifest_html(detail)
+        self.assertIn("https://oss.test/pr-202.png", manifest)
+        self.assertIn("/direct/views/operationTicketOverview", manifest)
+        self.assertIn("新增视图菜单链接", manifest)
+        self.assertNotIn("source.yml", manifest)
+
+    def test_tfs_delivery_artifacts_updates_discovered_html_field(self) -> None:
+        client = TfsClient("https://tfs.test/DefaultCollection", pat="test-pat")
+        with patch.object(client, "_request", return_value={}) as request:
+            client.update_delivery_artifacts(910017, "<ul><li>交付产物</li></ul>")
+        args, kwargs = request.call_args
+        self.assertEqual(args[0], "PATCH")
+        self.assertIn("/workitems/910017", args[1])
+        self.assertEqual(kwargs["headers"]["Content-Type"], "application/json-patch+json")
+        self.assertEqual(kwargs["json"][0]["path"], f"/fields/{DELIVERY_ARTIFACTS_FIELD}")
+
+    def test_favicon_is_transparent_symbol_without_square_plate(self) -> None:
+        with Image.open(Path("app/static/brand/favicon.ico")) as source:
+            icon = source.convert("RGBA")
+        self.assertEqual(icon.getpixel((0, 0))[3], 0)
+        self.assertLess(icon.getbbox()[1], icon.height)
 
     def test_runner_can_send_branded_test_email(self) -> None:
         project_id = self.create_project("test-branded-email", "local_package")
@@ -647,7 +721,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
 
         page = self.client.get("/")
-        self.assertIn("SYSTEM v0.4.6", page.text)
+        self.assertIn("SYSTEM v0.4.7", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-app-icon.png", page.text)
         self.assertIn("control-strip", page.text)

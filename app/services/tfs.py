@@ -11,6 +11,9 @@ from ..config import settings
 from .process_env import sanitized_process_env
 
 
+DELIVERY_ARTIFACTS_FIELD = "Custom.0bb5cb34-6fb8-4a13-9508-166612ddb2b8"
+
+
 @dataclass(slots=True)
 class RepositoryInfo:
     project: str
@@ -58,6 +61,15 @@ class TfsClient:
             "acceptance_criteria": fields.get("Microsoft.VSTS.Common.AcceptanceCriteria", ""),
             "relations": item.get("relations", []),
         }
+
+    def update_delivery_artifacts(self, work_item_id: int, html_value: str) -> None:
+        patch = [{"op": "add", "path": f"/fields/{DELIVERY_ARTIFACTS_FIELD}", "value": html_value}]
+        self._request(
+            "PATCH",
+            f"{self.base_url}/_apis/wit/workitems/{work_item_id}?api-version=2.0",
+            json=patch,
+            headers={"Content-Type": "application/json-patch+json"},
+        )
 
     @staticmethod
     def parse_origin(repo_path: str) -> tuple[str, str]:

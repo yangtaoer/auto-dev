@@ -16,6 +16,27 @@ DELIVERY_MODE_LABELS = {
 }
 
 
+REVIEW_DELIVERY_MODES = {
+    DeliveryMode.SICHUAN_AUTO_REVIEW.value,
+    DeliveryMode.PRODUCT_MANUAL_REVIEW.value,
+}
+
+REVIEW_DELIVERABLE_KINDS = {"merge_screenshot", "menu_link"}
+
+
+def visible_delivery_artifacts(delivery_mode: str, artifacts: list[dict]) -> list[dict]:
+    """Return only user-facing deliverables allowed by the configured delivery mode."""
+    visible = [
+        item
+        for item in artifacts
+        if item.get("kind") not in {"report", "pull_request", "merge_evidence", "email_preview"}
+        and not (item.get("kind") == "merge_screenshot" and "凭证" in str(item.get("name") or ""))
+    ]
+    if delivery_mode in REVIEW_DELIVERY_MODES:
+        return [item for item in visible if item.get("kind") in REVIEW_DELIVERABLE_KINDS]
+    return visible
+
+
 class RunStatus(StrEnum):
     QUEUED = "queued"
     VALIDATING = "validating"
