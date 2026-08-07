@@ -85,6 +85,7 @@ def main() -> None:
     fitted(mark, 512, 512, 34).save(BRAND_DIR / "autodev-mark.png", optimize=True)
     fitted(mark, 128, 128, 8).save(BRAND_DIR / "autodev-email-mark.png", optimize=True)
     fitted(mark, 64, 64, 5).save(BRAND_DIR / "autodev-mark-64.png", optimize=True)
+    fitted(mark, 560, 200, 4).save(BRAND_DIR / "autodev-sidebar-mark.png", optimize=True)
 
     app_icon = icon(mark, 512, 54)
     app_icon.save(BRAND_DIR / "autodev-app-icon.png", optimize=True)

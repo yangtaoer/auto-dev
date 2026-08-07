@@ -25,6 +25,7 @@ os.environ["AUTODEV_RUNNER_TOKEN"] = "test-runner-token"
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
+from app.db import update_request, update_step  # noqa: E402
 from app.orchestrator import Worker, worker  # noqa: E402
 from app.project_catalog import load_project_presets, resolve_project_for_work_item  # noqa: E402
 from app.services.codex_runner import CodexRunner  # noqa: E402
@@ -236,6 +237,11 @@ class WorkflowTests(unittest.TestCase):
             icon = source.convert("RGBA")
         self.assertEqual(icon.getpixel((0, 0))[3], 0)
         self.assertLess(icon.getbbox()[1], icon.height)
+
+        with Image.open(Path("app/static/brand/autodev-sidebar-mark.png")) as source:
+            sidebar_mark = source.convert("RGBA")
+        self.assertEqual(sidebar_mark.size, (560, 200))
+        self.assertEqual(sidebar_mark.getpixel((0, 0))[3], 0)
 
     def test_runner_can_send_branded_test_email(self) -> None:
         project_id = self.create_project("test-branded-email", "local_package")
@@ -721,9 +727,11 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
 
         page = self.client.get("/")
-        self.assertIn("SYSTEM v0.4.7", page.text)
+        self.assertEqual(page.text.count("SYSTEM v0.4.8"), 1)
         self.assertIn("AutoDev", page.text)
-        self.assertIn("/static/brand/autodev-app-icon.png", page.text)
+        self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
+        self.assertNotIn("DELIVERY LOOP", page.text)
+        self.assertNotIn("系统版本 / VERSION", page.text)
         self.assertIn("control-strip", page.text)
         script = self.client.get("/static/app.js").text
         self.assertIn("addOptimisticIntake", script)
@@ -818,14 +826,47 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("自助项目", pm_page.text)
-        self.assertIn("系统版本 / VERSION", pm_page.text)
-        self.assertIn("sidebar-version", pm_page.text)
+        self.assertEqual(pm_page.text.count("SYSTEM v0.4.8"), 1)
+        self.assertNotIn("系统版本 / VERSION", pm_page.text)
+        self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
         self.assertEqual(pm_dashboard.status_code, 200, pm_dashboard.text)
         self.assertIn("stats", pm_dashboard.json())
         self.client.post("/api/auth/logout")
         restored = self.client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
         self.assertEqual(restored.status_code, 200, restored.text)
+
+    def test_pipeline_step_keeps_first_start_and_exposes_duration(self) -> None:
+        project_id = self.create_project("test-step-timing", "local_package")
+        created = self.client.post(
+            "/api/requests",
+            json={"project_id": project_id, "work_item_id": 910021},
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        request_id = created.json()["id"]
+        self.addCleanup(update_request, request_id, status="cancelled")
+
+        with patch(
+            "app.db.utc_now",
+            side_effect=[
+                "2026-08-07T01:00:00+00:00",
+                "2026-08-07T01:00:30+00:00",
+                "2026-08-07T01:02:05+00:00",
+            ],
+        ):
+            update_step(request_id, "validate", "running", "开始校验")
+            update_step(request_id, "validate", "running", "校验中")
+            update_step(request_id, "validate", "completed", "校验完成")
+
+        detail = self.client.get(f"/api/requests/{request_id}").json()["request"]
+        step = next(item for item in detail["steps"] if item["step_code"] == "validate")
+        self.assertEqual(step["started_at"], "2026-08-07T01:00:00+00:00")
+        self.assertEqual(step["finished_at"], "2026-08-07T01:02:05+00:00")
+        self.assertEqual(step["duration_seconds"], 125)
+
+        script = self.client.get("/static/app.js").text
+        self.assertIn("timeline-times", script)
+        self.assertIn("fmtStepTime", script)
 
     def test_number_only_request_is_routed_by_local_runner(self) -> None:
         self.create_project("test-auto-route", "local_package")

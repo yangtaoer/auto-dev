@@ -502,17 +502,49 @@ def update_request(request_id: str, **fields: Any) -> None:
 
 def update_step(request_id: str, step_code: str, status: str, message: str = "") -> None:
     now = utc_now()
-    fields = {"status": status, "message": message}
-    if status == "running":
-        fields["started_at"] = now
-    if status in {"completed", "failed", "skipped"}:
-        fields["finished_at"] = now
-    assignments = ",".join(f"{key}=?" for key in fields)
     with transaction() as conn:
-        conn.execute(
-            f"UPDATE delivery_steps SET {assignments} WHERE request_id=? AND step_code=?",
-            (*fields.values(), request_id, step_code),
+        if status == "running":
+            conn.execute(
+                """UPDATE delivery_steps
+                   SET status=?, message=?, started_at=COALESCE(started_at, ?)
+                   WHERE request_id=? AND step_code=?""",
+                (status, message, now, request_id, step_code),
+            )
+        elif status in {"completed", "failed", "skipped"}:
+            conn.execute(
+                """UPDATE delivery_steps
+                   SET status=?, message=?,
+                       started_at=COALESCE(started_at, ?),
+                       finished_at=COALESCE(finished_at, ?)
+                   WHERE request_id=? AND step_code=?""",
+                (status, message, now, now, request_id, step_code),
+            )
+        else:
+            conn.execute(
+                "UPDATE delivery_steps SET status=?, message=? WHERE request_id=? AND step_code=?",
+                (status, message, request_id, step_code),
+            )
+
+
+def _step_duration_seconds(step: dict[str, Any], current_time: datetime) -> int | None:
+    started_at = step.get("started_at")
+    if not started_at:
+        return None
+    try:
+        started = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+        finished_value = step.get("finished_at")
+        finished = (
+            datetime.fromisoformat(str(finished_value).replace("Z", "+00:00"))
+            if finished_value
+            else current_time
         )
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        if finished.tzinfo is None:
+            finished = finished.replace(tzinfo=UTC)
+        return max(0, int((finished - started).total_seconds()))
+    except (TypeError, ValueError):
+        return None
 
 
 def add_artifact(request_id: str, kind: str, name: str, local_path: str = "", external_url: str = "") -> int:
@@ -541,6 +573,9 @@ def request_detail(request_id: str) -> dict[str, Any] | None:
     if not request:
         return None
     request["steps"] = rows("SELECT * FROM delivery_steps WHERE request_id=? ORDER BY id", (request_id,))
+    current_time = datetime.now(UTC)
+    for step in request["steps"]:
+        step["duration_seconds"] = _step_duration_seconds(step, current_time)
     request["events"] = rows("SELECT * FROM delivery_events WHERE request_id=? ORDER BY id DESC LIMIT 100", (request_id,))
     request["artifacts"] = rows(
         """SELECT * FROM delivery_artifacts

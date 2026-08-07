@@ -317,7 +317,21 @@ class AutoDevConsole:
             "PIPELINE",
         ]
         for step in detail.get("steps", []):
-            lines.append(f"  {step.get('name')}  [{step.get('status')}]  {step.get('message') or ''}")
+            started_at = step.get("started_at")
+            if started_at:
+                finished_at = step.get("finished_at")
+                timing = (
+                    f"开启 {self._format_datetime_seconds(started_at)}  ·  "
+                    f"{'完成 ' + self._format_datetime_seconds(finished_at) if finished_at else '正在运行'}  ·  "
+                    f"耗时 {self._format_duration(step.get('duration_seconds'))}"
+                )
+            else:
+                timing = "尚未开启"
+            lines.extend((
+                f"  {step.get('name')}  [{step.get('status')}]",
+                f"      {timing}",
+                f"      {step.get('message') or ''}",
+            ))
         if detail.get("result_summary"):
             lines.extend(("", "研发结论", str(detail["result_summary"])))
         if detail.get("error_message"):
@@ -589,6 +603,31 @@ class AutoDevConsole:
             return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone().strftime("%m-%d %H:%M")
         except ValueError:
             return str(value)
+
+    @staticmethod
+    def _format_datetime_seconds(value: Any) -> str:
+        if not value:
+            return "—"
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone().strftime("%m-%d %H:%M:%S")
+        except ValueError:
+            return str(value)
+
+    @staticmethod
+    def _format_duration(value: Any) -> str:
+        try:
+            seconds = max(0, int(value))
+        except (TypeError, ValueError):
+            return "—"
+        if seconds < 60:
+            return f"{max(1, seconds)} 秒"
+        minutes = seconds // 60
+        if minutes < 60:
+            return f"{minutes} 分 {seconds % 60} 秒"
+        hours = minutes // 60
+        if hours < 24:
+            return f"{hours} 小时 {minutes % 60} 分"
+        return f"{hours // 24} 天 {hours % 24} 小时"
 
     def close(self) -> None:
         self.closing = True
