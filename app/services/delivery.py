@@ -24,7 +24,7 @@ from .process_env import sanitized_process_env
 
 
 BRAND_MARK_CID = "autodev-brand-mark"
-BRAND_MARK_PATH = Path(__file__).resolve().parents[1] / "static" / "brand" / "autodev-mark.png"
+BRAND_MARK_PATH = Path(__file__).resolve().parents[1] / "static" / "brand" / "autodev-email-mark.png"
 
 
 def run_command(command: str, cwd: Path, timeout_minutes: int = 60) -> str:
@@ -253,7 +253,7 @@ class ArtifactService:
         .row{{display:grid;grid-template-columns:220px 1fr;padding:17px 0;border-bottom:1px solid #1d382d;font-size:20px}}.row:last-child{{border:0}}
         .key{{color:#87aa99}}.ok{{display:inline-block;color:#06150e;background:#76f7ae;padding:7px 14px;font-weight:700}}
         .foot{{position:absolute;bottom:64px;color:#6f8f80;font:16px Consolas}}
-        </style></head><body><div class='seal'>AUTODEV / MERGE SCREENSHOT</div><h1>代码合并完成</h1><div class='sub'>演示环境中的 Pull Request 已完成</div>
+        </style></head><body><div class='seal'>AutoDev / MERGE SCREENSHOT</div><h1>代码合并完成</h1><div class='sub'>演示环境中的 Pull Request 已完成</div>
         <div class='card'><div class='row'><div class='key'>状态</div><div><span class='ok'>COMPLETED</span></div></div>
         <div class='row'><div class='key'>PR</div><div>#{html.escape(str(pr.get('id','')))} · {html.escape(pr.get('title',''))}</div></div>
         <div class='row'><div class='key'>代码仓库</div><div>{html.escape(repository_label)}</div></div>
@@ -282,7 +282,7 @@ class Mailer:
         return bool(settings.smtp_host and settings.smtp_from)
 
     def sender_address(self) -> Address:
-        return Address(display_name=settings.smtp_from_name or "AutoDev 全自助研发交付", addr_spec=settings.smtp_from)
+        return Address(display_name=settings.smtp_from_name or "AutoDev · 自主研发交付", addr_spec=settings.smtp_from)
 
     def delivery_subject(
         self,
@@ -310,7 +310,7 @@ class Mailer:
         message["Message-ID"] = make_msgid(domain=settings.smtp_from.rsplit("@", 1)[-1])
         message["Auto-Submitted"] = "auto-generated"
         message.set_content(
-            "AutoDev 全自助研发交付通知。请使用支持 HTML 的邮件客户端查看需求说明、代码信息和交付产物。"
+            "AutoDev 自主研发交付通知。请使用支持 HTML 的邮件客户端查看需求说明、代码信息和交付产物。"
         )
         message.add_alternative(html_body, subtype="html")
         if f"cid:{BRAND_MARK_CID}" in html_body and BRAND_MARK_PATH.is_file():
@@ -365,7 +365,7 @@ class Mailer:
         terminal_labels = {"failed": "研发执行失败", "cancelled": "研发任务已取消", "rejected": "需求准入驳回"}
         terminal_colors = {"failed": "#ff7b72", "cancelled": "#ffc857", "rejected": "#ffad5c"}
         status_label = terminal_labels.get(terminal_status) or ("等待代码合并" if action_required else "研发交付完成")
-        status_color = terminal_colors.get(terminal_status) or ("#ffc857" if action_required else "#79f2ad")
+        status_color = terminal_colors.get(terminal_status) or ("#ffc857" if action_required else "#62e59b")
         terminal = terminal_status in terminal_labels
 
         def parse_datetime(value: str | None) -> datetime | None:
@@ -430,7 +430,7 @@ class Mailer:
                       <div style="margin-top:2px;color:#6c8479;font-size:10px;letter-spacing:.04em">{safe_text(kind)}</div>
                     </td>
                     <td width="94" align="right" style="padding:9px 12px 9px 7px">
-                      <a href="{html.escape(artifact_url, quote=True)}" style="display:inline-block;padding:7px 10px;background:#0d2b20;color:#79f2ad;text-decoration:none;font-size:11px;font-weight:700;white-space:nowrap">{action_label}</a>
+                      <a href="{html.escape(artifact_url, quote=True)}" style="display:inline-block;padding:7px 10px;background:#0d2b20;color:#62e59b;text-decoration:none;font-size:11px;font-weight:700;white-space:nowrap">{action_label}</a>
                     </td>
                   </tr>
                 </table></td></tr>"""
@@ -486,8 +486,8 @@ class Mailer:
   <table role="presentation" width="860" cellpadding="0" cellspacing="0" style="width:100%;max-width:860px;background:#ffffff;border:1px solid #d4e1d9;box-shadow:0 10px 35px rgba(18,52,40,.08)">
     <tr><td style="padding:18px 24px;background:#0c1a14;border-bottom:4px solid {status_color}">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-        <td width="54" valign="top"><div style="width:42px;height:42px;background:#eef6f0;text-align:center"><img src="cid:{BRAND_MARK_CID}" width="42" height="42" alt="AutoDev" style="display:block;width:42px;height:42px;border:0;object-fit:contain"></div></td>
-        <td valign="top"><div style="color:#79f2ad;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.16em">AUTODEV · {signal_label}</div><div style="margin-top:5px;color:#f0f7f2;font-size:20px;font-weight:700">{status_label}</div></td>
+        <td width="54" valign="top"><div style="width:42px;height:42px;background:#070b1c;text-align:center"><img src="cid:{BRAND_MARK_CID}" width="42" height="42" alt="AutoDev" style="display:block;width:42px;height:42px;border:0;object-fit:contain"></div></td>
+        <td valign="top"><div style="color:#29a7ff;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.16em">AutoDev · {signal_label}</div><div style="margin-top:5px;color:#f0f4ff;font-size:20px;font-weight:700">{status_label}</div></td>
         <td width="110" align="right" valign="top"><span style="display:inline-block;padding:6px 9px;border:1px solid {status_color};color:{status_color};font:700 10px Consolas,'Courier New',monospace">TFS #{detail['work_item_id']}</span></td>
       </tr></table>
     </td></tr>
@@ -531,7 +531,7 @@ class Mailer:
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">{artifacts}</table>
     </td></tr>
     <tr><td style="padding:12px 26px;background:#f3f7f4;border-top:1px solid #d9e5de;color:#70857a;font-size:10px;line-height:1.5">
-      此邮件由 <b style="color:#315847">AutoDev 全自助研发交付</b> 自动发送，研发与交付操作均保留审计记录。
+      此邮件由 <b style="color:#3b4f86">AutoDev · 自主研发交付</b> 自动发送，研发与交付操作均保留审计记录。
       <a href="{console_url}" style="margin-left:10px;color:#087a49;text-decoration:none;white-space:nowrap">打开研发控制台 →</a>
     </td></tr>
   </table>

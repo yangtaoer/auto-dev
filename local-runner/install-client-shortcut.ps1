@@ -14,7 +14,7 @@ else {
 }
 $Shell = New-Object -ComObject WScript.Shell
 $Desktop = $Shell.SpecialFolders.Item("Desktop")
-$ShortcutPath = Join-Path $Desktop "AutoDev Runner Console.lnk"
+$ShortcutPath = Join-Path $Desktop "AutoDev 执行器控制台.lnk"
 $Shortcut = $Shell.CreateShortcut($ShortcutPath)
 $Shortcut.TargetPath = $Pythonw
 $Shortcut.Arguments = "-m app.local_client"
@@ -28,5 +28,11 @@ $Shortcut.Save()
 $Verified = $Shell.CreateShortcut($ShortcutPath)
 if (-not $Verified.TargetPath) {
     throw "快捷方式创建后校验失败：$ShortcutPath"
+}
+foreach ($LegacyName in @("AutoDev Runner Console.lnk", "CodeShip 执行器控制台.lnk", "既济执行器控制台.lnk")) {
+    $LegacyShortcutPath = Join-Path $Desktop $LegacyName
+    if ((Test-Path -LiteralPath $LegacyShortcutPath) -and $LegacyShortcutPath -ne $ShortcutPath) {
+        Remove-Item -LiteralPath $LegacyShortcutPath -Force
+    }
 }
 Write-Host "已创建并校验桌面快捷方式：$ShortcutPath"

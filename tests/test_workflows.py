@@ -118,12 +118,12 @@ class WorkflowTests(unittest.TestCase):
         }
         mailer = Mailer()
         rendered = mailer.delivery_html(detail)
-        self.assertEqual(mailer.sender_address().display_name, "AutoDev 全自助研发交付")
+        self.assertEqual(mailer.sender_address().display_name, "AutoDev · 自主研发交付")
         self.assertEqual(
             mailer.delivery_subject(detail),
             "【AutoDev · 已交付】TFS #910014｜优化交付邮件",
         )
-        self.assertIn("AUTODEV · DELIVERY SIGNAL", rendered)
+        self.assertIn("AutoDev · DELIVERY SIGNAL", rendered)
         self.assertIn("2026-08-06 11:50:00（UTC+8）", rendered)
         self.assertIn("2026-08-06 11:56:45（UTC+8）", rendered)
         self.assertIn("5 分 24 秒", rendered)
@@ -140,7 +140,7 @@ class WorkflowTests(unittest.TestCase):
         inline_images = [part for part in message.walk() if part.get_content_type() == "image/png"]
         self.assertEqual(len(inline_images), 1)
         self.assertEqual(inline_images[0]["Content-ID"], "<autodev-brand-mark>")
-        self.assertEqual(inline_images[0].get_filename(), "autodev-mark.png")
+        self.assertEqual(inline_images[0].get_filename(), "autodev-email-mark.png")
 
         waiting = mailer.delivery_html({**detail, "completed_at": None, "pr_url": "https://tfs.test/pr/14"}, action_required=True)
         self.assertIn("需要项目经理协同处理", waiting)
@@ -154,7 +154,7 @@ class WorkflowTests(unittest.TestCase):
             mailer.delivery_subject(failed_detail, terminal_status="failed"),
             "【AutoDev · 执行失败】TFS #910014｜优化交付邮件",
         )
-        self.assertIn("AUTODEV · TERMINAL SIGNAL", failed)
+        self.assertIn("AutoDev · TERMINAL SIGNAL", failed)
         self.assertIn("研发执行失败", failed)
         self.assertIn("Filename too long", failed)
         self.assertIn("终止原因 / TERMINATION REASON", failed)
@@ -647,7 +647,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
 
         page = self.client.get("/")
-        self.assertIn("SYSTEM v0.4.5", page.text)
+        self.assertIn("SYSTEM v0.4.6", page.text)
+        self.assertIn("AutoDev", page.text)
+        self.assertIn("/static/brand/autodev-app-icon.png", page.text)
         self.assertIn("control-strip", page.text)
         script = self.client.get("/static/app.js").text
         self.assertIn("addOptimisticIntake", script)
@@ -931,6 +933,29 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(chengdu["reviewer_name"], "朱星舟")
         self.assertEqual(chengdu["base_branch"], "dev")
         self.assertEqual(len(chengdu["repository_paths"]), 9)
+
+    def test_local_project_preset_catalog_contains_nanchong_product_review(self) -> None:
+        projects = load_project_presets()
+        nanchong = next(item for item in projects if item["project_key"] == "nanchong-network-command")
+        self.assertEqual(nanchong["name"], "南充网络发令")
+        self.assertEqual(nanchong["tfs_area_path"], "XiNanArea-New\\四川省区团队")
+        self.assertEqual(nanchong["routing_title_keywords"], ["南充网络发令", "南充网络下令"])
+        self.assertEqual(nanchong["delivery_mode"], "product_manual_review")
+        self.assertEqual(nanchong["base_branch"], "dev")
+        self.assertEqual(len(nanchong["repository_paths"]), 7)
+        self.assertTrue(all(path.startswith("C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuannc\\") for path in nanchong["repository_paths"]))
+
+    @patch("app.project_catalog.TfsClient.get_work_item")
+    def test_local_catalog_routes_nanchong_network_command_by_title(self, get_work_item) -> None:
+        get_work_item.return_value = {
+            "id": 1643001,
+            "title": "【南充网络发令】自动化研发测试",
+            "area_path": "XiNanArea-New\\四川省区团队",
+        }
+        project, item = resolve_project_for_work_item(1643001)
+        self.assertEqual(project["project_key"], "nanchong-network-command")
+        self.assertEqual(project["delivery_mode"], "product_manual_review")
+        self.assertEqual(item["id"], 1643001)
 
     def test_multi_repository_merge_waits_for_all_prs_then_delivers(self) -> None:
         class Store:

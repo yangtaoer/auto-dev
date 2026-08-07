@@ -22,14 +22,14 @@ os.environ.setdefault(
 from .config import ROOT, settings
 
 
-INK = "#07100d"
-DEEP = "#0c1713"
-PANEL = "#11211a"
-PANEL_2 = "#152820"
-LINE = "#294338"
-PAPER = "#eef6f0"
-MUTED = "#8ca499"
-ACID = "#79f2ad"
+INK = "#070b1c"
+DEEP = "#0c1224"
+PANEL = "#111a30"
+PANEL_2 = "#17223c"
+LINE = "#293b61"
+PAPER = "#f2f5ff"
+MUTED = "#91a2c5"
+ACID = "#29a7ff"
 AMBER = "#ffc857"
 RED = "#ff746d"
 MONO = "Consolas"
@@ -54,7 +54,7 @@ STATUS = {
 class AutoDevConsole:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("AutoDev 执行器控制台")
+        self.root.title("AutoDev · 执行器控制台")
         self.root.geometry("1320x820")
         self.root.minsize(1180, 680)
         self.root.configure(bg=INK)
@@ -113,11 +113,25 @@ class AutoDevConsole:
         header.pack_propagate(False)
         brand = tk.Frame(header, bg=DEEP)
         brand.pack(side="left", padx=28, pady=18)
-        mark = tk.Label(brand, text="A/", bg=ACID, fg=INK, font=(MONO, 20, "bold"), width=3, height=1)
+        self.brand_image: tk.PhotoImage | None = None
+        try:
+            self.brand_image = tk.PhotoImage(file=str(ROOT / "app" / "static" / "brand" / "autodev-mark-64.png"))
+        except tk.TclError:
+            pass
+        mark = tk.Label(
+            brand,
+            image=self.brand_image,
+            text="CS" if self.brand_image is None else "",
+            bg=PAPER,
+            fg=INK,
+            font=("Microsoft YaHei UI", 20, "bold"),
+            width=58,
+            height=58,
+        )
         mark.pack(side="left", padx=(0, 13))
         copy = tk.Frame(brand, bg=DEEP)
         copy.pack(side="left")
-        tk.Label(copy, text="AUTODEV / LOCAL RUNNER", bg=DEEP, fg=ACID, font=(MONO, 9, "bold")).pack(anchor="w")
+        tk.Label(copy, text="AutoDev · LOCAL RUNNER", bg=DEEP, fg=ACID, font=(MONO, 9, "bold")).pack(anchor="w")
         tk.Label(copy, text="执行器控制台", bg=DEEP, fg=PAPER, font=("Microsoft YaHei UI", 19, "bold")).pack(anchor="w")
 
         self.quota_label = tk.Label(header, text="CODEX 额度读取中", bg=DEEP, fg=MUTED, font=(MONO, 10))

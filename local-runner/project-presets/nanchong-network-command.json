@@ -1,0 +1,56 @@
+{
+  "project_key": "nanchong-network-command",
+  "name": "南充网络发令",
+  "enabled": true,
+  "simulation_mode": false,
+  "delivery_mode": "product_manual_review",
+  "allow_requirement_override": false,
+  "tfs_collection_url": "http://dev.tellhowsoft.com/DefaultCollection",
+  "tfs_project": "XiNanArea-New",
+  "tfs_area_path": "XiNanArea-New\\四川省区团队",
+  "reviewer_name": "",
+  "routing_title_keywords": [
+    "南充网络发令",
+    "南充网络下令"
+  ],
+  "allowed_work_item_types": [
+    "用户情景"
+  ],
+  "allowed_states": [
+    "新建",
+    "已评审"
+  ],
+  "repository_path": "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuannc\\dcsd-certify-ui-sichuannc",
+  "repository_paths": [
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuannc\\dcsd-certify-ui-sichuannc",
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuannc\\dcsd-direct-ui-sichuannc",
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuannc\\dcsd-homepage-ui-sichuannc",
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuannc\\dcsd-notice-srv-sichuannc",
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuannc\\dcsd-notice-ui-sichuannc",
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuannc\\dcsd-permit-ui-sichuannc",
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuannc\\dcsd-springboot-starter"
+  ],
+  "base_branch": "dev",
+  "build_command": "pwsh.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\yangt\\Documents\\全自助需求研发交付\\local-runner\\project-scripts\\nanchong-network-command-review.ps1\"",
+  "package_patterns": [],
+  "sql_patterns": [
+    "**/*.sql"
+  ],
+  "config_patterns": [
+    "**/*.yml",
+    "**/*.yaml",
+    "**/*.properties",
+    "**/*.xml",
+    "**/config/*.js",
+    "deploy/*.conf",
+    "deploy/*.sh"
+  ],
+  "protected_patterns": [
+    "**/production/**",
+    "**/*prod*.yml",
+    "**/*prod*.yaml",
+    "**/*prod*.properties"
+  ],
+  "notification_cc": "",
+  "runner_id": "yangtao-pc"
+}

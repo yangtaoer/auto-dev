@@ -16,7 +16,7 @@ fi
 
 cat > /etc/systemd/system/autodev-github-update.service <<EOF
 [Unit]
-Description=AutoDev update from GitHub latest release
+Description=JiJi autonomous delivery update from GitHub latest release
 Wants=network-online.target
 After=network-online.target docker.service
 
@@ -30,7 +30,7 @@ EOF
 
 cat > /etc/systemd/system/autodev-github-update.timer <<'EOF'
 [Unit]
-Description=Check AutoDev GitHub release every five minutes
+Description=Check JiJi GitHub release every five minutes
 
 [Timer]
 OnBootSec=2min
