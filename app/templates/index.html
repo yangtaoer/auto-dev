@@ -8,10 +8,10 @@
   <link rel="icon" href="/static/brand/favicon.ico?v={{ app_version }}" sizes="any">
   <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
   <link rel="manifest" href="/static/brand/site.webmanifest">
-  <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/brand-ui.css">
+  <link rel="stylesheet" href="/static/styles.css?v={{ app_version }}-project-guide">
+  <link rel="stylesheet" href="/static/brand-ui.css?v={{ app_version }}-project-guide">
 </head>
-<body>
+<body class="project-guide-dashboard">
   <div class="app-shell">
     <aside class="sidebar">
       <div class="logo" aria-label="AutoDev"><img class="sidebar-brand-mark" src="/static/brand/autodev-sidebar-mark.png?v={{ app_version }}" alt="AutoDev 标志"><b class="sidebar-brand-name">AutoDev</b></div>
@@ -65,6 +65,23 @@
       {% endif %}
     </main>
   </div>
+
+  <aside class="project-guide is-open" id="project-guide" aria-label="当前支持的自动研发项目">
+    <button class="project-guide-trigger" id="project-guide-trigger" type="button" aria-expanded="true" aria-controls="project-guide-panel">
+      <span><i></i>支持项目</span><b id="project-guide-count">—</b><em>收起</em>
+    </button>
+    <section class="project-guide-panel" id="project-guide-panel">
+      <header>
+        <div><p class="eyebrow">项目雷达 / PROJECT RADAR</p><h2>当前支持的项目</h2></div>
+        <span>自动同步</span>
+      </header>
+      <div class="project-title-rule">
+        <i>【】</i>
+        <div><b>TFS 需求标题规则</b><p>标题需要以对应的 <strong>【项目简称】</strong> 开头，执行器才能准确识别研发项目。</p></div>
+      </div>
+      <div class="project-guide-list" id="project-guide-list"><div class="project-guide-loading">正在读取项目目录…</div></div>
+    </section>
+  </aside>
 
   <div class="modal-backdrop" id="request-modal" hidden>
     <section class="modal request-modal"><button class="modal-close" data-close>×</button><p class="eyebrow">新研发任务 / NEW DEVELOPMENT RUN</p><h2>发起自动研发</h2><p class="muted">输入 TFS 用户情景编号，执行器会自动识别项目和交付策略。</p><p class="queue-note"><i></i>最多同时运行 5 个任务，超出后自动排队，不影响继续提交。</p>
@@ -124,6 +141,6 @@
 
   <div class="toast" id="toast"></div>
   <script>window.__USER__ = {{ user | tojson }};</script>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v={{ app_version }}-project-guide"></script>
 </body>
 </html>

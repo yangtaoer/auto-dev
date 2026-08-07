@@ -1,5 +1,5 @@
 const USER = window.__USER__;
-const state = { projects: [], users: [], dashboard: {active:[],recent:[],counts:{},runners:[],stats:{},capacity:{limit:5,active:0,queued:0,available:5}}, filter:'all', selectedRequest:null, selectedTerminal:false, selectedIntake:null, routingGeneration:0, live:{requestId:null,watcherId:null,cursor:0,generation:0,timer:null,lastGroup:'',lastKind:'',lastBubble:null} };
+const state = { projects: [], projectGuideSignature:'', users: [], dashboard: {active:[],recent:[],counts:{},runners:[],stats:{},capacity:{limit:5,active:0,queued:0,available:5}}, filter:'all', selectedRequest:null, selectedTerminal:false, selectedIntake:null, routingGeneration:0, live:{requestId:null,watcherId:null,cursor:0,generation:0,timer:null,lastGroup:'',lastKind:'',lastBubble:null} };
 const MODE = {
   routing:['自动识别中','正在读取 TFS 需求并识别项目与交付策略。'],
   local_package:['本地打包交付','推送代码后在本机执行构建，交付安装包、SQL、配置和说明。'],
@@ -47,13 +47,14 @@ function switchView(name){
   document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.view===name));
   const titles={dashboard:['控制室 / CONTROL ROOM / 01','任务总览'],requests:['交付台账 / DELIVERY LEDGER / 02','交付记录'],projects:['支持项目 / SUPPORTED PROJECTS / 03','自助项目'],users:['账号管理 / ACCESS REGISTRY / 04','账号管理']};
   document.querySelector('#view-code').textContent=titles[name][0];document.querySelector('#view-title').textContent=titles[name][1];
+  document.body.classList.toggle('project-guide-dashboard',name==='dashboard');
 }
 
 async function refresh(){
   const userRequest=USER.role==='admin'?api('/api/users'):Promise.resolve({users:[]});
-  const projectRequest=USER.role==='admin'?api('/api/projects'):Promise.resolve({projects:[]});
+  const projectRequest=api('/api/projects');
   const [dashboard,projects,me,users]=await Promise.all([api('/api/dashboard'),projectRequest,api('/api/me'),userRequest]);
-  Object.assign(USER,me.user);state.dashboard=dashboard;state.projects=projects.projects;state.users=users.users||[];renderDashboard();renderProjects();renderUsers();renderRequestEmailOptions(false);
+  Object.assign(USER,me.user);state.dashboard=dashboard;state.projects=projects.projects;state.users=users.users||[];renderDashboard();renderProjects();renderProjectGuide();renderUsers();renderRequestEmailOptions(false);
   if(state.selectedRequest&&!state.selectedTerminal) refreshDetail(state.selectedRequest,true);
 }
 function renderDashboard(){
@@ -92,6 +93,22 @@ function bindRows(){document.querySelectorAll('.clickable-row').forEach(el=>el.o
 function renderProjects(){
   const el=document.querySelector('#project-grid');if(!el)return;
   el.innerHTML=state.projects.length?state.projects.map(p=>{const repositories=(p.repository_paths||[]).length||1;const reviewer=p.delivery_mode==='sichuan_auto_review'?(p.reviewer_name||'四川审核人员'):p.delivery_mode==='product_manual_review'?'产品审核人员':'无需审核';return `<article class="project-card"><div class="project-head"><div><span class="project-key">${escapeHtml(p.project_key)}</span><h3>${escapeHtml(p.name)}</h3></div><span class="mode-badge">${MODE[p.delivery_mode]?.[0]||p.delivery_mode}</span></div><div class="project-facts"><div class="fact"><span>TFS 项目</span><b>${escapeHtml(p.tfs_project)}</b></div><div class="fact"><span>仓库范围</span><b>${repositories} 个仓库</b></div><div class="fact"><span>基础分支</span><b>${escapeHtml(p.base_branch)}</b></div><div class="fact"><span>审核人员</span><b>${escapeHtml(reviewer)}</b></div></div><div class="project-origin"><i></i><span>策略由本机项目目录同步</span></div></article>`}).join(''):'<div class="empty-state catalog-empty"><b>项目目录正在等待本机同步</b><span>请确认本机执行器在线；项目预设同步后会自动出现在这里。</span></div>';
+}
+function renderProjectGuide(){
+  const guide=document.querySelector('#project-guide'),list=document.querySelector('#project-guide-list'),count=document.querySelector('#project-guide-count');
+  if(!guide||!list||!count)return;
+  const projects=state.projects||[];
+  count.textContent=String(projects.length).padStart(2,'0');
+  const signature=JSON.stringify(projects.map(p=>[p.project_key,p.name,p.routing_title_keywords]));
+  if(signature===state.projectGuideSignature)return;
+  state.projectGuideSignature=signature;
+  list.innerHTML=projects.length?projects.map((p,index)=>{
+    const aliases=(p.routing_title_keywords||[]).map(value=>String(value).trim()).filter(Boolean);
+    const shortName=aliases[0]||p.name;
+    const alternate=aliases.slice(1);
+    const hint=alternate.length?`其他可识别简称：${alternate.join('、')}`:`TFS 标题以【${shortName}】开头`;
+    return `<article class="project-guide-item" title="${escapeHtml(hint)}"><span>${String(index+1).padStart(2,'0')}</span><div><strong>${escapeHtml(p.name)}</strong><small>${escapeHtml(p.project_key)}</small></div><code>【${escapeHtml(shortName)}】</code></article>`;
+  }).join(''):'<div class="project-guide-empty">项目目录正在等待本机执行器同步</div>';
 }
 function renderUsers(){
   const el=document.querySelector('#users-table');if(!el)return;
@@ -174,6 +191,7 @@ document.querySelector('#logout').onclick=async()=>{await api('/api/auth/logout'
 document.querySelectorAll('.chip').forEach(btn=>btn.onclick=()=>{document.querySelectorAll('.chip').forEach(x=>x.classList.remove('active'));btn.classList.add('active');state.filter=btn.dataset.filter;renderAllTable()});
 document.querySelector('#new-user')?.addEventListener('click',()=>openUser());
 document.querySelector('#add-user-email')?.addEventListener('click',()=>addEmailRow());
+document.querySelector('#project-guide-trigger')?.addEventListener('click',event=>{const guide=document.querySelector('#project-guide'),open=guide.classList.toggle('is-open');event.currentTarget.setAttribute('aria-expanded',String(open))});
 
 document.querySelector('#request-form').addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget,error=document.querySelector('#request-error'),button=form.querySelector('button[type="submit"]');error.hidden=true;const data={work_item_id:Number(form.elements.work_item_id.value),notification_emails:[...form.querySelectorAll('[name="notification_emails"]:checked')].map(input=>input.value)};if(!data.notification_emails.length){error.textContent='请至少选择一个通知邮箱';error.hidden=false;return}button.disabled=true;try{const result=await api('/api/requests',{method:'POST',body:JSON.stringify(data)});closeModals();form.reset();if(result.routing){addOptimisticIntake(result.id,data.work_item_id);toast('提交成功，任务已进入运行看板');openRoutingDetail(result.id,data.work_item_id)}else{toast('研发任务已进入队列');await refresh();await openDetail(result.id)}}catch(err){form.elements.work_item_id.value=data.work_item_id;document.querySelector('#request-modal').hidden=false;error.textContent=err.message;error.hidden=false}finally{button.disabled=false}});
 document.querySelector('#user-form')?.addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget,error=document.querySelector('#user-error');error.hidden=true;const id=Number(form.elements.id.value)||null;const emails=[...form.querySelectorAll('.user-email-input')].map(input=>input.value.trim()).filter(Boolean);const data={username:form.elements.username.value.trim(),display_name:form.elements.display_name.value.trim(),emails,password:form.elements.password.value,role:form.elements.role.value,active:form.elements.active.checked};if(!data.password)delete data.password;try{const result=await api(id?`/api/users/${id}`:'/api/users',{method:id?'PUT':'POST',body:JSON.stringify(data)});if(result.user.id===USER.id)Object.assign(USER,result.user);closeModals();form.reset();toast(id?'账号已更新':'账号已创建');await refresh()}catch(err){error.textContent=err.message;error.hidden=false}});

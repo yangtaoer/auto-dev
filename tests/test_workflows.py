@@ -764,6 +764,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("DELIVERY LOOP", page.text)
         self.assertNotIn("系统版本 / VERSION", page.text)
         self.assertIn("control-strip", page.text)
+        self.assertIn('id="project-guide"', page.text)
+        self.assertIn("当前支持的项目", page.text)
+        self.assertIn("【项目简称】", page.text)
+        self.assertIn("project-guide", page.text)
         script = self.client.get("/static/app.js").text
         self.assertIn("addOptimisticIntake", script)
         self.assertIn("renderActiveRuns", script)
@@ -775,6 +779,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("recent.slice(0,5)", script)
         self.assertNotIn("recent.slice(0,8)", script)
         self.assertNotIn("activeEl.innerHTML=state.dashboard.active", script)
+        self.assertIn("const projectRequest=api('/api/projects')", script)
+        self.assertIn("renderProjectGuide", script)
+        self.assertIn("project-guide-trigger", script)
 
         login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
         self.assertIn("login-logo-lockup", login_template)
@@ -783,6 +790,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("brand-float", Path("app/static/brand-ui.css").read_text(encoding="utf-8"))
         self.assertNotIn("login-logo-plate", login_template)
         self.assertNotIn("CONTINUOUS CODE DELIVERY", login_template)
+        brand_styles = Path("app/static/brand-ui.css").read_text(encoding="utf-8")
+        self.assertIn("width: 255px", brand_styles)
+        self.assertIn(".project-guide-panel", brand_styles)
 
         headers = {"Authorization": "Bearer test-runner-token"}
         claimed = self.client.post(
@@ -867,12 +877,17 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("自助项目", pm_page.text)
+        self.assertIn('id="project-guide"', pm_page.text)
+        self.assertIn("TFS 需求标题规则", pm_page.text)
         self.assertEqual(pm_page.text.count("SYSTEM v0.4.11"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
         self.assertEqual(pm_dashboard.status_code, 200, pm_dashboard.text)
         self.assertIn("stats", pm_dashboard.json())
+        pm_projects = self.client.get("/api/projects")
+        self.assertEqual(pm_projects.status_code, 200, pm_projects.text)
+        self.assertIn("projects", pm_projects.json())
         self.client.post("/api/auth/logout")
         restored = self.client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
         self.assertEqual(restored.status_code, 200, restored.text)

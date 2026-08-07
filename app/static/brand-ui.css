@@ -251,14 +251,14 @@
 }
 
 .login-shell {
-  width: min(1080px, 96vw);
-  min-height: 620px;
-  grid-template-columns: 1.16fr .84fr;
+  width: min(1180px, 96vw);
+  min-height: 660px;
+  grid-template-columns: 1.28fr .72fr;
   background: #0d1c16;
 }
 
 .login-brand {
-  padding: 54px 64px 58px;
+  padding: 52px 70px 58px;
   display: flex;
   flex-direction: column;
 }
@@ -283,17 +283,28 @@
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: 18px;
-  width: max-content;
+  gap: 30px;
+  width: 100%;
+  padding-bottom: 36px;
+}
+
+.login-logo-lockup::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(105, 180, 230, .72), rgba(145, 103, 222, .34), transparent 88%);
 }
 
 .login-logo-symbol {
   display: block;
-  width: 166px;
-  height: 72px;
+  width: 255px;
+  height: 112px;
   overflow: hidden;
   flex: 0 0 auto;
-  filter: drop-shadow(0 10px 20px rgba(42, 130, 220, .2)) drop-shadow(0 0 14px rgba(145, 92, 224, .14));
+  filter: drop-shadow(0 16px 26px rgba(42, 130, 220, .22)) drop-shadow(0 0 20px rgba(145, 92, 224, .18));
 }
 
 .login-logo-symbol img {
@@ -306,7 +317,7 @@
 
 .login-logo-lockup strong {
   color: var(--paper);
-  font: 800 43px/.9 Bahnschrift, "Arial Narrow", sans-serif;
+  font: 800 68px/.86 Bahnschrift, "Arial Narrow", sans-serif;
   letter-spacing: -.045em;
 }
 
@@ -321,14 +332,14 @@
 }
 
 .login-brand .login-copy h1 {
-  font-size: 62px;
+  font-size: 70px;
   line-height: 1.04;
   letter-spacing: -.055em;
   margin: 13px 0 0;
 }
 
 .delivery-loop {
-  margin-top: 60px;
+  margin-top: 52px;
   position: relative;
   z-index: 3;
 }
@@ -411,7 +422,7 @@
 }
 
 .login-panel {
-  padding: 66px 54px;
+  padding: 72px 56px;
   background: linear-gradient(180deg, #10221b, #0d1c16);
   position: relative;
   overflow: hidden;
@@ -529,9 +540,10 @@
   100% { box-shadow: none; }
 }
 
-@media (max-width: 1380px) {
+@media (max-width: 1600px) {
   .control-strip { grid-template-columns: 1fr; }
   .control-strip .metrics.admin-metrics { grid-template-columns: repeat(6, 1fr); }
+  .main-stage { min-width: 0; }
 }
 
 @media (max-width: 1000px) {
@@ -761,6 +773,131 @@ textarea:focus { border-color: #8274c8; box-shadow: 0 0 0 2px rgba(139, 105, 213
 .login-panel { background: linear-gradient(180deg, #172a42, #111b31); }
 .loop-rail b { background: linear-gradient(135deg, var(--acid), var(--violet)); box-shadow: 0 0 16px rgba(135, 102, 213, .64); }
 
+/* Dashboard project radar: a live, read-only view of the runner-owned catalog. */
+.project-guide {
+  position: fixed;
+  z-index: 12;
+  bottom: 26px;
+  right: 26px;
+  width: min(430px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: flex-end;
+  filter: drop-shadow(0 24px 48px rgba(3, 9, 24, .42));
+  transition: opacity .2s ease, transform .24s ease;
+}
+
+body:not(.project-guide-dashboard) .project-guide { opacity: 0; visibility: hidden; pointer-events: none; transform: translateX(18px); }
+
+.project-guide-trigger {
+  position: relative;
+  z-index: 2;
+  min-width: 190px;
+  height: 48px;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #4d6592;
+  background: linear-gradient(110deg, rgba(22, 45, 74, .98), rgba(38, 31, 76, .98));
+  color: #dce9f9;
+  padding: 0 15px;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .035);
+  cursor: pointer;
+}
+
+.project-guide-trigger:hover { border-color: #8a79ce; }
+.project-guide-trigger span { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; }
+.project-guide-trigger span i { width: 7px; height: 7px; border-radius: 50%; background: #70b7e4; box-shadow: 0 0 12px rgba(112, 183, 228, .72); }
+.project-guide-trigger b { min-width: 28px; color: #b49aef; font: 700 16px/1 Consolas, monospace; }
+.project-guide-trigger em { color: #7891ae; font: normal 10px/1 "Microsoft YaHei", sans-serif; }
+.project-guide:not(.is-open) .project-guide-trigger em::before { content: "展开"; }
+.project-guide:not(.is-open) .project-guide-trigger em { font-size: 0; }
+.project-guide:not(.is-open) .project-guide-trigger em::before { font-size: 10px; }
+
+.project-guide-panel {
+  width: 100%;
+  max-height: min(585px, calc(100vh - 170px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #405a82;
+  border-bottom: 0;
+  background:
+    linear-gradient(135deg, rgba(22, 42, 68, .98), rgba(17, 23, 48, .985)),
+    #111a2e;
+  backdrop-filter: blur(18px);
+  transform-origin: bottom right;
+  transition: opacity .2s ease, transform .24s ease, max-height .24s ease;
+}
+
+.project-guide:not(.is-open) .project-guide-panel {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(8px) scale(.98);
+  pointer-events: none;
+  border-color: transparent;
+}
+
+.project-guide-panel > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 22px 22px 16px;
+  border-bottom: 1px solid rgba(91, 117, 157, .35);
+}
+
+.project-guide-panel > header .eyebrow { margin: 0 0 7px; color: #76bce8; }
+.project-guide-panel > header h2 { margin: 0; color: #f1f5fb; font-size: 22px; letter-spacing: -.03em; }
+.project-guide-panel > header > span { flex: 0 0 auto; border: 1px solid #5c4e91; color: #ad94e7; padding: 5px 8px; font: 9px/1 Consolas, monospace; }
+
+.project-title-rule {
+  display: grid;
+  grid-template-columns: 46px 1fr;
+  gap: 13px;
+  align-items: center;
+  margin: 16px 18px 12px;
+  padding: 13px 14px;
+  border: 1px solid rgba(131, 104, 198, .48);
+  background: linear-gradient(110deg, rgba(48, 41, 91, .42), rgba(19, 42, 66, .55));
+}
+
+.project-title-rule > i { display: grid; place-items: center; width: 46px; height: 42px; color: #b49aec; background: rgba(110, 82, 178, .14); font: normal 700 17px/1 Consolas, monospace; }
+.project-title-rule b { display: block; color: #e7edf8; font-size: 12px; }
+.project-title-rule p { margin: 5px 0 0; color: #94a9c2; font-size: 11px; line-height: 1.6; }
+.project-title-rule strong { color: #79bee9; }
+
+.project-guide-list {
+  overflow: auto;
+  padding: 0 18px 18px;
+  scrollbar-width: thin;
+  scrollbar-color: #6d61a3 #111c31;
+}
+
+.project-guide-list::-webkit-scrollbar { width: 7px; }
+.project-guide-list::-webkit-scrollbar-track { background: #111c31; }
+.project-guide-list::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #5b90bb, #6d58a5); border: 2px solid #111c31; }
+
+.project-guide-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  min-height: 58px;
+  border-top: 1px solid rgba(80, 105, 143, .3);
+}
+
+.project-guide-item:first-child { border-top: 0; }
+.project-guide-item > span { color: #607b9e; font: 10px/1 Consolas, monospace; }
+.project-guide-item div { min-width: 0; }
+.project-guide-item strong { display: block; overflow: hidden; color: #dce7f5; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.project-guide-item small { display: block; margin-top: 4px; overflow: hidden; color: #6f88a7; font: 9px/1.2 Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.project-guide-item code { max-width: 178px; overflow: hidden; border: 1px solid rgba(101, 144, 184, .42); background: rgba(15, 31, 53, .86); color: #8ec9eb; padding: 6px 8px; font: 10px/1.1 "Microsoft YaHei", sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.project-guide-empty,
+.project-guide-loading { padding: 26px 8px 12px; color: #8298b4; font-size: 11px; text-align: center; }
+
 @keyframes sidebar-brand-breathe {
   50% { transform: translateY(-2px) scale(1.015); filter: drop-shadow(0 10px 23px rgba(44, 135, 218, .27)) drop-shadow(0 0 17px rgba(143, 92, 226, .2)); }
 }
@@ -770,9 +907,15 @@ textarea:focus { border-color: #8274c8; box-shadow: 0 0 0 2px rgba(139, 105, 213
   .logo::after { display: none; }
   .sidebar-brand-mark { width: 72px; height: 34px; }
   .logo .sidebar-brand-name { font-size: 17px; }
+  .project-guide { right: 14px; bottom: 14px; }
+  .project-guide-panel { max-height: min(66vh, 590px); }
 }
 
 @media (max-width: 650px) {
   .sidebar-brand-mark { width: 58px; }
   .logo .sidebar-brand-name { display: none; }
+  .project-guide { right: 10px; width: calc(100vw - 20px); }
+  .project-guide-trigger { min-width: 170px; height: 44px; }
+  .project-guide-item { grid-template-columns: 28px minmax(0, 1fr); padding: 10px 0; }
+  .project-guide-item code { grid-column: 2; justify-self: start; max-width: 100%; }
 }
