@@ -9,6 +9,7 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import PropertyMock, patch
 
 import httpx
@@ -27,7 +28,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
 from app.db import update_request, update_step  # noqa: E402
 from app.orchestrator import Worker, worker  # noqa: E402
-from app.project_catalog import load_project_presets, resolve_project_for_work_item  # noqa: E402
+from app.project_catalog import (  # noqa: E402
+    load_project_presets,
+    resolve_project_for_work_item,
+    update_project_routing_aliases,
+)
 from app.services.codex_runner import CodexRunner  # noqa: E402
 from app.services.delivery import (  # noqa: E402
     ArtifactService,
@@ -727,7 +732,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM v0.4.8"), 1)
+        self.assertEqual(page.text.count("SYSTEM v0.4.9"), 1)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
@@ -826,7 +831,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("自助项目", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM v0.4.8"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM v0.4.9"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
@@ -1059,6 +1064,43 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(nanchong["base_branch"], "dev")
         self.assertEqual(len(nanchong["repository_paths"]), 7)
         self.assertTrue(all(path.startswith("C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuannc\\") for path in nanchong["repository_paths"]))
+
+    def test_local_controller_can_update_project_aliases_for_title_routing(self) -> None:
+        with tempfile.TemporaryDirectory() as preset_dir:
+            path = Path(preset_dir) / "alias-project.json"
+            original = {
+                "project_key": "alias-project",
+                "name": "别名路由项目",
+                "enabled": True,
+                "simulation_mode": False,
+                "tfs_collection_url": "http://tfs.example.test/DefaultCollection",
+                "tfs_area_path": "Area\\Team",
+                "repository_path": "C:\\work\\alias-project",
+                "routing_title_keywords": ["旧别名"],
+            }
+            path.write_text(json.dumps(original, ensure_ascii=False), encoding="utf-8")
+            local_settings = SimpleNamespace(project_preset_dir=Path(preset_dir), runner_id="alias-runner")
+            with patch("app.project_catalog.settings", local_settings):
+                updated = update_project_routing_aliases(
+                    "alias-project",
+                    ["网络发令", " 网络下令 ", "网络发令"],
+                )
+                projects = load_project_presets()
+
+            self.assertEqual(updated["routing_title_keywords"], ["网络发令", "网络下令"])
+            self.assertEqual(projects[0]["routing_title_keywords"], ["网络发令", "网络下令"])
+            self.assertEqual(projects[0]["runner_id"], "alias-runner")
+            persisted = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["repository_path"], original["repository_path"])
+            self.assertNotIn("runner_id", persisted)
+
+            with patch.object(
+                TfsClient,
+                "get_work_item",
+                return_value={"title": "【测试】网络下令功能调整", "area_path": "Area\\Team"},
+            ):
+                matched, _ = resolve_project_for_work_item(910022, projects)
+            self.assertEqual(matched["project_key"], "alias-project")
 
     @patch("app.project_catalog.TfsClient.get_work_item")
     def test_local_catalog_routes_nanchong_network_command_by_title(self, get_work_item) -> None:

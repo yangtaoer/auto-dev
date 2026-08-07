@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from .config import settings
@@ -21,6 +22,47 @@ def load_project_presets() -> list[dict[str, Any]]:
         project["runner_id"] = settings.runner_id
         projects.append(project)
     return projects
+
+
+def update_project_routing_aliases(project_key: str, aliases: list[str]) -> dict[str, Any]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in aliases:
+        alias = str(value).strip()
+        folded = alias.casefold()
+        if alias and folded not in seen:
+            normalized.append(alias)
+            seen.add(folded)
+    if not normalized:
+        raise ValueError("项目别名不能为空，请至少填写一个用于识别需求标题的关键词")
+
+    preset_dir = settings.project_preset_dir
+    preset_dir.mkdir(parents=True, exist_ok=True)
+    target_path: Path | None = None
+    target_project: dict[str, Any] | None = None
+    for path in sorted(preset_dir.glob("*.json")):
+        try:
+            project = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"项目预设无法读取：{path.name}：{exc}") from exc
+        if isinstance(project, dict) and str(project.get("project_key", "")) == project_key:
+            target_path, target_project = path, project
+            break
+    if target_path is None or target_project is None:
+        raise KeyError(f"未找到本机项目预设：{project_key}")
+
+    target_project["routing_title_keywords"] = normalized
+    temporary_path = target_path.with_suffix(f"{target_path.suffix}.tmp")
+    try:
+        temporary_path.write_text(
+            json.dumps(target_project, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary_path.replace(target_path)
+    except OSError as exc:
+        temporary_path.unlink(missing_ok=True)
+        raise RuntimeError(f"项目别名保存失败：{target_path.name}：{exc}") from exc
+    return {**target_project, "runner_id": settings.runner_id}
 
 
 def resolve_project_for_work_item(

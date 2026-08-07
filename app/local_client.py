@@ -20,6 +20,7 @@ os.environ.setdefault(
 )
 
 from .config import ROOT, settings
+from .project_catalog import load_project_presets, update_project_routing_aliases
 
 
 INK = "#070b1c"
@@ -30,6 +31,7 @@ LINE = "#293b61"
 PAPER = "#f2f5ff"
 MUTED = "#91a2c5"
 ACID = "#29a7ff"
+VIOLET = "#9b7fe3"
 AMBER = "#ffc857"
 RED = "#ff746d"
 MONO = "Consolas"
@@ -69,6 +71,8 @@ class AutoDevConsole:
         self.last_live_kind = ""
         self.current_tab = "session"
         self.closing = False
+        self.alias_window: tk.Toplevel | None = None
+        self.alias_projects: list[dict[str, Any]] = []
 
         self._configure_styles()
         self._build_ui()
@@ -118,17 +122,19 @@ class AutoDevConsole:
             self.brand_image = tk.PhotoImage(file=str(ROOT / "app" / "static" / "brand" / "autodev-mark-64.png"))
         except tk.TclError:
             pass
-        mark = tk.Label(
+        self.brand_mark = tk.Label(
             brand,
             image=self.brand_image,
             text="CS" if self.brand_image is None else "",
-            bg=PAPER,
-            fg=INK,
+            bg=DEEP,
+            fg=ACID,
             font=("Microsoft YaHei UI", 20, "bold"),
             width=58,
             height=58,
+            borderwidth=0,
+            highlightthickness=0,
         )
-        mark.pack(side="left", padx=(0, 13))
+        self.brand_mark.pack(side="left", padx=(0, 13))
         copy = tk.Frame(brand, bg=DEEP)
         copy.pack(side="left")
         tk.Label(copy, text="AutoDev · LOCAL RUNNER", bg=DEEP, fg=ACID, font=(MONO, 9, "bold")).pack(anchor="w")
@@ -156,8 +162,140 @@ class AutoDevConsole:
         self._control_button(controls, "启动执行器", "start.ps1", ACID).pack(side="left", padx=5, pady=12)
         self._control_button(controls, "停止执行器", "stop.ps1", RED).pack(side="left", padx=5, pady=12)
         self._control_button(controls, "重启执行器", "restart.ps1", AMBER).pack(side="left", padx=5, pady=12)
+        tk.Button(
+            controls, text="项目别名", command=self._open_project_aliases,
+            bg=PANEL_2, fg=VIOLET, activebackground="#27234b", activeforeground=PAPER,
+            relief="flat", padx=14, pady=7,
+        ).pack(side="left", padx=(18, 5), pady=12)
         self.footer = tk.Label(controls, text="本机接口 127.0.0.1:28766 · 详细会话不落盘", bg=DEEP, fg=MUTED, font=(MONO, 9))
         self.footer.pack(side="right", padx=25)
+
+    def _open_project_aliases(self) -> None:
+        if self.alias_window and self.alias_window.winfo_exists():
+            self.alias_window.lift()
+            self.alias_window.focus_force()
+            return
+        try:
+            self.alias_projects = load_project_presets()
+        except RuntimeError as exc:
+            messagebox.showerror("项目配置读取失败", str(exc), parent=self.root)
+            return
+        if not self.alias_projects:
+            messagebox.showinfo("暂无项目", "本机尚未配置可维护的自动研发项目。", parent=self.root)
+            return
+
+        window = tk.Toplevel(self.root)
+        self.alias_window = window
+        window.title("AutoDev · 项目别名")
+        window.geometry("820x590")
+        window.minsize(720, 520)
+        window.configure(bg=INK)
+        window.transient(self.root)
+        window.protocol("WM_DELETE_WINDOW", self._close_project_aliases)
+
+        header = tk.Frame(window, bg=DEEP, height=92, highlightbackground=LINE, highlightthickness=1)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        tk.Label(header, text="PROJECT ROUTING / 项目路由", bg=DEEP, fg=VIOLET, font=(MONO, 9, "bold")).pack(
+            anchor="w", padx=26, pady=(18, 3)
+        )
+        tk.Label(header, text="项目别名", bg=DEEP, fg=PAPER, font=("Microsoft YaHei UI", 20, "bold")).pack(
+            anchor="w", padx=26
+        )
+
+        body = tk.Frame(window, bg=INK)
+        body.pack(fill="both", expand=True, padx=22, pady=22)
+        project_panel = tk.Frame(body, bg=PANEL, width=270, highlightbackground=LINE, highlightthickness=1)
+        project_panel.pack(side="left", fill="y")
+        project_panel.pack_propagate(False)
+        tk.Label(project_panel, text="自动研发项目", bg=PANEL, fg=MUTED, font=(MONO, 9, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 10)
+        )
+        self.alias_project_list = tk.Listbox(
+            project_panel, bg=PANEL, fg=PAPER, selectbackground="#28244b", selectforeground=PAPER,
+            relief="flat", borderwidth=0, highlightthickness=0, exportselection=False,
+            font=("Microsoft YaHei UI", 11),
+        )
+        self.alias_project_list.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        for project in self.alias_projects:
+            self.alias_project_list.insert("end", project.get("name") or project.get("project_key") or "未命名项目")
+        self.alias_project_list.bind("<<ListboxSelect>>", self._select_alias_project)
+
+        editor_panel = tk.Frame(body, bg=PANEL, highlightbackground=LINE, highlightthickness=1)
+        editor_panel.pack(side="left", fill="both", expand=True, padx=(14, 0))
+        self.alias_project_name = tk.Label(
+            editor_panel, text="", bg=PANEL, fg=PAPER, anchor="w", font=("Microsoft YaHei UI", 17, "bold")
+        )
+        self.alias_project_name.pack(fill="x", padx=20, pady=(18, 3))
+        self.alias_project_key = tk.Label(editor_panel, text="", bg=PANEL, fg=MUTED, anchor="w", font=(MONO, 9))
+        self.alias_project_key.pack(fill="x", padx=20)
+        tk.Label(
+            editor_panel, text="项目别名 / 需求标题识别关键词", bg=PANEL, fg=ACID,
+            font=("Microsoft YaHei UI", 10, "bold"), anchor="w",
+        ).pack(fill="x", padx=20, pady=(22, 7))
+        self.alias_editor = tk.Text(
+            editor_panel, bg=INK, fg=PAPER, insertbackground=ACID, relief="flat", wrap="word",
+            height=11, padx=14, pady=12, font=("Microsoft YaHei UI", 11),
+            highlightbackground=LINE, highlightcolor=VIOLET, highlightthickness=1,
+        )
+        self.alias_editor.pack(fill="both", expand=True, padx=20)
+        tk.Label(
+            editor_panel,
+            text="每行一个别名。TFS 需求标题包含任意别名时，即识别为该项目；保存后约 20 秒自动同步。",
+            bg=PANEL, fg=MUTED, justify="left", wraplength=450, anchor="w", font=("Microsoft YaHei UI", 9),
+        ).pack(fill="x", padx=20, pady=(9, 14))
+        actions = tk.Frame(editor_panel, bg=PANEL)
+        actions.pack(fill="x", padx=20, pady=(0, 18))
+        tk.Button(
+            actions, text="保存项目别名", command=self._save_project_aliases,
+            bg=ACID, fg=INK, activebackground="#78bfff", activeforeground=INK,
+            relief="flat", padx=18, pady=9, font=("Microsoft YaHei UI", 10, "bold"),
+        ).pack(side="left")
+        tk.Button(
+            actions, text="关闭", command=self._close_project_aliases,
+            bg=PANEL_2, fg=MUTED, activebackground="#272f48", activeforeground=PAPER,
+            relief="flat", padx=18, pady=9,
+        ).pack(side="right")
+
+        self.alias_project_list.selection_set(0)
+        self._select_alias_project()
+
+    def _select_alias_project(self, _event: object = None) -> None:
+        selection = self.alias_project_list.curselection()
+        if not selection:
+            return
+        project = self.alias_projects[selection[0]]
+        self.alias_project_name.configure(text=project.get("name") or "未命名项目")
+        self.alias_project_key.configure(text=f"PROJECT KEY / {project.get('project_key') or '—'}")
+        self.alias_editor.delete("1.0", "end")
+        self.alias_editor.insert("1.0", "\n".join(project.get("routing_title_keywords") or []))
+
+    def _save_project_aliases(self) -> None:
+        selection = self.alias_project_list.curselection()
+        if not selection:
+            return
+        raw = self.alias_editor.get("1.0", "end").strip()
+        aliases = [value.strip() for value in raw.replace("，", "\n").replace(",", "\n").splitlines() if value.strip()]
+        project = self.alias_projects[selection[0]]
+        try:
+            updated = update_project_routing_aliases(str(project.get("project_key") or ""), aliases)
+        except (KeyError, RuntimeError, ValueError) as exc:
+            messagebox.showerror("保存失败", str(exc), parent=self.alias_window)
+            return
+        self.alias_projects[selection[0]] = updated
+        self.alias_editor.delete("1.0", "end")
+        self.alias_editor.insert("1.0", "\n".join(updated.get("routing_title_keywords") or []))
+        self.footer.configure(text=f"{updated.get('name')} 项目别名已保存 · 将自动同步")
+        messagebox.showinfo(
+            "保存成功",
+            f"已保存 {len(updated.get('routing_title_keywords') or [])} 个项目别名。\n本机识别立即生效，并将在下一次心跳同步云端。",
+            parent=self.alias_window,
+        )
+
+    def _close_project_aliases(self) -> None:
+        if self.alias_window and self.alias_window.winfo_exists():
+            self.alias_window.destroy()
+        self.alias_window = None
 
     def _build_task_list(self, parent: tk.Frame) -> None:
         top = tk.Frame(parent, bg=PANEL)
