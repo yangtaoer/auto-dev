@@ -119,6 +119,10 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
     repository_states TEXT NOT NULL DEFAULT '[]',
     codex_thread_id TEXT,
     result_summary TEXT NOT NULL DEFAULT '',
+    supplement_requests TEXT NOT NULL DEFAULT '[]',
+    supplement_answers TEXT NOT NULL DEFAULT '[]',
+    supplement_requested_at TEXT,
+    supplemented_at TEXT,
     error_message TEXT NOT NULL DEFAULT '',
     policy_snapshot TEXT NOT NULL DEFAULT '{}',
     started_at TEXT,
@@ -256,6 +260,20 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN notification_emails TEXT NOT NULL DEFAULT '[]'")
     if "repository_states" not in request_columns:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN repository_states TEXT NOT NULL DEFAULT '[]'")
+    if "supplement_requests" not in request_columns:
+        conn.execute("ALTER TABLE delivery_requests ADD COLUMN supplement_requests TEXT NOT NULL DEFAULT '[]'")
+    if "supplement_answers" not in request_columns:
+        conn.execute("ALTER TABLE delivery_requests ADD COLUMN supplement_answers TEXT NOT NULL DEFAULT '[]'")
+    if "supplement_requested_at" not in request_columns:
+        conn.execute("ALTER TABLE delivery_requests ADD COLUMN supplement_requested_at TEXT")
+    if "supplemented_at" not in request_columns:
+        conn.execute("ALTER TABLE delivery_requests ADD COLUMN supplemented_at TEXT")
+    for code, name in PIPELINE_STEPS:
+        conn.execute(
+            """INSERT OR IGNORE INTO delivery_steps(request_id,step_code,name,status)
+               SELECT id,?,?, 'pending' FROM delivery_requests""",
+            (code, name),
+        )
     for user in conn.execute("SELECT id,email,created_at FROM users").fetchall():
         if not conn.execute("SELECT 1 FROM user_emails WHERE user_id=? LIMIT 1", (user["id"],)).fetchone():
             conn.execute(
@@ -496,8 +514,9 @@ def add_event(request_id: str, event_type: str, message: str, *, level: str = "i
 def update_request(request_id: str, **fields: Any) -> None:
     if not fields:
         return
-    if "repository_states" in fields and not isinstance(fields["repository_states"], str):
-        fields["repository_states"] = json.dumps(fields["repository_states"], ensure_ascii=False)
+    for json_field in ("repository_states", "supplement_requests", "supplement_answers"):
+        if json_field in fields and not isinstance(fields[json_field], str):
+            fields[json_field] = json.dumps(fields[json_field], ensure_ascii=False)
     fields["updated_at"] = utc_now()
     assignments = ",".join(f"{key}=?" for key in fields)
     with transaction() as conn:
@@ -510,9 +529,11 @@ def update_step(request_id: str, step_code: str, status: str, message: str = "")
         if status == "running":
             conn.execute(
                 """UPDATE delivery_steps
-                   SET status=?, message=?, started_at=COALESCE(started_at, ?)
+                   SET status=?, message=?,
+                       started_at=CASE WHEN status IN ('completed','failed','skipped') THEN ? ELSE COALESCE(started_at, ?) END,
+                       finished_at=NULL
                    WHERE request_id=? AND step_code=?""",
-                (status, message, now, request_id, step_code),
+                (status, message, now, now, request_id, step_code),
             )
         elif status in {"completed", "failed", "skipped"}:
             conn.execute(
@@ -576,7 +597,9 @@ def request_detail(request_id: str) -> dict[str, Any] | None:
     )
     if not request:
         return None
-    request["steps"] = rows("SELECT * FROM delivery_steps WHERE request_id=? ORDER BY id", (request_id,))
+    step_order = {code: index for index, (code, _) in enumerate(PIPELINE_STEPS)}
+    request["steps"] = rows("SELECT * FROM delivery_steps WHERE request_id=?", (request_id,))
+    request["steps"].sort(key=lambda item: step_order.get(item["step_code"], len(step_order)))
     current_time = datetime.now(UTC)
     for step in request["steps"]:
         step["duration_seconds"] = _step_duration_seconds(step, current_time)
@@ -591,5 +614,7 @@ def request_detail(request_id: str) -> dict[str, Any] | None:
     )
     request["policy_snapshot"] = json_value(request["policy_snapshot"], {})
     request["repository_states"] = json_value(request.get("repository_states"), [])
+    request["supplement_requests"] = json_value(request.get("supplement_requests"), [])
+    request["supplement_answers"] = json_value(request.get("supplement_answers"), [])
     request["notification_emails"] = json_value(request.get("notification_emails"), [request["requester_email"]])
     return request

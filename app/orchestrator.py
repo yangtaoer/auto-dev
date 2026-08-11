@@ -176,6 +176,17 @@ class Worker:
             repository_states: list[dict] = []
             if project.get("simulation_mode"):
                 worktree, base_commit, branch = None, "demo-base-commit", f"feature/{work_item['id']}-demo"
+            elif detail.get("supplement_answers") and self._resumable_worktrees(detail):
+                repository_states = detail["repository_states"]
+                workspace_paths = [Path(state["worktree_path"]) for state in repository_states]
+                worktree = workspace_paths[0] if len(workspace_paths) == 1 else workspace_paths[0].parent
+                base_commit = repository_states[0]["base_commit"]
+                branch = detail.get("branch_name") or repository_states[0]["branch"]
+                self.store.add_event(
+                    request_id,
+                    "workspace.resumed",
+                    f"复用待补充任务的 {len(repository_states)} 个隔离仓库继续研发",
+                )
             else:
                 worktree, repository_states, branch = self._prepare_worktrees(request_id, work_item, project)
                 base_commit = repository_states[0]["base_commit"]
@@ -208,6 +219,9 @@ class Worker:
                         project=project,
                         on_event=lambda event_type, message: self.store.add_event(request_id, event_type, message),
                         on_live_event=live_publisher.emit,
+                        resume_thread_id=detail.get("codex_thread_id") if detail.get("supplement_answers") else None,
+                        supplement_requests=detail.get("supplement_requests") or [],
+                        supplement_answers=detail.get("supplement_answers") or [],
                     )
                 finally:
                     live_publisher.close()
@@ -234,9 +248,47 @@ class Worker:
                     self.store.update_step(request_id, "develop", "failed", "需要管理员确认共享/受保护代码影响")
                     self.store.add_event(request_id, "policy.protected_change", "检测到受保护路径变更，任务已暂停", level="warning", metadata={"paths": blocked})
                     return
-                if not paths:
-                    raise RuntimeError("DevCore 执行完成，但没有产生代码变更")
             summary = result.get("summary", "")
+            supplement_requests = self._normalize_supplement_requests(result.get("supplement_requests"))
+            if result.get("decision") == "needs_input" or supplement_requests:
+                if not supplement_requests:
+                    supplement_requests = [{
+                        "id": "missing-critical-information",
+                        "question": "请补充 DevCore 结论中指出的关键业务信息。",
+                        "reason": summary or "当前缺少继续可靠研发所必需的信息。",
+                        "suggested_answer": "请给出明确的数据来源、业务口径或权限规则。",
+                        "required": True,
+                    }]
+                requested_at = utc_now()
+                self.store.update_request(
+                    request_id,
+                    status=RunStatus.WAITING_INPUT.value,
+                    current_step="clarify",
+                    progress=50,
+                    codex_thread_id=codex_thread_id,
+                    result_summary=summary,
+                    supplement_requests=supplement_requests,
+                    supplement_requested_at=requested_at,
+                    error_message="",
+                )
+                self.store.update_step(request_id, "develop", "completed", summary or "需求分析完成，需要补充关键信息")
+                self.store.update_step(
+                    request_id,
+                    "clarify",
+                    "running",
+                    f"等待补充 {len(supplement_requests)} 项关键信息",
+                )
+                self.store.add_event(
+                    request_id,
+                    "development.input_required",
+                    f"DevCore 需要补充 {len(supplement_requests)} 项关键信息后继续研发",
+                    level="warning",
+                    metadata={"requests": supplement_requests},
+                )
+                self._send_status_email(request_id, action_required=True)
+                return
+            if not project.get("simulation_mode") and not paths:
+                raise RuntimeError("DevCore 执行完成，但没有产生代码变更")
             mode = DeliveryMode(detail["delivery_mode"])
             if mode == DeliveryMode.SICHUAN_AUTO_REVIEW and result.get("risks"):
                 risk_text = "；".join(str(item) for item in result["risks"])
@@ -254,6 +306,8 @@ class Worker:
                 return
             self.store.update_request(request_id, result_summary=summary, codex_thread_id=codex_thread_id, progress=55)
             self.store.update_step(request_id, "develop", "completed", summary or "代码修改完成")
+            if not detail.get("supplement_answers"):
+                self.store.update_step(request_id, "clarify", "skipped", "本轮研发无需补充信息")
             self.store.add_event(request_id, "development.completed", summary or "DevCore 自动研发完成", metadata=result)
             self._check_cancelled(request_id)
 
@@ -604,6 +658,44 @@ class Worker:
         return Path(codex_workspace), states, branch
 
     @staticmethod
+    def _resumable_worktrees(detail: dict) -> bool:
+        states = detail.get("repository_states") or []
+        return bool(states) and all(
+            isinstance(state, dict)
+            and state.get("worktree_path")
+            and Path(state["worktree_path"]).is_dir()
+            for state in states
+        )
+
+    @staticmethod
+    def _normalize_supplement_requests(value: object) -> list[dict]:
+        if not isinstance(value, list):
+            return []
+        normalized: list[dict] = []
+        seen: set[str] = set()
+        for index, item in enumerate(value, 1):
+            if not isinstance(item, dict):
+                continue
+            question = str(item.get("question") or "").strip()
+            if not question:
+                continue
+            request_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(item.get("id") or f"item-{index}")).strip("-")
+            request_id = request_id or f"item-{index}"
+            if request_id in seen:
+                request_id = f"{request_id}-{index}"
+            seen.add(request_id)
+            normalized.append(
+                {
+                    "id": request_id[:80],
+                    "question": question[:1000],
+                    "reason": str(item.get("reason") or "").strip()[:1500],
+                    "suggested_answer": str(item.get("suggested_answer") or "").strip()[:1000],
+                    "required": bool(item.get("required", True)),
+                }
+            )
+        return normalized
+
+    @staticmethod
     def _rollback_worktrees(attempted: list[tuple[Path, Path]], workspace_root: Path, branch: str) -> None:
         """Rollback only the worktrees and branches created by the current preparation attempt."""
         clean_env = sanitized_process_env()
@@ -830,10 +922,12 @@ class Worker:
         self.store.add_event(request_id, "devcore.thread", "演示模式：DevCore 研发线程已启动")
         self.store.add_event(request_id, "devcore.event", "演示模式：完成需求分析、代码修改与风险检查")
         return {
+            "decision": "completed",
             "summary": f"已完成“{work_item['title']}”的演示开发，并验证交付流程。",
             "changed_files": ["src/demo/FeatureService.java", "config/application-demo.yml", "sql/upgrade.sql"],
             "acceptance_mapping": ["自动研发入口可用", "交付产物可追踪"],
             "risks": [], "sql_changes": ["sql/upgrade.sql"], "config_changes": ["config/application-demo.yml"],
+            "database_operations": [], "supplement_requests": [],
         }
 
     def _create_demo_artifacts(self, request_id: str, *, include_package: bool) -> None:

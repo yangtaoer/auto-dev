@@ -47,6 +47,7 @@ class RunStatus(StrEnum):
     CAPTURING = "capturing"
     DELIVERING = "delivering"
     DELIVERED = "delivered"
+    WAITING_INPUT = "waiting_input"
     WAITING_APPROVAL = "waiting_approval"
     REJECTED = "rejected"
     FAILED = "failed"
@@ -71,6 +72,7 @@ STATUS_LABELS = {
     RunStatus.CAPTURING: "生成合并凭证",
     RunStatus.DELIVERING: "发送交付邮件",
     RunStatus.DELIVERED: "已交付",
+    RunStatus.WAITING_INPUT: "待补充信息",
     RunStatus.WAITING_APPROVAL: "等待人工确认",
     RunStatus.REJECTED: "准入驳回",
     RunStatus.FAILED: "执行失败",
@@ -82,6 +84,7 @@ PIPELINE_STEPS = [
     ("validate", "需求准入校验"),
     ("prepare", "准备隔离工作区"),
     ("develop", "DevCore 自动研发"),
+    ("clarify", "补充研发信息"),
     ("submit", "提交代码"),
     ("deliver", "生成与发送交付物"),
 ]

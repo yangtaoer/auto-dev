@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 
 from ..config import settings
 from ..db import add_artifact, request_detail
-from ..domain import DELIVERY_MODE_LABELS, DeliveryMode, visible_delivery_artifacts
+from ..domain import DELIVERY_MODE_LABELS, DeliveryMode, RunStatus, visible_delivery_artifacts
 from .process_env import sanitized_process_env
 
 
@@ -375,7 +375,10 @@ class Mailer:
         terminal_status: str | None = None,
     ) -> str:
         terminal_labels = {"failed": "执行失败", "cancelled": "任务已取消", "rejected": "准入驳回"}
-        status = terminal_labels.get(terminal_status) or ("待审核" if action_required else "已交付")
+        waiting_input = action_required and detail.get("status") == RunStatus.WAITING_INPUT.value
+        status = terminal_labels.get(terminal_status) or (
+            "待补充" if waiting_input else ("待审核" if action_required else "已交付")
+        )
         title = str(detail.get("title") or "研发任务").strip()[:80]
         return f"【AutoDev · {status}】TFS #{detail['work_item_id']}｜{title}"
 
@@ -450,8 +453,13 @@ class Mailer:
         end_at = detail.get("completed_at") or datetime.now(UTC).isoformat()
         terminal_labels = {"failed": "研发执行失败", "cancelled": "研发任务已取消", "rejected": "需求准入驳回"}
         terminal_colors = {"failed": "#76618f", "cancelled": "#746ca4", "rejected": "#6178a8"}
-        status_label = terminal_labels.get(terminal_status) or ("等待代码合并" if action_required else "研发交付完成")
-        status_color = terminal_colors.get(terminal_status) or ("#7769ad" if action_required else "#4f7fae")
+        waiting_input = action_required and detail.get("status") == RunStatus.WAITING_INPUT.value
+        status_label = terminal_labels.get(terminal_status) or (
+            "等待补充研发信息" if waiting_input else ("等待代码合并" if action_required else "研发交付完成")
+        )
+        status_color = terminal_colors.get(terminal_status) or (
+            "#8b74bd" if waiting_input else ("#7769ad" if action_required else "#4f7fae")
+        )
         terminal = terminal_status in terminal_labels
 
         def parse_datetime(value: str | None) -> datetime | None:
@@ -539,8 +547,30 @@ class Mailer:
             f"<a href=\"{html.escape(pr_url, quote=True)}\" style=\"color:#496f9b;text-decoration:underline;word-break:break-all\">{html.escape(pr_url)}</a>"
             if pr_url else "无需 PR"
         )
+        console_url = html.escape(settings.public_base_url, quote=True)
         action = ""
-        if action_required:
+        if waiting_input:
+            request_rows = []
+            for index, item in enumerate(detail.get("supplement_requests") or [], 1):
+                if not isinstance(item, dict):
+                    continue
+                required = "必填" if item.get("required", True) else "可选"
+                reason = safe_text(item.get("reason"), "继续可靠研发所需")
+                suggestion = safe_text(item.get("suggested_answer"), "请按实际业务口径说明")
+                request_rows.append(
+                    f"""<tr><td style="padding:10px 12px;border-bottom:1px solid #ddd8eb">
+                    <div style="color:#2a2540;font-size:13px;font-weight:700">{index}. {safe_text(item.get('question'))}</div>
+                    <div style="margin-top:4px;color:#6e6686;font-size:11px;line-height:1.55">原因：{reason}</div>
+                    <div style="margin-top:2px;color:#7766a2;font-size:11px;line-height:1.55">填写提示：{suggestion} · {required}</div>
+                    </td></tr>"""
+                )
+            questions = "".join(request_rows) or """<tr><td style="padding:10px 12px;color:#6e6686;font-size:12px">请登录平台查看待补充事项。</td></tr>"""
+            action = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;background:#f4f1f9;border-left:4px solid #8b74bd">
+              <tr><td style="padding:12px 13px 7px;color:#554c70;font-size:12px;line-height:1.55"><b style="display:block;color:#28223d;font-size:14px">需要补充关键信息后继续研发</b>DevCore 已完成当前分析，任务已安全暂停，不计入本机并发占用。</td></tr>
+              <tr><td style="padding:0 13px 11px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #ddd8eb;background:#ffffff">{questions}</table></td></tr>
+              <tr><td style="padding:0 13px 13px"><a href="{console_url}" style="display:inline-block;padding:8px 12px;background:#65559a;color:#ffffff;text-decoration:none;font-size:12px;font-weight:700">登录 AutoDev 补充并继续 →</a></td></tr>
+            </table>"""
+        elif action_required:
             review_items = [
                 {
                     "repository": state.get("repository_short_name") or repository_short_name(state.get("name", "")),
@@ -566,14 +596,17 @@ class Mailer:
             </table>"""
 
         completed_text = format_datetime(detail.get("completed_at"), "进行中")
-        console_url = html.escape(settings.public_base_url, quote=True)
-        signal_label = "TERMINAL SIGNAL" if terminal else "DELIVERY SIGNAL"
+        signal_label = "TERMINAL SIGNAL" if terminal else ("INPUT SIGNAL" if waiting_input else "DELIVERY SIGNAL")
         duration_label = "任务耗时" if terminal else ("当前耗时" if action_required else "开发耗时")
-        notes_label = "执行摘要 / EXECUTION NOTES" if terminal else "开发说明 / DEVELOPMENT NOTES"
+        notes_label = "执行摘要 / EXECUTION NOTES" if terminal else (
+            "当前研发结论 / CURRENT CONCLUSION" if waiting_input else "开发说明 / DEVELOPMENT NOTES"
+        )
         notes_value = detail.get("result_summary") or ("任务在完成前终止，请查看上方终止原因及研发控制台中的执行记录。" if terminal else "—")
-        artifact_heading = "已有产物 / AVAILABLE FILES" if terminal else "交付产物 / DELIVERABLES"
+        artifact_heading = "已有产物 / AVAILABLE FILES" if terminal else (
+            "当前产物 / CURRENT FILES" if waiting_input else "交付产物 / DELIVERABLES"
+        )
         code_section = ""
-        if not (action_required and detail.get("delivery_mode") == DeliveryMode.PRODUCT_MANUAL_REVIEW.value):
+        if not waiting_input and not (action_required and detail.get("delivery_mode") == DeliveryMode.PRODUCT_MANUAL_REVIEW.value):
             code_section = f"""<div style="margin-bottom:5px;color:#6b7280;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">代码信息 / CODE DELIVERY</div>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;border:1px solid #dde2ec;background:#f8f9fc">
         <tr>

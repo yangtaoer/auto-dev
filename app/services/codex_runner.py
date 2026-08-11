@@ -7,20 +7,41 @@ from datetime import UTC, datetime
 from typing import Any, Callable
 
 from ..config import settings
+from .dm7_plugin import discover_dm7_plugin
 from .process_env import sanitized_process_env
 
 
 RESULT_SCHEMA = {
     "type": "object",
     "properties": {
+        "decision": {"type": "string", "enum": ["completed", "needs_input"]},
         "summary": {"type": "string"},
         "changed_files": {"type": "array", "items": {"type": "string"}},
         "acceptance_mapping": {"type": "array", "items": {"type": "string"}},
         "risks": {"type": "array", "items": {"type": "string"}},
         "sql_changes": {"type": "array", "items": {"type": "string"}},
         "config_changes": {"type": "array", "items": {"type": "string"}},
+        "database_operations": {"type": "array", "items": {"type": "string"}},
+        "supplement_requests": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "question": {"type": "string"},
+                    "reason": {"type": "string"},
+                    "suggested_answer": {"type": "string"},
+                    "required": {"type": "boolean"},
+                },
+                "required": ["id", "question", "reason", "suggested_answer", "required"],
+                "additionalProperties": False,
+            },
+        },
     },
-    "required": ["summary", "changed_files", "acceptance_mapping", "risks", "sql_changes", "config_changes"],
+    "required": [
+        "decision", "summary", "changed_files", "acceptance_mapping", "risks", "sql_changes",
+        "config_changes", "database_operations", "supplement_requests",
+    ],
     "additionalProperties": False,
 }
 
@@ -40,8 +61,11 @@ class CodexRunner:
         project: dict,
         on_event: Callable[[str, str], None],
         on_live_event: Callable[[dict[str, Any]], None] | None = None,
+        resume_thread_id: str | None = None,
+        supplement_requests: list[dict[str, Any]] | None = None,
+        supplement_answers: list[dict[str, Any]] | None = None,
     ) -> CodexRunResult:
-        from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox
+        from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox, SkillInput, TextInput
 
         protected = ", ".join(project.get("protected_patterns", [])) or "无"
         repository_paths = project.get("repository_paths") or [project.get("repository_path", "")]
@@ -52,6 +76,34 @@ class CodexRunner:
             if len(repository_names) > 1
             else "当前工作区是单仓库，只在该仓库内完成需求。"
         )
+        dm7 = discover_dm7_plugin()
+        supplement_context = ""
+        if supplement_answers:
+            request_by_id = {
+                str(item.get("id") or ""): item for item in (supplement_requests or []) if isinstance(item, dict)
+            }
+            answer_lines = []
+            for item in supplement_answers:
+                if not isinstance(item, dict):
+                    continue
+                request = request_by_id.get(str(item.get("id") or ""), {})
+                question = str(request.get("question") or item.get("id") or "补充项")
+                answer_lines.append(f"- {question}\n  用户补充：{item.get('answer', '')}")
+            supplement_context = (
+                "\n这是待补充任务的继续研发。以下内容由用户在平台补充，须作为本轮实施依据：\n"
+                + "\n".join(answer_lines)
+                + "\n不要重复询问已明确回答的内容。"
+            )
+
+        dm7_instructions = (
+            "DM7 数据库插件已可用。涉及数据库时，应主动使用 DM7 工具检查本机开发库的连接、元数据、表结构和必要样例数据，"
+            "不要仅因仓库内缺少表结构说明而停止。这里是本机开发环境：允许为保证需求完整性自主执行必要的受控数据库操作；"
+            "读取优先使用查询和结构描述工具。确需修改时必须按插件要求提供真实用途：测试数据使用 purpose=\"test\"，版本迁移验证使用 purpose=\"migration\"。"
+            "不得向项目经理索要数据库密码，优先使用插件中已保存的本地连接。"
+            if dm7.available
+            else dm7.message
+        )
+
         prompt = f"""
 你正在执行一个经过准入的 TFS 自动研发任务。
 
@@ -61,6 +113,7 @@ class CodexRunner:
 验收标准：{work_item.get('acceptance_criteria', '')}
 区域：{work_item.get('area_path', '')}
 仓库范围：{repository_scope}
+{supplement_context}
 
 约束：
 1. 只修改当前工作区，不执行 git commit、git push、创建 PR 或发送通知。
@@ -73,28 +126,47 @@ class CodexRunner:
 8. 所有面向用户的分析摘要和最终结果必须使用简体中文（文件路径、代码和命令除外）。
 9. 不要根据改动大小或是否改变接口行为决定是否交付；只要产生有效代码变更，外层系统都会继续提交代码并执行既定构建。
 10. 最终结果只描述研发修改与自检，不要把“未提交代码”或“未打包”列为未完成事项，这两步由外层交付流程强制执行。
+11. {dm7_instructions}
+12. 不要把一般性风险、可通过代码默认值处理的细节或可由仓库/数据库工具查明的信息升级为阻塞项。先检索代码、文档和数据库，再作判断。
+13. 只有缺少的信息会直接决定错误业务口径、越权或不可逆数据设计，且无法从代码、TFS、配置和 DM7 本机开发库查明时，才返回 decision=needs_input。此时不要提交半成品，supplement_requests 必须逐项给出明确问题、原因和建议答案。
+14. 可以可靠实现时必须返回 decision=completed 并完成代码、自检及必要 SQL/配置修改；普通风险写入 risks，但不得因此跳过研发。
 """.strip()
 
         developer_instructions = (
             "你是全自助研发执行器。修改应最小、可审计、可回滚。"
             "所有可展示给用户的分析摘要、计划与最终回复必须使用简体中文。"
-            "发现需求不完整、共享代码影响或高风险操作时停止修改，并在 risks 中说明。"
+            "优先自主查明并解决问题；仅在关键事实无法获得且继续开发必然不可靠时进入待补充。"
         )
-        codex_config = CodexConfig(cwd=str(cwd), env=sanitized_process_env())
+        codex_config = CodexConfig(
+            cwd=str(cwd),
+            env=sanitized_process_env(),
+            config_overrides=dm7.config_overrides,
+        )
         with Codex(codex_config) as codex:
             if settings.codex_api_key:
                 # 通过 app-server 控制通道登录，避免把 API key 暴露给仓库构建命令。
                 codex.login_api_key(settings.codex_api_key)
-            thread = codex.thread_start(
-                cwd=str(cwd),
-                model=settings.codex_model,
-                sandbox=Sandbox.workspace_write,
-                approval_mode=ApprovalMode.deny_all,
-                developer_instructions=developer_instructions,
-                service_name="tellhow-autodev",
+            thread_options = {
+                "cwd": str(cwd),
+                "model": settings.codex_model,
+                "sandbox": Sandbox.full_access,
+                "approval_mode": ApprovalMode.deny_all,
+                "developer_instructions": developer_instructions,
+            }
+            if resume_thread_id:
+                thread = codex.thread_resume(resume_thread_id, **thread_options)
+                on_event("devcore.thread_resumed", "DevCore 已载入补充信息并继续原研发会话")
+            else:
+                thread = codex.thread_start(service_name="tellhow-autodev", **thread_options)
+                on_event("devcore.thread", "DevCore 研发会话已启动")
+            on_event(
+                "dm7.capability_ready" if dm7.available else "dm7.capability_unavailable",
+                dm7.message,
             )
-            on_event("devcore.thread", "DevCore 研发会话已启动")
-            handle = thread.turn(prompt, output_schema=RESULT_SCHEMA)
+            run_input = [TextInput(prompt)]
+            if dm7.available and dm7.skill_path:
+                run_input.insert(0, SkillInput(name="dm7-database:dm7-database", path=str(dm7.skill_path)))
+            handle = thread.turn(run_input, output_schema=RESULT_SCHEMA)
             final_text: str | None = None
             for notification in handle.stream():
                 method = notification.method
@@ -302,7 +374,19 @@ class CodexRunner:
             ("风险提示", "risks", "无"),
             ("SQL 变更", "sql_changes", "无"),
             ("配置变更", "config_changes", "无"),
+            ("数据库操作", "database_operations", "无"),
         ):
             blocks.extend(section(title, result.get(field), empty=empty))
             blocks.append("")
+        requests = result.get("supplement_requests") or []
+        if result.get("decision") == "needs_input" or requests:
+            blocks.extend(["### 待补充信息", ""])
+            for index, item in enumerate(requests, 1):
+                if not isinstance(item, dict):
+                    continue
+                blocks.append(f"- {index}. {item.get('question') or '请补充关键信息'}")
+                if item.get("reason"):
+                    blocks.append(f"  原因：{item['reason']}")
+                if item.get("suggested_answer"):
+                    blocks.append(f"  建议：{item['suggested_answer']}")
         return "\n".join(blocks).strip()

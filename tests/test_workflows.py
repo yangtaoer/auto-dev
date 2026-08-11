@@ -34,6 +34,7 @@ from app.project_catalog import (  # noqa: E402
     update_project_routing_aliases,
 )
 from app.services.codex_runner import CodexRunner  # noqa: E402
+from app.services.dm7_plugin import discover_dm7_plugin  # noqa: E402
 from app.services.delivery import (  # noqa: E402
     ArtifactService,
     Mailer,
@@ -105,6 +106,94 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("report", kinds)
         self.assertTrue(any(event["event_type"] == "delivery.policy_enforced" for event in detail["events"]))
 
+    def test_missing_critical_information_waits_for_user_and_resumes_same_task(self) -> None:
+        project_id = self.create_project("test-supplement", "local_package")
+        created = self.client.post(
+            "/api/requests", json={"project_id": project_id, "work_item_id": 910101}
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        request_id = created.json()["id"]
+        needs_input = {
+            "decision": "needs_input",
+            "summary": "需要确认季度最终分的权威数据来源。",
+            "changed_files": [],
+            "acceptance_mapping": ["已完成现状分析"],
+            "risks": ["缺少权威口径"],
+            "sql_changes": [],
+            "config_changes": [],
+            "database_operations": ["已检查本机开发库元数据"],
+            "supplement_requests": [
+                {
+                    "id": "quarter-score-source",
+                    "question": "季度最终分以哪张表或接口为准？",
+                    "reason": "该数据决定折算结果。",
+                    "suggested_answer": "请提供表名、主键和结算状态字段。",
+                    "required": True,
+                }
+            ],
+        }
+        with patch.object(worker, "_simulate_development", return_value=needs_input):
+            worker.process_once()
+        waiting = self.client.get(f"/api/requests/{request_id}").json()["request"]
+        self.assertEqual(waiting["status"], "waiting_input")
+        self.assertEqual(waiting["current_step"], "clarify")
+        self.assertEqual(waiting["supplement_requests"][0]["id"], "quarter-score-source")
+        self.assertIn("权威数据来源", waiting["result_summary"])
+        clarify = next(item for item in waiting["steps"] if item["step_code"] == "clarify")
+        self.assertEqual(clarify["status"], "running")
+        dashboard = self.client.get("/api/dashboard").json()
+        self.assertEqual(dashboard["stats"]["waiting_input"], 1)
+        self.assertFalse(any(item["id"] == request_id for item in dashboard["active"]))
+
+        missing = self.client.post(f"/api/requests/{request_id}/supplement", json={"answers": []})
+        self.assertEqual(missing.status_code, 422)
+        supplied = self.client.post(
+            f"/api/requests/{request_id}/supplement",
+            json={"answers": [{"id": "quarter-score-source", "answer": "以 TH_BIZ_QUARTER_RESULT 的 RESOLVED 记录为准。"}]},
+        )
+        self.assertEqual(supplied.status_code, 200, supplied.text)
+        self.assertEqual(supplied.json()["id"], request_id)
+        queued = self.client.get(f"/api/requests/{request_id}").json()["request"]
+        self.assertEqual(queued["status"], "queued")
+        self.assertEqual(queued["supplement_answers"][0]["id"], "quarter-score-source")
+
+        completed = {
+            "decision": "completed",
+            "summary": "已按补充的权威季度结果表完成研发。",
+            "changed_files": ["src/demo/FeatureService.java"],
+            "acceptance_mapping": ["季度最终分已接入"],
+            "risks": [],
+            "sql_changes": ["sql/upgrade.sql"],
+            "config_changes": [],
+            "database_operations": ["核验 TH_BIZ_QUARTER_RESULT 结构"],
+            "supplement_requests": [],
+        }
+        with patch.object(worker, "_simulate_development", return_value=completed):
+            worker.process_once()
+        delivered = self.client.get(f"/api/requests/{request_id}").json()["request"]
+        self.assertEqual(delivered["status"], "delivered")
+        self.assertTrue(any(event["event_type"] == "development.input_supplied" for event in delivered["events"]))
+
+    def test_dm7_plugin_discovery_builds_direct_mcp_mount_without_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            codex_root = Path(directory)
+            plugin_root = codex_root / "plugins" / "cache" / "dm7-database-local" / "dm7-database" / "0.1-test"
+            skill = plugin_root / "skills" / "dm7-database" / "SKILL.md"
+            launcher = plugin_root / "scripts" / "launch-mcp.ps1"
+            skill.parent.mkdir(parents=True)
+            launcher.parent.mkdir(parents=True)
+            skill.write_text("# DM7", encoding="utf-8")
+            launcher.write_text("Write-Output ready", encoding="utf-8")
+            with patch.dict(os.environ, {"CODEX_HOME": str(codex_root)}, clear=False):
+                capability = discover_dm7_plugin()
+        self.assertTrue(capability.available)
+        self.assertEqual(capability.skill_path, skill)
+        mounted = "\n".join(capability.config_overrides)
+        self.assertIn("mcp_servers.dm7_autodev.command", mounted)
+        self.assertIn("launch-mcp.ps1", mounted)
+        self.assertIn('default_tools_approval_mode="approve"', mounted)
+        self.assertNotIn("password", mounted.casefold())
+
     def test_delivery_email_is_branded_and_uses_china_standard_time(self) -> None:
         detail = {
             "id": "mail-preview-request",
@@ -167,6 +256,31 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("请逐个联系有权限的同事审核并合并以下 PR", waiting)
         self.assertIn("主仓库 · PR #", waiting)
         self.assertIn("进行中", waiting)
+
+        input_detail = {
+            **detail,
+            "status": "waiting_input",
+            "completed_at": None,
+            "supplement_requests": [
+                {
+                    "id": "score-source",
+                    "question": "季度最终分以哪张表为准？",
+                    "reason": "决定绩效折算口径。",
+                    "suggested_answer": "提供表名与结算状态字段。",
+                    "required": True,
+                }
+            ],
+        }
+        input_mail = mailer.delivery_html(input_detail, action_required=True)
+        self.assertEqual(
+            mailer.delivery_subject(input_detail, action_required=True),
+            "【AutoDev · 待补充】TFS #910014｜优化交付邮件",
+        )
+        self.assertIn("AutoDev · INPUT SIGNAL", input_mail)
+        self.assertIn("等待补充研发信息", input_mail)
+        self.assertIn("季度最终分以哪张表为准", input_mail)
+        self.assertIn("登录 AutoDev 补充并继续", input_mail)
+        self.assertNotIn("需要项目经理协同处理", input_mail)
 
         failed_detail = {**detail, "status": "failed", "error_message": "Filename too long"}
         failed = mailer.delivery_html(failed_detail, terminal_status="failed")

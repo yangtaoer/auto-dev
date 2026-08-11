@@ -138,6 +138,15 @@ class DeliveryRequestInput(BaseModel):
     notification_emails: list[str] = Field(default_factory=list)
 
 
+class SupplementAnswerInput(BaseModel):
+    id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_.-]+$")
+    answer: str = Field(min_length=1, max_length=6000)
+
+
+class SupplementInput(BaseModel):
+    answers: list[SupplementAnswerInput] = Field(min_length=1, max_length=30)
+
+
 class RunnerProjectSync(BaseModel):
     runner_id: str = Field(pattern=r"^[a-zA-Z0-9_.-]{2,80}$")
     projects: list[ProjectInput] = Field(max_length=200)
@@ -243,6 +252,16 @@ def public_request_payload(detail: dict[str, Any]) -> dict[str, Any]:
     result.pop("codex_thread_id", None)
     for key in ("title", "requirement_summary", "result_summary", "error_message"):
         result[key] = public_engine_text(result.get(key))
+    result["supplement_requests"] = [
+        {
+            **item,
+            "question": public_engine_text(item.get("question")),
+            "reason": public_engine_text(item.get("reason")),
+            "suggested_answer": public_engine_text(item.get("suggested_answer")),
+        }
+        for item in result.get("supplement_requests", [])
+        if isinstance(item, dict)
+    ]
     result["steps"] = [
         {**step, "name": public_engine_text(step.get("name")), "message": public_engine_text(step.get("message"))}
         for step in result.get("steps", [])
@@ -402,7 +421,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     scope = "" if user["role"] == "admin" else "WHERE requester_id=?"
     params = () if user["role"] == "admin" else (user["id"],)
     counts = rows(f"SELECT status,COUNT(*) count FROM delivery_requests {scope} GROUP BY status", params)
-    active_sql = "status NOT IN ('delivered','failed','rejected','cancelled')"
+    active_sql = "status NOT IN ('delivered','failed','rejected','cancelled','waiting_input')"
     active_scope = active_sql if not scope else f"requester_id=? AND {active_sql}"
     activity_select = """(SELECT e.message FROM delivery_events e
         WHERE e.request_id=r.id ORDER BY e.id DESC LIMIT 1) current_activity"""
@@ -544,7 +563,8 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
             SUM(CASE WHEN created_at>=? THEN 1 ELSE 0 END) today_total,
             SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END) success,
             SUM(CASE WHEN status IN ('failed','rejected') THEN 1 ELSE 0 END) failed,
-            SUM(CASE WHEN status NOT IN ('delivered','failed','rejected','cancelled') THEN 1 ELSE 0 END) running,
+            SUM(CASE WHEN status NOT IN ('delivered','failed','rejected','cancelled','waiting_input') THEN 1 ELSE 0 END) running,
+            SUM(CASE WHEN status='waiting_input' THEN 1 ELSE 0 END) waiting_input,
             SUM(CASE WHEN status='waiting_merge' THEN 1 ELSE 0 END) waiting_merge
             FROM delivery_requests {stats_scope} {today_join} created_at IS NOT NULL""",
         (today_start, *stats_params),
@@ -584,7 +604,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
         int(busy_requests.get("count") or 0) + int(intake_capacity.get("claimed") or 0),
     )
     capacity_queued = int(queued_requests.get("count") or 0) + int(intake_capacity.get("queued") or 0)
-    stats = {key: int(summary.get(key) or 0) for key in ("total", "today_total", "success", "failed", "running", "waiting_merge")}
+    stats = {key: int(summary.get(key) or 0) for key in ("total", "today_total", "success", "failed", "running", "waiting_input", "waiting_merge")}
     stats["total"] += pending_total + intake_failed_total
     stats["today_total"] += pending_today + intake_failed_today
     stats["failed"] += intake_failed_total
@@ -996,6 +1016,63 @@ def retry_request(request_id: str, user: Annotated[dict, Depends(current_user)])
     return {"id": new_request_id, "status": RunStatus.QUEUED.value, "work_item_id": original["work_item_id"]}
 
 
+@app.post("/api/requests/{request_id}/supplement")
+def supplement_request(
+    request_id: str,
+    payload: SupplementInput,
+    user: Annotated[dict, Depends(current_user)],
+) -> dict:
+    detail = can_access_request(user, request_id)
+    if detail["status"] != RunStatus.WAITING_INPUT.value:
+        raise HTTPException(status_code=409, detail="当前任务不处于待补充状态")
+    expected = {
+        str(item.get("id") or ""): item
+        for item in detail.get("supplement_requests", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    provided = {item.id: item.answer.strip() for item in payload.answers if item.answer.strip()}
+    unknown = sorted(set(provided) - set(expected))
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"包含未知补充项：{', '.join(unknown)}")
+    missing = [
+        item_id
+        for item_id, item in expected.items()
+        if item.get("required", True) and not provided.get(item_id)
+    ]
+    if missing:
+        questions = "、".join(str(expected[item_id].get("question") or item_id) for item_id in missing)
+        raise HTTPException(status_code=422, detail=f"请完成必填补充项：{questions}")
+    answers = [{"id": item_id, "answer": answer} for item_id, answer in provided.items()]
+    now = utc_now()
+    update_request(
+        request_id,
+        supplement_answers=answers,
+        supplemented_at=now,
+        status=RunStatus.QUEUED.value,
+        current_step="validate",
+        progress=4,
+        completed_at=None,
+        next_poll_at=None,
+        error_message="",
+    )
+    update_step(request_id, "clarify", "completed", f"{user['display_name']} 已补充 {len(answers)} 项信息，任务重新进入研发队列")
+    add_event(
+        request_id,
+        "development.input_supplied",
+        f"{user['display_name']} 已提交补充信息，任务将继续研发",
+        metadata={"answer_ids": list(provided)},
+    )
+    with transaction() as conn:
+        conn.execute(
+            "INSERT INTO audit_logs(actor_id,action,target_type,target_id,detail,created_at) VALUES(?,?,?,?,?,?)",
+            (
+                user["id"], "request.supplement", "delivery_request", request_id,
+                json.dumps({"answer_ids": list(provided)}, ensure_ascii=False), now,
+            ),
+        )
+    return {"id": request_id, "status": RunStatus.QUEUED.value}
+
+
 @app.post("/api/requests/{request_id}/cancel")
 def cancel_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
     detail = can_access_request(user, request_id)
@@ -1199,6 +1276,7 @@ RUNNER_MUTABLE_FIELDS = {
     "work_item_revision", "title", "requirement_summary", "status", "current_step", "progress",
     "branch_name", "base_commit", "commit_hash", "pr_id", "pr_url", "merge_commit", "codex_thread_id",
     "result_summary", "error_message", "repository_states", "started_at", "completed_at", "next_poll_at", "email_sent_at",
+    "supplement_requests", "supplement_answers", "supplement_requested_at", "supplemented_at",
 }
 
 
@@ -1272,6 +1350,7 @@ async def runner_upload_artifact(
 
 @app.post("/api/runner/requests/{request_id}/notify", dependencies=[Depends(runner_auth)])
 def runner_notify(request_id: str, payload: RunnerNotifyInput) -> dict:
+    detail = runner_request(request_id)
     sent = send_cloud_email(
         request_id,
         action_required=payload.action_required,
@@ -1282,7 +1361,9 @@ def runner_notify(request_id: str, payload: RunnerNotifyInput) -> dict:
             "mail.action_required" if payload.action_required else "mail.delivery_sent"
         )
         message = "已发送任务终态通知邮件" if payload.terminal else (
-            "已发送 PR 待审核邮件" if payload.action_required else "已发送最终交付邮件"
+            "已发送待补充信息邮件"
+            if payload.action_required and detail["status"] == RunStatus.WAITING_INPUT.value
+            else ("已发送 PR 待审核邮件" if payload.action_required else "已发送最终交付邮件")
         )
         add_event(request_id, event_type, message, level="warning" if payload.terminal else "info")
     return {"ok": True, "sent": sent}

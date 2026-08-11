@@ -42,6 +42,7 @@ STATUS = {
     "developing": "DevCore 研发中",
     "submitting": "提交代码",
     "building": "本地构建",
+    "waiting_input": "待补充信息",
     "waiting_merge": "等待 PR 合并",
     "capturing": "生成合并凭证",
     "delivering": "发送交付邮件",
@@ -572,6 +573,15 @@ class AutoDevConsole:
             ))
         if detail.get("result_summary"):
             lines.extend(("", "研发结论", str(detail["result_summary"])))
+        if detail.get("status") == "waiting_input":
+            lines.extend(("", "待补充信息"))
+            for index, item in enumerate(detail.get("supplement_requests") or [], 1):
+                lines.append(f"  {index}. {item.get('question') or '请补充关键信息'}")
+                if item.get("reason"):
+                    lines.append(f"      原因：{item['reason']}")
+                if item.get("suggested_answer"):
+                    lines.append(f"      提示：{item['suggested_answer']}")
+            lines.append("  请由任务发起人在云端任务详情中填写并提交。")
         if detail.get("error_message"):
             lines.extend(("", "错误信息", str(detail["error_message"])))
         lines.extend(("", "RECENT EVENTS"))
