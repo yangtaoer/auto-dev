@@ -73,6 +73,11 @@ class AutoDevConsole:
         self.closing = False
         self.alias_window: tk.Toplevel | None = None
         self.alias_projects: list[dict[str, Any]] = []
+        self.alias_selected_index: int | None = None
+        self.alias_dirty = False
+        self.alias_switching = False
+        self.control_busy = False
+        self.control_buttons: list[tk.Button] = []
 
         self._configure_styles()
         self._build_ui()
@@ -145,7 +150,7 @@ class AutoDevConsole:
         self.status_label = tk.Label(header, text="● 连接中", bg=DEEP, fg=AMBER, font=("Microsoft YaHei UI", 10, "bold"))
         self.status_label.pack(side="right", padx=12)
         self.alias_button = tk.Button(
-            header, text="项目别名", command=self._open_project_aliases,
+            header, text="编辑项目别名", command=self._open_project_aliases,
             bg=PANEL_2, fg=VIOLET, activebackground="#27234b", activeforeground=PAPER,
             relief="flat", padx=15, pady=8, font=("Microsoft YaHei UI", 10, "bold"),
         )
@@ -155,7 +160,7 @@ class AutoDevConsole:
         self.controls.pack(side="bottom", fill="x")
         self.controls.pack_propagate(False)
         tk.Label(self.controls, text="执行器控制 / RUNNER CONTROL", bg=DEEP, fg=MUTED, font=(MONO, 9, "bold")).pack(side="left", padx=25)
-        self._control_button(self.controls, "启动执行器", "start.ps1", ACID).pack(side="left", padx=5, pady=12)
+        self._control_button(self.controls, "启动执行器", "restart.ps1", ACID).pack(side="left", padx=5, pady=12)
         self._control_button(self.controls, "停止执行器", "stop.ps1", RED).pack(side="left", padx=5, pady=12)
         self._control_button(self.controls, "重启执行器", "restart.ps1", AMBER).pack(side="left", padx=5, pady=12)
         self.footer = tk.Label(self.controls, text="本机接口 127.0.0.1:28766 · 详细会话不落盘", bg=DEEP, fg=MUTED, font=(MONO, 9))
@@ -193,6 +198,7 @@ class AutoDevConsole:
         window.configure(bg=INK)
         window.transient(self.root)
         window.protocol("WM_DELETE_WINDOW", self._close_project_aliases)
+        window.bind("<Control-s>", self._save_project_aliases_shortcut)
 
         header = tk.Frame(window, bg=DEEP, height=92, highlightbackground=LINE, highlightthickness=1)
         header.pack(fill="x")
@@ -219,7 +225,7 @@ class AutoDevConsole:
         )
         self.alias_project_list.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         for project in self.alias_projects:
-            self.alias_project_list.insert("end", project.get("name") or project.get("project_key") or "未命名项目")
+            self.alias_project_list.insert("end", self._alias_list_text(project))
         self.alias_project_list.bind("<<ListboxSelect>>", self._select_alias_project)
 
         editor_panel = tk.Frame(body, bg=PANEL, highlightbackground=LINE, highlightthickness=1)
@@ -230,6 +236,10 @@ class AutoDevConsole:
         self.alias_project_name.pack(fill="x", padx=20, pady=(18, 3))
         self.alias_project_key = tk.Label(editor_panel, text="", bg=PANEL, fg=MUTED, anchor="w", font=(MONO, 9))
         self.alias_project_key.pack(fill="x", padx=20)
+        self.alias_save_status = tk.Label(
+            editor_panel, text="", bg=PANEL, fg=MUTED, anchor="w", font=("Microsoft YaHei UI", 9, "bold")
+        )
+        self.alias_save_status.pack(fill="x", padx=20, pady=(8, 0))
         tk.Label(
             editor_panel, text="项目别名 / 需求标题识别关键词", bg=PANEL, fg=ACID,
             font=("Microsoft YaHei UI", 10, "bold"), anchor="w",
@@ -240,6 +250,7 @@ class AutoDevConsole:
             highlightbackground=LINE, highlightcolor=VIOLET, highlightthickness=1,
         )
         self.alias_editor.pack(fill="both", expand=True, padx=20)
+        self.alias_editor.bind("<<Modified>>", self._alias_editor_modified)
         tk.Label(
             editor_panel,
             text="每行一个别名。TFS 需求标题包含任意别名时，即识别为该项目；保存后约 20 秒自动同步。",
@@ -247,11 +258,12 @@ class AutoDevConsole:
         ).pack(fill="x", padx=20, pady=(9, 14))
         actions = tk.Frame(editor_panel, bg=PANEL)
         actions.pack(fill="x", padx=20, pady=(0, 18))
-        tk.Button(
-            actions, text="保存项目别名", command=self._save_project_aliases,
+        self.alias_save_button = tk.Button(
+            actions, text="保存当前项目  Ctrl+S", command=self._save_project_aliases,
             bg=ACID, fg=INK, activebackground="#78bfff", activeforeground=INK,
             relief="flat", padx=18, pady=9, font=("Microsoft YaHei UI", 10, "bold"),
-        ).pack(side="left")
+        )
+        self.alias_save_button.pack(side="left")
         tk.Button(
             actions, text="关闭", command=self._close_project_aliases,
             bg=PANEL_2, fg=MUTED, activebackground="#272f48", activeforeground=PAPER,
@@ -261,42 +273,120 @@ class AutoDevConsole:
         self.alias_project_list.selection_set(0)
         self._select_alias_project()
 
-    def _select_alias_project(self, _event: object = None) -> None:
-        selection = self.alias_project_list.curselection()
-        if not selection:
-            return
-        project = self.alias_projects[selection[0]]
+    @staticmethod
+    def _alias_list_text(project: dict[str, Any]) -> str:
+        name = project.get("name") or project.get("project_key") or "未命名项目"
+        count = len(project.get("routing_title_keywords") or [])
+        return f"{name}   · {count:02d} 个别名"
+
+    def _set_alias_selection(self, index: int) -> None:
+        self.alias_switching = True
+        try:
+            self.alias_project_list.selection_clear(0, "end")
+            self.alias_project_list.selection_set(index)
+            self.alias_project_list.activate(index)
+            self.alias_project_list.see(index)
+        finally:
+            self.alias_switching = False
+
+    def _load_alias_project(self, index: int) -> None:
+        project = self.alias_projects[index]
+        self.alias_selected_index = index
         self.alias_project_name.configure(text=project.get("name") or "未命名项目")
         self.alias_project_key.configure(text=f"PROJECT KEY / {project.get('project_key') or '—'}")
         self.alias_editor.delete("1.0", "end")
         self.alias_editor.insert("1.0", "\n".join(project.get("routing_title_keywords") or []))
+        self.alias_editor.edit_modified(False)
+        self.alias_dirty = False
+        count = len(project.get("routing_title_keywords") or [])
+        self.alias_save_status.configure(text=f"● 已保存 · 当前 {count} 个别名", fg=MUTED)
 
-    def _save_project_aliases(self) -> None:
+    def _select_alias_project(self, _event: object = None) -> None:
+        if self.alias_switching:
+            return
         selection = self.alias_project_list.curselection()
         if not selection:
             return
+        next_index = int(selection[0])
+        previous_index = self.alias_selected_index
+        if previous_index is not None and next_index != previous_index and self.alias_dirty:
+            decision = messagebox.askyesnocancel(
+                "项目别名尚未保存",
+                "当前项目的别名已经修改。\n\n是：保存后切换\n否：放弃修改并切换\n取消：继续编辑当前项目",
+                parent=self.alias_window,
+            )
+            if decision is None:
+                self._set_alias_selection(previous_index)
+                return
+            if decision and not self._persist_project_aliases(previous_index, notify=False):
+                self._set_alias_selection(previous_index)
+                return
+        self._set_alias_selection(next_index)
+        self._load_alias_project(next_index)
+
+    def _alias_editor_modified(self, _event: object = None) -> None:
+        if not self.alias_editor.edit_modified():
+            return
+        self.alias_editor.edit_modified(False)
+        if self.alias_selected_index is None:
+            return
+        self.alias_dirty = True
+        self.alias_save_status.configure(text="● 有未保存修改", fg=AMBER)
+
+    def _save_project_aliases_shortcut(self, _event: object = None) -> str:
+        self._save_project_aliases()
+        return "break"
+
+    def _save_project_aliases(self) -> None:
+        if self.alias_selected_index is None:
+            return
+        self._persist_project_aliases(self.alias_selected_index, notify=True)
+
+    def _persist_project_aliases(self, index: int, *, notify: bool) -> bool:
         raw = self.alias_editor.get("1.0", "end").strip()
         aliases = [value.strip() for value in raw.replace("，", "\n").replace(",", "\n").splitlines() if value.strip()]
-        project = self.alias_projects[selection[0]]
+        project = self.alias_projects[index]
         try:
             updated = update_project_routing_aliases(str(project.get("project_key") or ""), aliases)
         except (KeyError, RuntimeError, ValueError) as exc:
             messagebox.showerror("保存失败", str(exc), parent=self.alias_window)
-            return
-        self.alias_projects[selection[0]] = updated
+            return False
+        self.alias_projects[index] = updated
+        self.alias_project_list.delete(index)
+        self.alias_project_list.insert(index, self._alias_list_text(updated))
+        self._set_alias_selection(index)
         self.alias_editor.delete("1.0", "end")
         self.alias_editor.insert("1.0", "\n".join(updated.get("routing_title_keywords") or []))
+        self.alias_editor.edit_modified(False)
+        self.alias_dirty = False
+        count = len(updated.get("routing_title_keywords") or [])
+        self.alias_save_status.configure(text=f"✓ 保存成功 · 当前 {count} 个别名", fg=ACID)
         self.footer.configure(text=f"{updated.get('name')} 项目别名已保存 · 将自动同步")
-        messagebox.showinfo(
-            "保存成功",
-            f"已保存 {len(updated.get('routing_title_keywords') or [])} 个项目别名。\n本机识别立即生效，并将在下一次心跳同步云端。",
-            parent=self.alias_window,
-        )
+        if notify:
+            messagebox.showinfo(
+                "保存成功",
+                f"已保存 {count} 个项目别名。\n本机识别立即生效，并将在下一次心跳同步云端。",
+                parent=self.alias_window,
+            )
+        return True
 
     def _close_project_aliases(self) -> None:
+        if self.alias_window and self.alias_window.winfo_exists() and self.alias_dirty:
+            decision = messagebox.askyesnocancel(
+                "保存项目别名",
+                "关闭前是否保存当前项目的别名修改？",
+                parent=self.alias_window,
+            )
+            if decision is None:
+                return
+            if decision and self.alias_selected_index is not None:
+                if not self._persist_project_aliases(self.alias_selected_index, notify=False):
+                    return
         if self.alias_window and self.alias_window.winfo_exists():
             self.alias_window.destroy()
         self.alias_window = None
+        self.alias_selected_index = None
+        self.alias_dirty = False
 
     def _build_task_list(self, parent: tk.Frame) -> None:
         top = tk.Frame(parent, bg=PANEL)
@@ -393,10 +483,12 @@ class AutoDevConsole:
         self._set_text("session", "打开任务即开始接收此后产生的 Codex 输出。\n关闭客户端或切换任务后立即停止采集，不会保存历史会话。", "status")
 
     def _control_button(self, parent: tk.Frame, label: str, script: str, color: str) -> tk.Button:
-        return tk.Button(
+        button = tk.Button(
             parent, text=label, command=lambda: self._run_control(script, label), bg=PANEL_2, fg=color,
             activebackground="#214632", activeforeground=PAPER, relief="flat", padx=14, pady=7,
         )
+        self.control_buttons.append(button)
+        return button
 
     def _switch_tab(self, name: str) -> None:
         self.current_tab = name
@@ -424,15 +516,18 @@ class AutoDevConsole:
         self._set_text("session", "仅查看期间传输 · 正在连接 Codex 实时会话…", "status")
         self.last_live_group = ""
         self.last_live_kind = ""
-        generation = self.watch_generation
-        self._async(lambda: self._monitor_json("/api/watch/start", method="POST", payload={"request_id": request_id}),
-                    lambda result: self._watch_started(result, request_id, generation),
-                    lambda exc: self._watch_error(exc, generation))
+        self._connect_watch(request_id)
         self._async(
             lambda: self._cloud_json(f"/api/runner/requests/{request_id}"),
             self._render_task_detail,
             lambda exc: self._set_text("detail", f"任务详情读取失败：{exc}", "error"),
         )
+
+    def _connect_watch(self, request_id: str) -> None:
+        generation = self.watch_generation
+        self._async(lambda: self._monitor_json("/api/watch/start", method="POST", payload={"request_id": request_id}),
+                    lambda result: self._watch_started(result, request_id, generation),
+                    lambda exc: self._watch_error(exc, generation))
 
     def _watch_started(self, result: dict[str, Any], request_id: str, generation: int) -> None:
         if generation != self.watch_generation or request_id != self.selected_id:
@@ -605,17 +700,68 @@ class AutoDevConsole:
         self.root.after(4000, self._tick_logs)
 
     def _run_control(self, script: str, label: str) -> None:
+        if self.control_busy:
+            return
         path = ROOT / "local-runner" / script
-        try:
-            subprocess.Popen(
-                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(path)],
-                cwd=str(ROOT),
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            self.status_label.configure(text=f"● {label}指令已发送", fg=AMBER)
-            self.root.after(2500, lambda: self._tick_health())
-        except OSError as exc:
-            messagebox.showerror("执行失败", str(exc), parent=self.root)
+        self.control_busy = True
+        for button in self.control_buttons:
+            button.configure(state="disabled")
+        self.status_label.configure(text=f"● 正在{label}", fg=AMBER)
+        self.footer.configure(text=f"正在执行 {path.name}，完成前请稍候…")
+        self._async(
+            lambda: self._execute_control(path),
+            lambda output: self._control_succeeded(label, output),
+            lambda exc: self._control_failed(label, exc),
+        )
+
+    @staticmethod
+    def _execute_control(path: Path) -> str:
+        escaped_path = str(path).replace("'", "''")
+        command = (
+            "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); "
+            "$OutputEncoding=[Console]::OutputEncoding; "
+            f"& '{escaped_path}'"
+        )
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=75,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            check=False,
+        )
+        output = "\n".join(part.strip() for part in (completed.stdout, completed.stderr) if part.strip())
+        if completed.returncode != 0:
+            raise RuntimeError(output or f"PowerShell 退出码 {completed.returncode}")
+        return output
+
+    def _finish_control(self) -> None:
+        self.control_busy = False
+        for button in self.control_buttons:
+            button.configure(state="normal")
+
+    def _control_succeeded(self, label: str, output: str) -> None:
+        self._finish_control()
+        final_line = next((line.strip() for line in reversed(output.splitlines()) if line.strip()), "命令执行成功")
+        self.footer.configure(text=final_line[:180])
+        self.status_label.configure(
+            text="● 执行器已停止" if "停止" in label else "● 执行器在线",
+            fg=RED if "停止" in label else ACID,
+        )
+        if "停止" not in label and self.selected_id and not self.watcher_id:
+            self._stop_watch()
+            self._set_text("session", "仅查看期间传输 · 正在重新连接 Codex 实时会话…", "status")
+            self._connect_watch(self.selected_id)
+        self.root.after(250, self._tick_health)
+
+    def _control_failed(self, label: str, exc: Exception) -> None:
+        self._finish_control()
+        self.status_label.configure(text=f"● {label}失败", fg=RED)
+        self.footer.configure(text=f"{label}失败 · {str(exc)[:150]}")
+        messagebox.showerror(f"{label}失败", str(exc), parent=self.root)
 
     def _stop_watch(self) -> None:
         request_id, watcher_id = self.selected_id, self.watcher_id

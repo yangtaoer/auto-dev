@@ -758,7 +758,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM v0.4.11"), 1)
+        self.assertEqual(page.text.count("SYSTEM v0.4.12"), 1)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
@@ -806,6 +806,24 @@ class WorkflowTests(unittest.TestCase):
         )
         self.assertEqual(routed.status_code, 200, routed.text)
         worker.process_once()
+
+    def test_local_runner_restart_waits_for_port_and_console_reports_result(self) -> None:
+        restart_script = Path("local-runner/restart.ps1").read_text(encoding="utf-8-sig")
+        stop_script = Path("local-runner/stop.ps1").read_text(encoding="utf-8-sig")
+        status_script = Path("local-runner/status.ps1").read_text(encoding="utf-8-sig")
+        client_source = Path("app/local_client.py").read_text(encoding="utf-8")
+
+        self.assertIn("http://127.0.0.1:$MonitorPort/healthz", restart_script)
+        self.assertIn("AddSeconds(45)", restart_script)
+        self.assertIn("Start-ScheduledTask", restart_script)
+        self.assertIn("Get-RunnerProcesses", stop_script)
+        self.assertIn("app\\.local_runner_main", stop_script)
+        self.assertNotIn("CommandLine.Contains($ProjectRoot)", stop_script)
+        self.assertIn("本机接口状态", status_script)
+        self.assertIn('"启动执行器", "restart.ps1"', client_source)
+        self.assertIn("subprocess.run(", client_source)
+        self.assertIn("capture_output=True", client_source)
+        self.assertIn("正在重新连接 Codex 实时会话", client_source)
 
     def test_worker_never_exceeds_five_parallel_tasks(self) -> None:
         class QueueStore:
@@ -879,7 +897,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("自助项目", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("TFS 需求标题规则", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM v0.4.11"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM v0.4.12"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
