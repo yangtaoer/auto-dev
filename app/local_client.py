@@ -39,7 +39,7 @@ MONO = "Consolas"
 STATUS = {
     "queued": "等待执行",
     "validating": "准入校验",
-    "developing": "Codex 研发中",
+    "developing": "DevCore 研发中",
     "submitting": "提交代码",
     "building": "本地构建",
     "waiting_merge": "等待 PR 合并",
@@ -145,7 +145,7 @@ class AutoDevConsole:
         tk.Label(copy, text="AutoDev · LOCAL RUNNER", bg=DEEP, fg=ACID, font=(MONO, 9, "bold")).pack(anchor="w")
         tk.Label(copy, text="执行器控制台", bg=DEEP, fg=PAPER, font=("Microsoft YaHei UI", 19, "bold")).pack(anchor="w")
 
-        self.quota_label = tk.Label(header, text="CODEX 额度读取中", bg=DEEP, fg=MUTED, font=(MONO, 10))
+        self.quota_label = tk.Label(header, text="DEVCORE 额度读取中", bg=DEEP, fg=MUTED, font=(MONO, 10))
         self.quota_label.pack(side="right", padx=(12, 28))
         self.status_label = tk.Label(header, text="● 连接中", bg=DEEP, fg=AMBER, font=("Microsoft YaHei UI", 10, "bold"))
         self.status_label.pack(side="right", padx=12)
@@ -480,7 +480,7 @@ class AutoDevConsole:
             text.pack(side="left", fill="both", expand=True)
             scrollbar.pack(side="right", fill="y")
         self._switch_tab("session")
-        self._set_text("session", "打开任务即开始接收此后产生的 Codex 输出。\n关闭客户端或切换任务后立即停止采集，不会保存历史会话。", "status")
+        self._set_text("session", "打开任务即开始接收此后产生的 DevCore 输出。\n关闭客户端或切换任务后立即停止采集，不会保存历史会话。", "status")
 
     def _control_button(self, parent: tk.Frame, label: str, script: str, color: str) -> tk.Button:
         button = tk.Button(
@@ -512,8 +512,12 @@ class AutoDevConsole:
         task = self.tasks.get(request_id, {})
         self.detail_code.configure(text=f"RUN / {request_id[:8].upper()} / TFS #{task.get('work_item_id', '—')}")
         self.detail_title.configure(text=task.get("title") or "正在读取需求…")
-        self.detail_activity.configure(text=task.get("current_activity") or STATUS.get(task.get("status"), task.get("status", "")))
-        self._set_text("session", "仅查看期间传输 · 正在连接 Codex 实时会话…", "status")
+        self.detail_activity.configure(
+            text=self._public_engine_text(
+                task.get("current_activity") or STATUS.get(task.get("status"), task.get("status", ""))
+            )
+        )
+        self._set_text("session", "仅查看期间传输 · 正在连接 DevCore 实时会话…", "status")
         self.last_live_group = ""
         self.last_live_kind = ""
         self._connect_watch(request_id)
@@ -534,7 +538,7 @@ class AutoDevConsole:
             return
         self.watcher_id = result.get("watcher_id")
         self.watch_cursor = int(result.get("cursor") or 0)
-        self._append_text("session", "\n● 实时通道已打开，等待新的 Codex 输出…\n", "status")
+        self._append_text("session", "\n● 实时通道已打开，等待新的 DevCore 输出…\n", "status")
 
     def _render_task_detail(self, result: dict[str, Any]) -> None:
         detail = result.get("request") or {}
@@ -546,7 +550,7 @@ class AutoDevConsole:
             f"状态          {STATUS.get(detail.get('status'), detail.get('status', '—'))}",
             f"分支          {detail.get('branch_name') or '—'}",
             f"PR            {detail.get('pr_url') or '—'}",
-            f"Codex 会话    {detail.get('codex_thread_id') or '执行中/尚未生成'}",
+            f"DevCore 会话  {'已建立' if detail.get('codex_thread_id') else '执行中/尚未建立'}",
             "",
             "PIPELINE",
         ]
@@ -584,14 +588,14 @@ class AutoDevConsole:
     def _render_health(self, data: dict[str, Any]) -> None:
         state = data.get("state", "idle")
         self.status_label.configure(text="● 执行器运行中" if state == "working" else "● 执行器在线", fg=ACID)
-        usage = data.get("codex_usage") or {}
+        usage = data.get("devcore_usage") or data.get("codex_usage") or {}
         primary = usage.get("primary") or {}
         if usage.get("available"):
             plan = str(usage.get("plan_type") or "unknown").upper()
             remaining = primary.get("remaining_percent")
-            self.quota_label.configure(text=f"CODEX {plan} · 剩余 {remaining}%" if remaining is not None else f"CODEX {plan}")
+            self.quota_label.configure(text=f"DEVCORE {plan} · 剩余 {remaining}%" if remaining is not None else f"DEVCORE {plan}")
         else:
-            self.quota_label.configure(text="CODEX 额度暂不可用")
+            self.quota_label.configure(text="DEVCORE 额度暂不可用")
 
     def _health_error(self, _exc: Exception) -> None:
         self.status_label.configure(text="● 执行器离线", fg=RED)
@@ -655,7 +659,7 @@ class AutoDevConsole:
             delta = bool(event.get("delta"))
             if not delta or group != self.last_live_group or kind != self.last_live_kind:
                 label = {
-                    "assistant": "CODEX 研发结论",
+                    "assistant": "DEVCORE 研发结论",
                     "reasoning": "分析摘要",
                     "command": "终端执行",
                     "file": "文件变更",
@@ -753,7 +757,7 @@ class AutoDevConsole:
         )
         if "停止" not in label and self.selected_id and not self.watcher_id:
             self._stop_watch()
-            self._set_text("session", "仅查看期间传输 · 正在重新连接 Codex 实时会话…", "status")
+            self._set_text("session", "仅查看期间传输 · 正在重新连接 DevCore 实时会话…", "status")
             self._connect_watch(self.selected_id)
         self.root.after(250, self._tick_health)
 
@@ -848,20 +852,22 @@ class AutoDevConsole:
         text = self.texts[name]
         text.configure(state="normal")
         text.delete("1.0", "end")
-        text.insert("end", value, tag)
+        text.insert("end", self._public_engine_text(value), tag)
+        if name == "logs":
+            text.see("end")
         text.configure(state="disabled")
 
     def _append_text(self, name: str, value: str, tag: str = "status") -> None:
         text = self.texts[name]
         text.configure(state="normal")
-        text.insert("end", value, tag)
+        text.insert("end", self._public_engine_text(value), tag)
         text.see("end")
         text.configure(state="disabled")
 
     def _append_markdown(self, name: str, value: str) -> None:
         text = self.texts[name]
         text.configure(state="normal")
-        for line in value.splitlines():
+        for line in self._public_engine_text(value).splitlines():
             if line.startswith("### "):
                 text.insert("end", line[4:] + "\n", "assistant_heading")
             elif line.startswith("- "):
@@ -870,6 +876,17 @@ class AutoDevConsole:
                 text.insert("end", line + "\n", "assistant")
         text.see("end")
         text.configure(state="disabled")
+
+    @staticmethod
+    def _public_engine_text(value: Any) -> str:
+        import re
+
+        return re.sub(
+            r"codex",
+            lambda match: "DEVCORE" if match.group(0).isupper() else "DevCore",
+            str(value or ""),
+            flags=re.IGNORECASE,
+        )
 
     @staticmethod
     def _format_time(value: Any) -> str:

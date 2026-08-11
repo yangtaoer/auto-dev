@@ -64,7 +64,7 @@ TERMINAL_STATUSES = {
 STATUS_LABELS = {
     RunStatus.QUEUED: "等待执行",
     RunStatus.VALIDATING: "准入校验",
-    RunStatus.DEVELOPING: "Codex 研发中",
+    RunStatus.DEVELOPING: "DevCore 研发中",
     RunStatus.SUBMITTING: "提交代码",
     RunStatus.BUILDING: "本地构建",
     RunStatus.WAITING_MERGE: "等待 PR 合并",
@@ -81,7 +81,7 @@ STATUS_LABELS = {
 PIPELINE_STEPS = [
     ("validate", "需求准入校验"),
     ("prepare", "准备隔离工作区"),
-    ("develop", "Codex 自动研发"),
+    ("develop", "DevCore 自动研发"),
     ("submit", "提交代码"),
     ("deliver", "生成与发送交付物"),
 ]

@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="0.4.12",
+    version="1.0-Alpha",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -226,6 +226,38 @@ def runner_request(request_id: str) -> dict[str, Any]:
     return detail
 
 
+def public_engine_text(value: Any) -> Any:
+    """Remove implementation-engine branding from every user-facing payload."""
+    if not isinstance(value, str):
+        return value
+    return re.sub(
+        r"codex",
+        lambda match: "DEVCORE" if match.group(0).isupper() else ("DevCore" if match.group(0)[0].isupper() else "devcore"),
+        value,
+        flags=re.IGNORECASE,
+    )
+
+
+def public_request_payload(detail: dict[str, Any]) -> dict[str, Any]:
+    result = dict(detail)
+    result.pop("codex_thread_id", None)
+    for key in ("title", "requirement_summary", "result_summary", "error_message"):
+        result[key] = public_engine_text(result.get(key))
+    result["steps"] = [
+        {**step, "name": public_engine_text(step.get("name")), "message": public_engine_text(step.get("message"))}
+        for step in result.get("steps", [])
+    ]
+    result["events"] = [
+        {
+            **event,
+            "event_type": public_engine_text(event.get("event_type")),
+            "message": public_engine_text(event.get("message")),
+        }
+        for event in result.get("events", [])
+    ]
+    return result
+
+
 def normalize_emails(emails: list[str], legacy_email: str | None = None) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -375,14 +407,14 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     activity_select = """(SELECT e.message FROM delivery_events e
         WHERE e.request_id=r.id ORDER BY e.id DESC LIMIT 1) current_activity"""
     active_requests = rows(
-        f"""SELECT r.*,p.name project_name,u.display_name requester_name,{activity_select}
+        f"""SELECT r.*,p.name project_name,p.tfs_collection_url,u.display_name requester_name,{activity_select}
             FROM delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id
             WHERE {active_scope} ORDER BY r.updated_at DESC LIMIT 12""",
         params,
     )
     recent_scope = "" if not scope else "WHERE r.requester_id=?"
     recent_requests = rows(
-        f"""SELECT r.*,p.name project_name,u.display_name requester_name,{activity_select}
+        f"""SELECT r.*,p.name project_name,p.tfs_collection_url,u.display_name requester_name,{activity_select}
             FROM delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id
             {recent_scope} ORDER BY r.created_at DESC LIMIT 40""",
         params,
@@ -436,7 +468,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
             "project_name": "项目识别失败",
             "delivery_mode": "routing",
             "status": "failed",
-            "current_activity": intake.get("error_message") or "项目识别失败，请查看详情",
+            "current_activity": public_engine_text(intake.get("error_message") or "项目识别失败，请查看详情"),
             "created_at": intake["created_at"],
             "updated_at": intake["updated_at"],
             "completed_at": intake["updated_at"],
@@ -470,6 +502,10 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     terminal_statuses = {"delivered", "failed", "rejected", "cancelled"}
     current_time = datetime.now(UTC)
     for item in (*active_requests, *recent_requests):
+        item.pop("codex_thread_id", None)
+        item["current_activity"] = public_engine_text(item.get("current_activity"))
+        item["result_summary"] = public_engine_text(item.get("result_summary"))
+        item["error_message"] = public_engine_text(item.get("error_message"))
         item["artifacts"] = visible_delivery_artifacts(item["delivery_mode"], artifact_map.get(item["id"], []))
         item["repository_states"] = json_value(item.get("repository_states"), [])
         started_value = item.get("created_at") or item.get("started_at")
@@ -491,7 +527,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
             age = 999999
         item["online"] = age <= 90 and item["state"] != "stopping"
         runner_detail = json_value(item.get("detail"), {})
-        item["codex_usage"] = runner_detail.get("codex_usage", {})
+        item["devcore_usage"] = runner_detail.get("codex_usage", {})
         item["current_request_ids"] = runner_detail.get(
             "current_request_ids", [item["current_request_id"]] if item.get("current_request_id") else []
         )
@@ -568,6 +604,83 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
             "queued": capacity_queued,
             "available": max(0, settings.runner_max_concurrency - capacity_active),
         },
+    }
+
+
+@app.get("/api/admin/analytics")
+def admin_analytics(_: Annotated[dict, Depends(admin_user)]) -> dict:
+    overview = row(
+        """SELECT COUNT(*) total,
+                  SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END) delivered,
+                  SUM(CASE WHEN status IN ('failed','rejected') THEN 1 ELSE 0 END) failed,
+                  SUM(CASE WHEN status='cancelled' THEN 1 ELSE 0 END) cancelled,
+                  SUM(CASE WHEN status NOT IN ('delivered','failed','rejected','cancelled') THEN 1 ELSE 0 END) active,
+                  AVG(CASE WHEN completed_at IS NOT NULL
+                      THEN (julianday(completed_at)-julianday(COALESCE(started_at,created_at)))*86400 END) avg_duration_seconds
+           FROM delivery_requests"""
+    ) or {}
+    total = int(overview.get("total") or 0)
+    delivered = int(overview.get("delivered") or 0)
+    overview["success_rate"] = round(delivered * 100 / total, 1) if total else 0
+    for key in ("total", "delivered", "failed", "cancelled", "active"):
+        overview[key] = int(overview.get(key) or 0)
+    overview["avg_duration_seconds"] = int(overview.get("avg_duration_seconds") or 0)
+
+    status_distribution = rows(
+        "SELECT status name,COUNT(*) value FROM delivery_requests GROUP BY status ORDER BY value DESC"
+    )
+    mode_distribution = rows(
+        "SELECT delivery_mode name,COUNT(*) value FROM delivery_requests GROUP BY delivery_mode ORDER BY value DESC"
+    )
+    project_distribution = rows(
+        """SELECT p.name,p.project_key,COUNT(*) total,
+                  SUM(CASE WHEN r.status='delivered' THEN 1 ELSE 0 END) delivered,
+                  SUM(CASE WHEN r.status IN ('failed','rejected') THEN 1 ELSE 0 END) failed,
+                  AVG(CASE WHEN r.completed_at IS NOT NULL
+                      THEN (julianday(r.completed_at)-julianday(COALESCE(r.started_at,r.created_at)))*86400 END) avg_duration_seconds
+           FROM delivery_requests r JOIN projects p ON p.id=r.project_id
+           GROUP BY p.id,p.name,p.project_key ORDER BY total DESC,p.name LIMIT 20"""
+    )
+    for item in project_distribution:
+        item["total"] = int(item.get("total") or 0)
+        item["delivered"] = int(item.get("delivered") or 0)
+        item["failed"] = int(item.get("failed") or 0)
+        item["avg_duration_seconds"] = int(item.get("avg_duration_seconds") or 0)
+    requester_distribution = rows(
+        """SELECT u.display_name name,COUNT(*) value,
+                  SUM(CASE WHEN r.status='delivered' THEN 1 ELSE 0 END) delivered
+           FROM delivery_requests r JOIN users u ON u.id=r.requester_id
+           GROUP BY u.id,u.display_name ORDER BY value DESC LIMIT 10"""
+    )
+    daily_rows = rows(
+        """SELECT date(created_at,'+8 hours') day,COUNT(*) created,
+                  SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END) delivered,
+                  SUM(CASE WHEN status IN ('failed','rejected') THEN 1 ELSE 0 END) failed
+           FROM delivery_requests
+           WHERE datetime(created_at)>=datetime('now','-13 days')
+           GROUP BY date(created_at,'+8 hours') ORDER BY day"""
+    )
+    daily_lookup = {item["day"]: item for item in daily_rows}
+    today = datetime.now(timezone(timedelta(hours=8))).date()
+    daily_trend = []
+    for offset in range(13, -1, -1):
+        day = (today - timedelta(days=offset)).isoformat()
+        value = daily_lookup.get(day, {})
+        daily_trend.append(
+            {
+                "day": day,
+                "created": int(value.get("created") or 0),
+                "delivered": int(value.get("delivered") or 0),
+                "failed": int(value.get("failed") or 0),
+            }
+        )
+    return {
+        "overview": overview,
+        "status_distribution": status_distribution,
+        "mode_distribution": mode_distribution,
+        "project_distribution": project_distribution,
+        "requester_distribution": requester_distribution,
+        "daily_trend": daily_trend,
     }
 
 
@@ -804,17 +917,18 @@ def get_request_intake(intake_id: str, user: Annotated[dict, Depends(current_use
 
 @app.get("/api/requests/{request_id}")
 def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
-    detail = can_access_request(user, request_id)
+    detail = public_request_payload(can_access_request(user, request_id))
     detail["status_label"] = STATUS_LABELS.get(RunStatus(detail["status"]), detail["status"])
     detail["delivery_mode_label"] = DELIVERY_MODE_LABELS[DeliveryMode(detail["delivery_mode"])]
     return {"request": detail}
 
 
-@app.post("/api/requests/{request_id}/codex-watch/start")
-def start_codex_watch(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
+@app.post("/api/requests/{request_id}/codex-watch/start", include_in_schema=False)
+@app.post("/api/requests/{request_id}/devcore-watch/start")
+def start_devcore_watch(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
     detail = can_access_request(user, request_id)
     if detail["status"] != RunStatus.DEVELOPING.value:
-        raise HTTPException(status_code=409, detail="Codex 当前未处于研发执行阶段")
+        raise HTTPException(status_code=409, detail="DevCore 当前未处于研发执行阶段")
     watcher_id, cursor = live_codex_streams.start(request_id)
     return {
         "watcher_id": watcher_id,
@@ -824,8 +938,9 @@ def start_codex_watch(request_id: str, user: Annotated[dict, Depends(current_use
     }
 
 
-@app.get("/api/requests/{request_id}/codex-watch/{watcher_id}")
-def poll_codex_watch(
+@app.get("/api/requests/{request_id}/codex-watch/{watcher_id}", include_in_schema=False)
+@app.get("/api/requests/{request_id}/devcore-watch/{watcher_id}")
+def poll_devcore_watch(
     request_id: str,
     watcher_id: str,
     user: Annotated[dict, Depends(current_user)],
@@ -838,8 +953,9 @@ def poll_codex_watch(
     return result
 
 
-@app.post("/api/requests/{request_id}/codex-watch/{watcher_id}/stop")
-def stop_codex_watch(
+@app.post("/api/requests/{request_id}/codex-watch/{watcher_id}/stop", include_in_schema=False)
+@app.post("/api/requests/{request_id}/devcore-watch/{watcher_id}/stop")
+def stop_devcore_watch(
     request_id: str,
     watcher_id: str,
     user: Annotated[dict, Depends(current_user)],
@@ -847,6 +963,37 @@ def stop_codex_watch(
     can_access_request(user, request_id)
     live_codex_streams.stop(request_id, watcher_id)
     return {"ok": True}
+
+
+@app.post("/api/requests/{request_id}/retry")
+def retry_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
+    original = can_access_request(user, request_id)
+    if original["status"] != RunStatus.FAILED.value:
+        raise HTTPException(status_code=409, detail="只有执行失败的任务可以重新发起")
+    project = row("SELECT * FROM projects WHERE id=? AND enabled=1", (original["project_id"],))
+    if not project:
+        raise HTTPException(status_code=409, detail="原任务所属项目已停用，暂时无法重新发起")
+    try:
+        new_request_id = create_delivery_request(
+            project,
+            original["requester_id"],
+            original["work_item_id"],
+            original["delivery_mode"],
+            original.get("notification_emails") or [original["requester_email"]],
+        )
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="该需求已有正在执行的研发任务") from exc
+    add_event(request_id, "request.retried", f"{user['display_name']} 重新发起了任务，新任务 {new_request_id[:8].upper()}")
+    add_event(new_request_id, "request.retry_created", f"由失败任务 {request_id[:8].upper()} 重新发起")
+    with transaction() as conn:
+        conn.execute(
+            "INSERT INTO audit_logs(actor_id,action,target_type,target_id,detail,created_at) VALUES(?,?,?,?,?,?)",
+            (
+                user["id"], "request.retry", "delivery_request", new_request_id,
+                json.dumps({"source_request_id": request_id}, ensure_ascii=False), utc_now(),
+            ),
+        )
+    return {"id": new_request_id, "status": RunStatus.QUEUED.value, "work_item_id": original["work_item_id"]}
 
 
 @app.post("/api/requests/{request_id}/cancel")

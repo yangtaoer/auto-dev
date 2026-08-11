@@ -80,7 +80,7 @@ class LocalMonitorServer:
                         "current_request_ids": current_ids,
                         "active_count": len(current_ids),
                         "max_concurrency": self.worker.max_concurrency,
-                        "codex_usage": self.usage_provider(),
+                        "devcore_usage": self.usage_provider(),
                         "pid": os.getpid(),
                     },
                 )

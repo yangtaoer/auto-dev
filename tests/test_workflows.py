@@ -41,7 +41,7 @@ from app.services.delivery import (  # noqa: E402
     menu_link_from_view_path,
     repository_short_name,
 )
-from app.services.tfs import DELIVERY_ARTIFACTS_FIELD, TfsClient  # noqa: E402
+from app.services.tfs import ACTUAL_DELIVERY_VERSION_FIELD, DELIVERY_ARTIFACTS_FIELD, TfsClient  # noqa: E402
 from app.store import RemoteStore  # noqa: E402
 
 
@@ -57,6 +57,11 @@ class WorkflowTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls.client_context.__exit__(None, None, None)
         TEST_DATA.cleanup()
+
+    def setUp(self) -> None:
+        self.client.post("/api/auth/logout")
+        response = self.client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        self.assertEqual(response.status_code, 200, response.text)
 
     def create_project(self, key: str, mode: str, *, allow_override: bool = False) -> int:
         payload = {
@@ -242,6 +247,27 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("/workitems/910017", args[1])
         self.assertEqual(kwargs["headers"]["Content-Type"], "application/json-patch+json")
         self.assertEqual(kwargs["json"][0]["path"], f"/fields/{DELIVERY_ARTIFACTS_FIELD}")
+
+    def test_tfs_delivery_completion_sets_resolved_state_and_actual_version(self) -> None:
+        client = TfsClient("https://tfs.test/DefaultCollection", pat="test-pat")
+        updated = {
+            "fields": {
+                "System.State": "已解决",
+                ACTUAL_DELIVERY_VERSION_FIELD: "V1.0",
+            }
+        }
+        with patch.object(client, "get_work_item", return_value={"state": "已评审"}), patch.object(
+            client, "_request", return_value=updated
+        ) as request:
+            result = client.complete_delivery(910018, "<ul><li>交付产物</li></ul>")
+        patch_body = request.call_args.kwargs["json"]
+        self.assertIn({"op": "replace", "path": "/fields/System.State", "value": "已解决"}, patch_body)
+        self.assertIn(
+            {"op": "add", "path": f"/fields/{ACTUAL_DELIVERY_VERSION_FIELD}", "value": "V1.0"},
+            patch_body,
+        )
+        self.assertEqual(result["state"], "已解决")
+        self.assertEqual(result["actual_version"], "V1.0")
 
     def test_favicon_is_transparent_symbol_without_square_plate(self) -> None:
         with Image.open(Path("app/static/brand/favicon.ico")) as source:
@@ -688,7 +714,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(updated.status_code, 200, updated.text)
         event_count = len(self.client.get(f"/api/requests/{request_id}").json()["request"]["events"])
 
-        started = self.client.post(f"/api/requests/{request_id}/codex-watch/start")
+        started = self.client.post(f"/api/requests/{request_id}/devcore-watch/start")
         self.assertEqual(started.status_code, 200, started.text)
         watcher = started.json()
         active = self.client.get(
@@ -702,11 +728,11 @@ class WorkflowTests(unittest.TestCase):
         )
         self.assertEqual(published.json()["accepted"], 1)
         polled = self.client.get(
-            f"/api/requests/{request_id}/codex-watch/{watcher['watcher_id']}?after={watcher['cursor']}"
+            f"/api/requests/{request_id}/devcore-watch/{watcher['watcher_id']}?after={watcher['cursor']}"
         )
         self.assertEqual(polled.json()["events"][0]["content"], "only-live-output")
         stopped = self.client.post(
-            f"/api/requests/{request_id}/codex-watch/{watcher['watcher_id']}/stop"
+            f"/api/requests/{request_id}/devcore-watch/{watcher['watcher_id']}/stop"
         )
         self.assertEqual(stopped.status_code, 200, stopped.text)
         self.assertFalse(
@@ -739,11 +765,98 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(heartbeat.status_code, 200, heartbeat.text)
         dashboard = self.client.get("/api/dashboard").json()
         runner = next(item for item in dashboard["runners"] if item["runner_id"] == "quota-test-runner")
-        self.assertEqual(runner["codex_usage"]["primary"]["remaining_percent"], 58)
+        self.assertEqual(runner["devcore_usage"]["primary"]["remaining_percent"], 58)
+        self.assertNotIn("codex_usage", runner)
         self.assertEqual(runner["max_concurrency"], 5)
         self.assertGreaterEqual(dashboard["stats"]["total"], 1)
         self.assertIn("today_total", dashboard["stats"])
         self.assertEqual(dashboard["capacity"]["limit"], 5)
+
+    def test_failed_task_can_be_retried_with_original_delivery_context(self) -> None:
+        project_id = self.create_project("test-retry", "product_manual_review")
+        created = self.client.post(
+            "/api/requests",
+            json={
+                "project_id": project_id,
+                "work_item_id": 910023,
+                "notification_emails": ["admin@example.com"],
+            },
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        original_id = created.json()["id"]
+        update_request(original_id, status="failed", error_message="模拟执行失败")
+
+        retried = self.client.post(f"/api/requests/{original_id}/retry")
+        self.assertEqual(retried.status_code, 200, retried.text)
+        self.assertNotEqual(retried.json()["id"], original_id)
+        new_detail = self.client.get(f"/api/requests/{retried.json()['id']}").json()["request"]
+        self.assertEqual(new_detail["status"], "queued")
+        self.assertEqual(new_detail["project_id"], project_id)
+        self.assertEqual(new_detail["work_item_id"], 910023)
+        self.assertEqual(new_detail["delivery_mode"], "product_manual_review")
+        self.assertEqual(new_detail["notification_emails"], ["admin@example.com"])
+        original = self.client.get(f"/api/requests/{original_id}").json()["request"]
+        self.assertTrue(any(event["event_type"] == "request.retried" for event in original["events"]))
+        second_retry = self.client.post(f"/api/requests/{original_id}/retry")
+        self.assertEqual(second_retry.status_code, 409)
+        update_request(retried.json()["id"], status="cancelled")
+
+    def test_retry_rejects_non_failed_task(self) -> None:
+        project_id = self.create_project("test-retry-state", "local_package")
+        created = self.client.post(
+            "/api/requests", json={"project_id": project_id, "work_item_id": 910024}
+        )
+        response = self.client.post(f"/api/requests/{created.json()['id']}/retry")
+        self.assertEqual(response.status_code, 409)
+        update_request(created.json()["id"], status="cancelled")
+
+    def test_admin_analytics_exposes_platform_distributions(self) -> None:
+        analytics = self.client.get("/api/admin/analytics")
+        self.assertEqual(analytics.status_code, 200, analytics.text)
+        payload = analytics.json()
+        self.assertIn("success_rate", payload["overview"])
+        self.assertEqual(len(payload["daily_trend"]), 14)
+        self.assertIn("status_distribution", payload)
+        self.assertIn("project_distribution", payload)
+        page = self.client.get("/")
+        self.assertIn("统计看板", page.text)
+        self.assertIn('id="analytics-projects"', page.text)
+
+        self.client.post("/api/auth/logout")
+        self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
+        forbidden = self.client.get("/api/admin/analytics")
+        self.assertEqual(forbidden.status_code, 403)
+
+    def test_public_task_payload_masks_engine_identity(self) -> None:
+        project_id = self.create_project("test-devcore-mask", "local_package")
+        created = self.client.post(
+            "/api/requests", json={"project_id": project_id, "work_item_id": 910025}
+        )
+        request_id = created.json()["id"]
+        headers = {"Authorization": "Bearer test-runner-token"}
+        self.client.patch(
+            f"/api/runner/requests/{request_id}",
+            headers=headers,
+            json={
+                "fields": {
+                    "status": "developing",
+                    "result_summary": "Codex 正在处理",
+                    "codex_thread_id": "secret-engine-thread",
+                }
+            },
+        )
+        self.client.post(
+            f"/api/runner/requests/{request_id}/events",
+            headers=headers,
+            json={"event_type": "codex.event", "message": "Codex 已完成一段分析"},
+        )
+        detail = self.client.get(f"/api/requests/{request_id}").json()["request"]
+        rendered = json.dumps(detail, ensure_ascii=False)
+        self.assertNotIn("Codex", rendered)
+        self.assertNotIn("codex_thread_id", detail)
+        self.assertIn("DevCore", rendered)
+        self.assertNotIn("Codex", self.client.get("/").text)
+        update_request(request_id, status="cancelled")
 
     def test_new_intake_is_immediately_visible_and_home_shows_version(self) -> None:
         self.create_project("test-instant-board", "local_package")
@@ -758,15 +871,15 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM v0.4.12"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha"), 1)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
         self.assertNotIn("系统版本 / VERSION", page.text)
         self.assertIn("control-strip", page.text)
         self.assertIn('id="project-guide"', page.text)
-        self.assertIn("当前支持的项目", page.text)
-        self.assertIn("【项目简称】", page.text)
+        self.assertIn("支持项目与别名", page.text)
+        self.assertIn("可自助研发项目", page.text)
         self.assertIn("project-guide", page.text)
         script = self.client.get("/static/app.js").text
         self.assertIn("addOptimisticIntake", script)
@@ -781,7 +894,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("activeEl.innerHTML=state.dashboard.active", script)
         self.assertIn("const projectRequest=api('/api/projects')", script)
         self.assertIn("renderProjectGuide", script)
-        self.assertIn("project-guide-trigger", script)
+        self.assertNotIn("project-guide-trigger')?.addEventListener('click'", script)
 
         login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
         self.assertIn("login-logo-lockup", login_template)
@@ -793,6 +906,7 @@ class WorkflowTests(unittest.TestCase):
         brand_styles = Path("app/static/brand-ui.css").read_text(encoding="utf-8")
         self.assertIn("width: 255px", brand_styles)
         self.assertIn(".project-guide-panel", brand_styles)
+        self.assertIn(".project-guide:hover .project-guide-panel", brand_styles)
 
         headers = {"Authorization": "Bearer test-runner-token"}
         claimed = self.client.post(
@@ -823,7 +937,11 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('"启动执行器", "restart.ps1"', client_source)
         self.assertIn("subprocess.run(", client_source)
         self.assertIn("capture_output=True", client_source)
-        self.assertIn("正在重新连接 Codex 实时会话", client_source)
+        self.assertIn("正在重新连接 DevCore 实时会话", client_source)
+        self.assertIn('if name == "logs"', client_source)
+        self.assertIn('text.see("end")', client_source)
+        self.assertIn("执行器仍有", restart_script)
+        self.assertIn("param([switch]$Force)", restart_script)
 
     def test_worker_never_exceeds_five_parallel_tasks(self) -> None:
         class QueueStore:
@@ -896,8 +1014,8 @@ class WorkflowTests(unittest.TestCase):
         pm_page = self.client.get("/")
         self.assertNotIn("自助项目", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
-        self.assertIn("TFS 需求标题规则", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM v0.4.12"), 1)
+        self.assertIn("支持项目与别名", pm_page.text)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")

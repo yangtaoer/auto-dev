@@ -1,4 +1,6 @@
-﻿$ErrorActionPreference = "Stop"
+param([switch]$Force)
+
+$ErrorActionPreference = "Stop"
 $RunnerDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TaskName = "AutoDevLocalRunner"
 $EnvFile = Join-Path $RunnerDir ".env.runner"
@@ -17,6 +19,22 @@ function Get-RunnerMonitorPort {
     return $DefaultPort
 }
 
+$MonitorPort = Get-RunnerMonitorPort
+$HealthUri = "http://127.0.0.1:$MonitorPort/healthz"
+try {
+    $ExistingHealth = Invoke-RestMethod -Uri $HealthUri -TimeoutSec 2
+}
+catch {
+    $ExistingHealth = $null
+}
+if (-not $Force -and $ExistingHealth -and (
+    $ExistingHealth.state -eq "working" -or
+    [int]($ExistingHealth.active_count) -gt 0 -or
+    @($ExistingHealth.current_request_ids).Count -gt 0
+)) {
+    throw "执行器仍有 $($ExistingHealth.active_count) 个任务正在运行，为避免任务中断已拒绝重启。请等待任务结束；确需强制重启时使用 -Force。"
+}
+
 & (Join-Path $RunnerDir "stop.ps1")
 
 $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -26,8 +44,6 @@ if (-not $Task) {
 Start-ScheduledTask -TaskName $TaskName
 Write-Host "已启动计划任务，正在等待本机接口就绪..."
 
-$MonitorPort = Get-RunnerMonitorPort
-$HealthUri = "http://127.0.0.1:$MonitorPort/healthz"
 $StartDeadline = (Get-Date).AddSeconds(45)
 $Health = $null
 do {

@@ -8,10 +8,10 @@
   <link rel="icon" href="/static/brand/favicon.ico?v={{ app_version }}" sizes="any">
   <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
   <link rel="manifest" href="/static/brand/site.webmanifest">
-  <link rel="stylesheet" href="/static/styles.css?v={{ app_version }}-project-guide">
-  <link rel="stylesheet" href="/static/brand-ui.css?v={{ app_version }}-project-guide">
+  <link rel="stylesheet" href="/static/styles.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/brand-ui.css?v={{ app_version }}">
 </head>
-<body class="project-guide-dashboard">
+<body>
   <div class="app-shell">
     <aside class="sidebar">
       <div class="logo" aria-label="AutoDev"><img class="sidebar-brand-mark" src="/static/brand/autodev-sidebar-mark.png?v={{ app_version }}" alt="AutoDev 标志"><b class="sidebar-brand-name">AutoDev</b></div>
@@ -19,7 +19,8 @@
         <button class="nav-item active" data-view="dashboard"><span class="nav-index">01</span><span>任务总览</span></button>
         <button class="nav-item" data-view="requests"><span class="nav-index">02</span><span>交付记录</span></button>
         {% if user.role == 'admin' %}<button class="nav-item" data-view="projects"><span class="nav-index">03</span><span>自助项目</span></button>
-        <button class="nav-item" data-view="users"><span class="nav-index">04</span><span>账号管理</span></button>{% endif %}
+        <button class="nav-item" data-view="analytics"><span class="nav-index">04</span><span>统计看板</span></button>
+        <button class="nav-item" data-view="users"><span class="nav-index">05</span><span>账号管理</span></button>{% endif %}
       </nav>
       <div class="sidebar-foot">
         <div class="system-status offline" id="runner-status"><i></i><span>执行器离线</span></div>
@@ -30,12 +31,21 @@
     <main class="main-stage">
       <header class="topbar">
         <div><p class="eyebrow" id="view-code">控制室 / CONTROL ROOM / 01</p><h1 id="view-title">任务总览</h1></div>
-        <div class="top-actions"><span class="version-chip">SYSTEM v{{ app_version }}</span><span class="clock" id="clock"></span><button class="btn btn-primary" id="open-request">＋ 发起自动研发</button></div>
+        <div class="top-actions">
+          <div class="project-guide" id="project-guide" tabindex="0" aria-label="悬浮查看支持项目和别名">
+            <div class="project-guide-trigger"><span><i></i>支持项目</span><b id="project-guide-count">—</b></div>
+            <section class="project-guide-panel" id="project-guide-panel">
+              <header><p class="eyebrow">支持项目与别名 / PROJECT ALIASES</p><h2>可自助研发项目</h2></header>
+              <div class="project-guide-list" id="project-guide-list"><div class="project-guide-loading">正在读取项目目录…</div></div>
+            </section>
+          </div>
+          <span class="version-chip">SYSTEM V{{ app_version }}</span><span class="clock" id="clock"></span><button class="btn btn-primary" id="open-request">＋ 发起自动研发</button>
+        </div>
       </header>
 
       <section class="view active" id="view-dashboard">
         <div class="control-strip {{ 'admin-strip' if user.role == 'admin' else 'pm-strip' }}">
-          {% if user.role == 'admin' %}<div class="codex-quota" id="codex-quota"><div><p class="eyebrow">套餐容量 / CODEX CAPACITY</p><h2>套餐用量正在同步</h2></div><span class="muted">来自本机 Codex 登录态</span></div>{% endif %}
+          {% if user.role == 'admin' %}<div class="devcore-quota" id="devcore-quota"><div><p class="eyebrow">研发容量 / DEVCORE CAPACITY</p><h2>套餐用量正在同步</h2></div><span class="muted">由本机研发引擎同步</span></div>{% endif %}
           <div class="metrics" id="metrics"></div>
         </div>
         <section class="active-pipeline" id="active-pipeline" hidden>
@@ -53,10 +63,21 @@
 
       {% if user.role == 'admin' %}<section class="view" id="view-projects">
         <div class="section-heading"><div><p class="eyebrow">支持项目 / SUPPORTED PROJECTS</p><h2>支持自助开发的项目</h2></div><span class="catalog-source">由本机执行器同步</span></div>
-        <div class="policy-note"><b>项目目录</b><span>项目策略在本机通过 Codex 对话维护；这里展示当前已开放的项目、交付方式和执行器。</span></div>
+        <div class="policy-note"><b>项目与别名</b><span>TFS 需求标题建议以项目别名开头，例如【成都网络发令】，执行器将据此识别项目。</span></div>
         <div class="project-grid" id="project-grid"></div>
       </section>{% endif %}
       {% if user.role == 'admin' %}
+      <section class="view" id="view-analytics">
+        <div class="section-heading"><div><p class="eyebrow">运行洞察 / PLATFORM ANALYTICS</p><h2>统计看板</h2></div><span class="catalog-source">全平台实时数据</span></div>
+        <div class="analytics-kpis" id="analytics-kpis"></div>
+        <div class="analytics-layout">
+          <article class="analytics-card trend-card"><header><p class="eyebrow">近 14 天 / DAILY TREND</p><h3>任务趋势</h3></header><div id="analytics-trend"></div></article>
+          <article class="analytics-card"><header><p class="eyebrow">任务状态 / STATUS</p><h3>状态分布</h3></header><div class="analytics-bars" id="analytics-status"></div></article>
+          <article class="analytics-card"><header><p class="eyebrow">交付策略 / DELIVERY MODE</p><h3>交付方式分布</h3></header><div class="analytics-bars" id="analytics-mode"></div></article>
+          <article class="analytics-card"><header><p class="eyebrow">提交人员 / REQUESTERS</p><h3>任务提交分布</h3></header><div class="analytics-bars" id="analytics-requesters"></div></article>
+          <article class="analytics-card project-ranking"><header><p class="eyebrow">项目运行 / PROJECTS</p><h3>项目完成情况</h3></header><div id="analytics-projects"></div></article>
+        </div>
+      </section>
       <section class="view" id="view-users">
         <div class="section-heading"><div><p class="eyebrow">账号管理 / ACCESS REGISTRY</p><h2>项目经理账号</h2></div><button class="btn btn-secondary" id="new-user">＋ 新建账号</button></div>
         <div class="policy-note"><b>邮件身份</b><span>每个账号可维护多个邮箱；发起需求时可以从自己的邮箱中选择本次通知对象。</span></div>
@@ -65,23 +86,6 @@
       {% endif %}
     </main>
   </div>
-
-  <aside class="project-guide is-open" id="project-guide" aria-label="当前支持的自动研发项目">
-    <button class="project-guide-trigger" id="project-guide-trigger" type="button" aria-expanded="true" aria-controls="project-guide-panel">
-      <span><i></i>支持项目</span><b id="project-guide-count">—</b><em>收起</em>
-    </button>
-    <section class="project-guide-panel" id="project-guide-panel">
-      <header>
-        <div><p class="eyebrow">项目雷达 / PROJECT RADAR</p><h2>当前支持的项目</h2></div>
-        <span>自动同步</span>
-      </header>
-      <div class="project-title-rule">
-        <i>【】</i>
-        <div><b>TFS 需求标题规则</b><p>标题需要以对应的 <strong>【项目简称】</strong> 开头，执行器才能准确识别研发项目。</p></div>
-      </div>
-      <div class="project-guide-list" id="project-guide-list"><div class="project-guide-loading">正在读取项目目录…</div></div>
-    </section>
-  </aside>
 
   <div class="modal-backdrop" id="request-modal" hidden>
     <section class="modal request-modal"><button class="modal-close" data-close>×</button><p class="eyebrow">新研发任务 / NEW DEVELOPMENT RUN</p><h2>发起自动研发</h2><p class="muted">输入 TFS 用户情景编号，执行器会自动识别项目和交付策略。</p><p class="queue-note"><i></i>最多同时运行 5 个任务，超出后自动排队，不影响继续提交。</p>
@@ -96,10 +100,10 @@
 
   <div class="drawer-backdrop" id="detail-backdrop" hidden></div>
   <aside class="detail-drawer" id="detail-drawer" aria-hidden="true"><button class="modal-close" id="close-detail">×</button><div id="detail-content"></div></aside>
-  <aside class="codex-stream-panel" id="codex-stream-panel" aria-hidden="true">
-    <header><div><p class="eyebrow">实时研发会话 / LIVE CODEX SESSION</p><h2 id="codex-stream-title">研发过程</h2></div><button class="modal-close" id="close-codex-stream">×</button></header>
+  <aside class="devcore-stream-panel" id="devcore-stream-panel" aria-hidden="true">
+    <header><div><p class="eyebrow">实时研发会话 / LIVE DEVCORE SESSION</p><h2 id="devcore-stream-title">研发过程</h2></div><button class="modal-close" id="close-devcore-stream">×</button></header>
     <div class="stream-notice"><i></i><span>仅传输打开后的输出；关闭即停止采集且不保存</span></div>
-    <div class="codex-chat" id="codex-chat"></div>
+    <div class="devcore-chat" id="devcore-chat"></div>
   </aside>
 
   {% if user.role == 'admin' %}
@@ -141,6 +145,6 @@
 
   <div class="toast" id="toast"></div>
   <script>window.__USER__ = {{ user | tojson }};</script>
-  <script src="/static/app.js?v={{ app_version }}-project-guide"></script>
+  <script src="/static/app.js?v={{ app_version }}"></script>
 </body>
 </html>

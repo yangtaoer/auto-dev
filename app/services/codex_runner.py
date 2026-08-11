@@ -93,13 +93,13 @@ class CodexRunner:
                 developer_instructions=developer_instructions,
                 service_name="tellhow-autodev",
             )
-            on_event("codex.thread", "Codex 研发会话已启动")
+            on_event("devcore.thread", "DevCore 研发会话已启动")
             handle = thread.turn(prompt, output_schema=RESULT_SCHEMA)
             final_text: str | None = None
             for notification in handle.stream():
                 method = notification.method
                 if method in {"item/started", "item/completed", "turn/completed"}:
-                    on_event("codex.event", self._event_summary(method, notification.payload))
+                    on_event("devcore.event", self._event_summary(method, notification.payload))
                 if on_live_event:
                     live_event = self._live_event(method, notification.payload)
                     if live_event:
@@ -111,11 +111,11 @@ class CodexRunner:
                         final_text = item["text"]
 
         if not final_text:
-            raise RuntimeError("Codex 未返回结构化研发结果")
+            raise RuntimeError("DevCore 未返回结构化研发结果")
         try:
             parsed = json.loads(final_text)
         except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Codex 结果不是有效 JSON: {final_text[:500]}") from exc
+            raise RuntimeError(f"DevCore 结果不是有效 JSON: {final_text[:500]}") from exc
         return CodexRunResult(thread.id, parsed)
 
     @classmethod
@@ -204,18 +204,18 @@ class CodexRunner:
             changes = item.get("changes") or []
             paths = [str(change.get("path") or "") for change in changes if isinstance(change, dict)]
             suffix = "、".join(filter(None, paths[:4]))
-            return f"正在修改文件：{suffix}" if suffix else "Codex 正在修改代码文件"
+            return f"正在修改文件：{suffix}" if suffix else "DevCore 正在修改代码文件"
         if item_type == "reasoning":
-            return "Codex 已完成一段分析"
+            return "DevCore 已完成一段分析"
         if item_type == "agentMessage":
-            return "Codex 正在整理研发结果" if method == "item/started" else "Codex 已输出本轮研发结论"
+            return "DevCore 正在整理研发结果" if method == "item/started" else "DevCore 已输出本轮研发结论"
         if item_type == "plan":
-            return "Codex 已更新研发计划"
+            return "DevCore 已更新研发计划"
         if item_type:
-            return f"Codex 正在处理：{item_type}" if method == "item/started" else f"Codex 已完成：{item_type}"
+            return f"DevCore 正在处理：{item_type}" if method == "item/started" else f"DevCore 已完成：{item_type}"
         if method == "turn/completed":
             turn = data.get("turn", {})
-            return f"Codex 本轮执行结束：{turn.get('status', 'completed')}"
+            return f"DevCore 本轮执行结束：{turn.get('status', 'completed')}"
         return method
 
     def _live_event(self, method: str, payload) -> dict[str, Any] | None:
@@ -279,10 +279,10 @@ class CodexRunner:
             result = json.loads(raw)
         except json.JSONDecodeError:
             if raw.lstrip().startswith(("{", "[")):
-                return "### 研发结论\n\nCodex 已返回结果，系统正在校验结构化内容。"
-            return f"### Codex 回复\n\n{raw.strip()}"
+                return "### 研发结论\n\nDevCore 已返回结果，系统正在校验结构化内容。"
+            return f"### DevCore 回复\n\n{raw.strip()}"
         if not isinstance(result, dict):
-            return "### 研发结论\n\nCodex 已完成本轮研发，系统正在校验结果。"
+            return "### 研发结论\n\nDevCore 已完成本轮研发，系统正在校验结果。"
 
         def section(title: str, value: Any, *, empty: str = "无") -> list[str]:
             lines = [f"### {title}", ""]
@@ -296,7 +296,7 @@ class CodexRunner:
 
         blocks: list[str] = []
         for title, field, empty in (
-            ("研发结论", "summary", "Codex 已完成本轮研发。"),
+            ("研发结论", "summary", "DevCore 已完成本轮研发。"),
             ("变更文件", "changed_files", "无代码文件变更"),
             ("验收覆盖", "acceptance_mapping", "未提供验收映射"),
             ("风险提示", "risks", "无"),

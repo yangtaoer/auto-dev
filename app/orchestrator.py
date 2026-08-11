@@ -195,7 +195,7 @@ class Worker:
             self._check_cancelled(request_id)
 
             self.store.update_request(request_id, status=RunStatus.DEVELOPING.value, current_step="develop", progress=32)
-            self.store.update_step(request_id, "develop", "running", "Codex 正在分析需求并修改代码")
+            self.store.update_step(request_id, "develop", "running", "DevCore 正在分析需求并修改代码")
             if project.get("simulation_mode"):
                 result = self._simulate_development(request_id, work_item)
                 codex_thread_id = "demo-thread"
@@ -235,7 +235,7 @@ class Worker:
                     self.store.add_event(request_id, "policy.protected_change", "检测到受保护路径变更，任务已暂停", level="warning", metadata={"paths": blocked})
                     return
                 if not paths:
-                    raise RuntimeError("Codex 执行完成，但没有产生代码变更")
+                    raise RuntimeError("DevCore 执行完成，但没有产生代码变更")
             summary = result.get("summary", "")
             mode = DeliveryMode(detail["delivery_mode"])
             if mode == DeliveryMode.SICHUAN_AUTO_REVIEW and result.get("risks"):
@@ -254,7 +254,7 @@ class Worker:
                 return
             self.store.update_request(request_id, result_summary=summary, codex_thread_id=codex_thread_id, progress=55)
             self.store.update_step(request_id, "develop", "completed", summary or "代码修改完成")
-            self.store.add_event(request_id, "development.completed", summary or "Codex 自动研发完成", metadata=result)
+            self.store.add_event(request_id, "development.completed", summary or "DevCore 自动研发完成", metadata=result)
             self._check_cancelled(request_id)
 
             self.store.update_request(request_id, status=RunStatus.SUBMITTING.value, current_step="submit", progress=62)
@@ -760,11 +760,18 @@ class Worker:
         project = detail["policy_snapshot"]
         if not project.get("simulation_mode"):
             manifest = self.artifacts.delivery_manifest_html(detail)
-            TfsClient(project["tfs_collection_url"]).update_delivery_artifacts(detail["work_item_id"], manifest)
-            self.store.add_event(request_id, "tfs.delivery_path_updated", "已将全部交付产物写入 TFS 交付包获取路径")
+            tfs_result = TfsClient(project["tfs_collection_url"]).complete_delivery(
+                detail["work_item_id"], manifest, actual_version="V1.0"
+            )
+            self.store.add_event(
+                request_id,
+                "tfs.delivery_completed",
+                f"TFS 已更新为{tfs_result['state']}，实际交付版本 V1.0，交付产物路径已写入",
+                metadata=tfs_result,
+            )
         self._send_status_email(request_id, action_required=False)
         self.store.update_request(request_id, status=RunStatus.DELIVERED.value, current_step="deliver", progress=100, completed_at=utc_now())
-        self.store.update_step(request_id, "deliver", "completed", "交付产物、通知邮件及 TFS 交付路径已生成")
+        self.store.update_step(request_id, "deliver", "completed", "交付产物与通知邮件已生成，TFS 状态及实际交付版本已更新")
         self.store.add_event(request_id, "delivery.completed", "需求研发交付完成")
 
     def _send_status_email(self, request_id: str, *, action_required: bool, terminal: bool = False) -> None:
@@ -820,8 +827,8 @@ class Worker:
             )
 
     def _simulate_development(self, request_id: str, work_item: dict) -> dict:
-        self.store.add_event(request_id, "codex.thread", "演示模式：Codex 研发线程已启动")
-        self.store.add_event(request_id, "codex.event", "演示模式：完成需求分析、代码修改与风险检查")
+        self.store.add_event(request_id, "devcore.thread", "演示模式：DevCore 研发线程已启动")
+        self.store.add_event(request_id, "devcore.event", "演示模式：完成需求分析、代码修改与风险检查")
         return {
             "summary": f"已完成“{work_item['title']}”的演示开发，并验证交付流程。",
             "changed_files": ["src/demo/FeatureService.java", "config/application-demo.yml", "sql/upgrade.sql"],

@@ -12,6 +12,7 @@ from .process_env import sanitized_process_env
 
 
 DELIVERY_ARTIFACTS_FIELD = "Custom.0bb5cb34-6fb8-4a13-9508-166612ddb2b8"
+ACTUAL_DELIVERY_VERSION_FIELD = "Custom.adf4ae15-611e-4565-9f47-a9f24561efa9"
 
 
 @dataclass(slots=True)
@@ -70,6 +71,38 @@ class TfsClient:
             json=patch,
             headers={"Content-Type": "application/json-patch+json"},
         )
+
+    def complete_delivery(
+        self,
+        work_item_id: int,
+        html_value: str,
+        *,
+        actual_version: str = "V1.0",
+        resolved_state: str = "已解决",
+    ) -> dict:
+        """Close the delivery loop on TFS with one atomic work-item update."""
+        work_item = self.get_work_item(work_item_id)
+        previous_state = str(work_item.get("state") or "")
+        patch = [
+            {"op": "add", "path": f"/fields/{DELIVERY_ARTIFACTS_FIELD}", "value": html_value},
+            {"op": "add", "path": f"/fields/{ACTUAL_DELIVERY_VERSION_FIELD}", "value": actual_version},
+        ]
+        if previous_state != resolved_state:
+            patch.append(
+                {"op": "replace", "path": "/fields/System.State", "value": resolved_state}
+            )
+        updated = self._request(
+            "PATCH",
+            f"{self.base_url}/_apis/wit/workitems/{work_item_id}?api-version=2.0",
+            json=patch,
+            headers={"Content-Type": "application/json-patch+json"},
+        )
+        fields = updated.get("fields", {})
+        return {
+            "previous_state": previous_state,
+            "state": fields.get("System.State", resolved_state),
+            "actual_version": fields.get(ACTUAL_DELIVERY_VERSION_FIELD, actual_version),
+        }
 
     @staticmethod
     def parse_origin(repo_path: str) -> tuple[str, str]:
