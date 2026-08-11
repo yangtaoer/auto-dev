@@ -78,7 +78,7 @@ OSS 参数配置在本机 `local-runner/.env.runner`，包括 AccessKey、Region
 - `本机执行器 ID`：默认 `yangtao-pc`，必须与 `.env.runner` 一致。
 - `本机代码仓库绝对路径`：例如 `C:\workspace\project`，由本机执行器使用。
 - `TFS Collection / 项目 / Area Path`：用于需求准入和 PR 操作。
-- `基础分支`：默认 `dev`；自动研发只推 feature 分支，不直推 `dev`。
+- `基础分支`：默认 `dev`。PR 审核类项目只推 feature 分支；本地打包项目会先同步最新基础分支，将本次提交推送到基础分支并校验远端提交一致，再基于该最新代码构建。
 - `构建/校验命令`、安装包匹配、SQL/配置匹配和受保护路径。
 - 三种交付方式之一；项目经理发起时无需选择。
 

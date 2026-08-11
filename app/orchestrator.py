@@ -313,7 +313,7 @@ class Worker:
 
             self.store.update_request(request_id, status=RunStatus.SUBMITTING.value, current_step="submit", progress=62)
             submit_message = (
-                "本地交付策略已锁定：正在强制提交并推送代码"
+                "本地交付策略已锁定：正在提交代码并同步至最新目标分支"
                 if mode == DeliveryMode.LOCAL_PACKAGE
                 else "正在提交并推送代码"
             )
@@ -322,7 +322,7 @@ class Worker:
                 self.store.add_event(
                     request_id,
                     "delivery.policy_enforced",
-                    "本地交付不按改动大小或接口影响跳过：必须提交代码并执行构建打包",
+                    "本地交付不按改动大小或接口影响跳过：必须先提交目标分支，再基于最新目标分支构建打包",
                 )
             if project.get("simulation_mode"):
                 commit_hash = "demo" + request_id.replace("-", "")[:8]
@@ -346,12 +346,27 @@ class Worker:
                         )
                     else:
                         self.artifacts.collect_menu_links(request_id, state_worktree, state["base_commit"])
+                if mode == DeliveryMode.LOCAL_PACKAGE:
+                    commits = self._merge_local_package_to_base(
+                        request_id,
+                        project,
+                        repository_states,
+                        changed_states,
+                    )
                 commit_hash = commits[0]
                 self.store.update_request(request_id, repository_states=repository_states)
             self.store.update_request(request_id, commit_hash=commit_hash)
 
             if mode == DeliveryMode.LOCAL_PACKAGE:
-                self.store.update_step(request_id, "submit", "completed", f"代码已推送，commit {commit_hash[:12]}")
+                target_branches = "、".join(
+                    dict.fromkeys(str(state.get("base_branch") or "dev") for state in repository_states)
+                ) if repository_states else project.get("base_branch", "dev")
+                self.store.update_step(
+                    request_id,
+                    "submit",
+                    "completed",
+                    f"代码已提交至 {target_branches}，构建基线 {commit_hash[:12]}",
+                )
                 self._deliver_local_package(request_id, detail, project, worktree, work_item)
                 return
 
@@ -751,6 +766,142 @@ class Worker:
         self.store.add_event(detail["id"], "git.pushed", subject, metadata={"branch": branch, "commit": commit_hash})
         return commit_hash
 
+    def _merge_local_package_to_base(
+        self,
+        request_id: str,
+        project: dict,
+        repository_states: list[dict],
+        changed_states: list[dict],
+    ) -> list[str]:
+        """将本地打包任务的提交快进到最新目标分支，并返回最终构建提交。"""
+        changed_names = {str(state["name"]) for state in changed_states}
+        git_env = git_authenticated_env(settings.tfs_pat) if settings.tfs_pat else sanitized_process_env()
+        final_commits: list[str] = []
+
+        for state in repository_states:
+            worktree = Path(state["worktree_path"])
+            repository_name = str(state["name"])
+            target_branch = str(state.get("base_branch") or project.get("base_branch") or "dev")
+            feature_branch = str(state["branch"])
+            changed = repository_name in changed_names
+
+            final_commit = self._sync_local_package_repository(
+                worktree,
+                repository_name=repository_name,
+                feature_branch=feature_branch,
+                target_branch=target_branch,
+                changed=changed,
+                git_env=git_env,
+            )
+            state["commit_hash"] = final_commit
+            state["base_branch_commit"] = final_commit
+            state["status"] = "base_pushed" if changed else "base_synced"
+            if changed:
+                final_commits.append(final_commit)
+                self.store.add_event(
+                    request_id,
+                    "git.base_pushed",
+                    f"{repository_name} 已提交至 {target_branch}，将基于该分支最新代码构建",
+                    metadata={
+                        "repository": repository_name,
+                        "feature_branch": feature_branch,
+                        "target_branch": target_branch,
+                        "commit": final_commit,
+                    },
+                )
+            else:
+                self.store.add_event(
+                    request_id,
+                    "git.base_synced",
+                    f"{repository_name} 无本次改动，构建工作区已同步至最新 {target_branch}",
+                    metadata={
+                        "repository": repository_name,
+                        "target_branch": target_branch,
+                        "commit": final_commit,
+                    },
+                )
+
+        if not final_commits:
+            raise RuntimeError("本地打包任务没有可提交到目标分支的代码变更")
+        return final_commits
+
+    @staticmethod
+    def _sync_local_package_repository(
+        worktree: Path,
+        *,
+        repository_name: str,
+        feature_branch: str,
+        target_branch: str,
+        changed: bool,
+        git_env: dict[str, str],
+    ) -> str:
+        remote_target = f"origin/{target_branch}"
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            git(worktree, "fetch", "origin", target_branch, env=git_env)
+            if changed:
+                rebase = subprocess.run(
+                    ["git", "-C", str(worktree), "rebase", remote_target],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    env=git_env,
+                    check=False,
+                )
+                if rebase.returncode:
+                    subprocess.run(
+                        ["git", "-C", str(worktree), "rebase", "--abort"],
+                        capture_output=True,
+                        text=True,
+                        env=git_env,
+                        check=False,
+                    )
+                    output = (rebase.stderr or rebase.stdout or "").strip()
+                    raise RuntimeError(
+                        f"{repository_name} 无法合入最新 {target_branch}，请解决代码冲突后重新发起：{output[-1200:]}"
+                    )
+
+                # 功能分支此前已推送；rebase 可能改变提交号，只允许覆盖本任务自己的远端功能分支。
+                git(worktree, "push", "--no-verify", "--force-with-lease", "origin", feature_branch, env=git_env)
+                push = subprocess.run(
+                    ["git", "-C", str(worktree), "push", "--no-verify", "origin", f"HEAD:refs/heads/{target_branch}"],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    env=git_env,
+                    check=False,
+                )
+                if push.returncode:
+                    output = (push.stderr or push.stdout or "").strip()
+                    concurrent_update = any(
+                        marker in output.casefold()
+                        for marker in ("non-fast-forward", "fetch first")
+                    )
+                    if concurrent_update and attempt < max_attempts:
+                        continue
+                    raise RuntimeError(
+                        f"{repository_name} 提交至 {target_branch} 失败；未执行打包：{output[-1600:]}"
+                    )
+            else:
+                git(worktree, "merge", "--ff-only", remote_target, env=git_env)
+
+            git(worktree, "fetch", "origin", target_branch, env=git_env)
+            local_commit = git(worktree, "rev-parse", "HEAD", env=git_env)
+            remote_commit = git(worktree, "rev-parse", remote_target, env=git_env)
+            if local_commit == remote_commit:
+                return local_commit
+            if not changed:
+                git(worktree, "merge", "--ff-only", remote_target, env=git_env)
+                return git(worktree, "rev-parse", "HEAD", env=git_env)
+            if attempt == max_attempts:
+                raise RuntimeError(
+                    f"{repository_name} 的 {target_branch} 在提交后再次更新，无法确认构建基线；未执行打包"
+                )
+
+        raise RuntimeError(f"{repository_name} 无法同步最新 {target_branch}；未执行打包")
+
     def _create_pr(
         self,
         request_id: str,
@@ -775,7 +926,7 @@ class Worker:
 
     def _deliver_local_package(self, request_id: str, detail: dict, project: dict, worktree: Path | None, work_item: dict) -> None:
         self.store.update_request(request_id, status=RunStatus.BUILDING.value, current_step="deliver", progress=74)
-        self.store.update_step(request_id, "deliver", "running", "代码已提交；正在按本地交付标准强制构建并归集交付物")
+        self.store.update_step(request_id, "deliver", "running", "代码已提交目标分支；正在基于最新目标分支强制构建并归集交付物")
         if project.get("simulation_mode"):
             self._create_demo_artifacts(request_id, include_package=True)
         else:

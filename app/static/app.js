@@ -2,7 +2,7 @@ const USER = window.__USER__;
 const state = { projects: [], projectGuideSignature:'', users: [], analytics:null, dashboard: {active:[],recent:[],counts:{},runners:[],stats:{},capacity:{limit:5,active:0,queued:0,available:5}}, filter:'all', selectedRequest:null, selectedTerminal:false, selectedIntake:null, routingGeneration:0, live:{requestId:null,watcherId:null,cursor:0,generation:0,timer:null,lastGroup:'',lastKind:'',lastBubble:null} };
 const MODE = {
   routing:['自动识别中','正在读取 TFS 需求并识别项目与交付策略。'],
-  local_package:['本地打包交付','推送代码后在本机执行构建，交付安装包、SQL、配置和说明。'],
+  local_package:['本地打包交付','提交到最新目标分支后在本机执行构建，交付安装包、SQL、配置和说明。'],
   sichuan_auto_review:['四川审核后交付','创建 PR，由专用审核服务账号在门禁通过后批准；检测合并后交付截图。'],
   product_manual_review:['产品审核后交付','先邮件发送 PR 给项目经理；系统循环检测合并，完成后交付截图。']
 };

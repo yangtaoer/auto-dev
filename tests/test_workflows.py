@@ -616,6 +616,87 @@ class WorkflowTests(unittest.TestCase):
                 self.assertNotEqual(branch, 0)
             self.assertFalse(worktree_root.joinpath("rollback-request").exists())
 
+    def test_local_package_rebases_and_pushes_latest_dev_before_build(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            origin = root / "origin.git"
+            seed = root / "seed"
+            feature = root / "feature"
+            concurrent = root / "concurrent"
+
+            subprocess.run(["git", "init", "--bare", "-q", str(origin)], check=True)
+            subprocess.run(["git", "init", "-q", "-b", "dev", str(seed)], check=True)
+            for repository in (seed,):
+                subprocess.run(["git", "-C", str(repository), "config", "user.name", "AutoDev Test"], check=True)
+                subprocess.run(
+                    ["git", "-C", str(repository), "config", "user.email", "autodev-test@example.com"],
+                    check=True,
+                )
+            (seed / "README.md").write_text("initial\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(seed), "add", "README.md"], check=True)
+            subprocess.run(["git", "-C", str(seed), "commit", "-q", "-m", "initial"], check=True)
+            subprocess.run(["git", "-C", str(seed), "remote", "add", "origin", str(origin)], check=True)
+            subprocess.run(["git", "-C", str(seed), "push", "-q", "-u", "origin", "dev"], check=True)
+
+            subprocess.run(["git", "clone", "-q", "-b", "dev", str(origin), str(feature)], check=True)
+            subprocess.run(["git", "-C", str(feature), "config", "user.name", "AutoDev Test"], check=True)
+            subprocess.run(
+                ["git", "-C", str(feature), "config", "user.email", "autodev-test@example.com"], check=True
+            )
+            subprocess.run(["git", "-C", str(feature), "checkout", "-q", "-b", "feature/910200-yangtao"], check=True)
+            (feature / "feature.txt").write_text("delivery change\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(feature), "add", "feature.txt"], check=True)
+            subprocess.run(["git", "-C", str(feature), "commit", "-q", "-m", "feature change"], check=True)
+            subprocess.run(
+                ["git", "-C", str(feature), "push", "-q", "-u", "origin", "feature/910200-yangtao"],
+                check=True,
+            )
+
+            # 模拟功能分支提交后，另一个开发者又向 dev 推送了一次更新。
+            subprocess.run(["git", "clone", "-q", "-b", "dev", str(origin), str(concurrent)], check=True)
+            subprocess.run(["git", "-C", str(concurrent), "config", "user.name", "Concurrent Developer"], check=True)
+            subprocess.run(
+                ["git", "-C", str(concurrent), "config", "user.email", "concurrent@example.com"], check=True
+            )
+            (concurrent / "concurrent.txt").write_text("latest dev\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(concurrent), "add", "concurrent.txt"], check=True)
+            subprocess.run(["git", "-C", str(concurrent), "commit", "-q", "-m", "latest dev change"], check=True)
+            subprocess.run(["git", "-C", str(concurrent), "push", "-q", "origin", "dev"], check=True)
+
+            final_commit = Worker._sync_local_package_repository(
+                feature,
+                repository_name="delivery-repo",
+                feature_branch="feature/910200-yangtao",
+                target_branch="dev",
+                changed=True,
+                git_env=os.environ.copy(),
+            )
+            remote_dev = subprocess.run(
+                ["git", "-C", str(feature), "rev-parse", "origin/dev"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            remote_feature = subprocess.run(
+                ["git", "-C", str(feature), "rev-parse", "origin/feature/910200-yangtao"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            history = subprocess.run(
+                ["git", "-C", str(feature), "log", "--format=%s", "-3", "origin/dev"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+
+            self.assertEqual(final_commit, remote_dev)
+            self.assertEqual(final_commit, remote_feature)
+            self.assertIn("feature change", history)
+            self.assertIn("latest dev change", history)
+            self.assertTrue((feature / "feature.txt").exists())
+            self.assertTrue((feature / "concurrent.txt").exists())
+
     @patch("app.orchestrator.TfsClient.create_pull_request")
     def test_repository_specific_base_branch_is_used_as_pr_target(self, create_pull_request) -> None:
         create_pull_request.return_value = {"PullRequestId": 310, "WebUrl": "https://tfs.test/pr/310"}
@@ -985,7 +1066,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.1"), 1)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
@@ -1129,7 +1210,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("自助项目", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.1"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
