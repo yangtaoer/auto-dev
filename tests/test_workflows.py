@@ -42,7 +42,17 @@ from app.services.delivery import (  # noqa: E402
     menu_link_from_view_path,
     repository_short_name,
 )
-from app.services.tfs import ACTUAL_DELIVERY_VERSION_FIELD, DELIVERY_ARTIFACTS_FIELD, TfsClient  # noqa: E402
+from app.services.tfs import (  # noqa: E402
+    ACTUAL_DELIVERY_VERSION_FIELD,
+    DELIVERY_ARTIFACTS_FIELD,
+    LICENSE_PRODUCT_FIELD,
+    LICENSE_PRODUCT_LINE_FIELD,
+    LICENSE_PROVINCE_FIELD,
+    LICENSE_PURPOSE_FIELD,
+    LICENSE_REGION_FIELD,
+    LICENSE_REQUESTED_AT_FIELD,
+    TfsClient,
+)
 from app.store import RemoteStore  # noqa: E402
 
 
@@ -344,13 +354,69 @@ class WorkflowTests(unittest.TestCase):
                 {"id": 7, "kind": "merge_screenshot", "name": "notice-srv · PR #202 · 合并截图.png", "external_url": "https://oss.test/pr-202.png"},
                 {"id": 8, "kind": "menu_link", "name": "/direct/views/operationTicketOverview", "external_url": "/direct/views/operationTicketOverview"},
                 {"id": 9, "kind": "config", "name": "source.yml", "external_url": "https://oss.test/source.yml"},
+                {"id": 10, "kind": "license_request", "name": "License 授权申请 #1652475", "external_url": "https://tfs.test/_workitems/edit/1652475"},
             ],
         }
         manifest = service.delivery_manifest_html(detail)
         self.assertIn("https://oss.test/pr-202.png", manifest)
         self.assertIn("/direct/views/operationTicketOverview", manifest)
         self.assertIn("新增视图菜单链接", manifest)
+        self.assertIn("License 授权申请", manifest)
+        self.assertIn("https://tfs.test/_workitems/edit/1652475", manifest)
         self.assertNotIn("source.yml", manifest)
+
+    def test_tfs_license_application_embeds_merge_screenshots_and_required_fields(self) -> None:
+        client = TfsClient("https://tfs.test/DefaultCollection", pat="test-pat")
+        calls: list[tuple[str, str, dict]] = []
+
+        def fake_request(method: str, url: str, **kwargs):
+            calls.append((method, url, kwargs))
+            if "/wiql" in url:
+                return {"workItems": []}
+            if "/attachments" in url:
+                attachment_number = sum(1 for _, value, _ in calls if "/attachments" in value)
+                return {"url": f"https://tfs.test/attachments/image-{attachment_number}.png"}
+            if "/workitems/$" in url:
+                return {
+                    "id": 1653001,
+                    "_links": {"html": {"href": "https://tfs.test/_workitems/edit/1653001"}},
+                }
+            raise AssertionError(f"未预期的 TFS 请求：{method} {url}")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            first = Path(temporary) / "notice.png"
+            second = Path(temporary) / "direct.png"
+            first.write_bytes(b"\x89PNG\r\n\x1a\nnotice")
+            second.write_bytes(b"\x89PNG\r\n\x1a\ndirect")
+            with patch.object(client, "_request", side_effect=fake_request):
+                result = client.create_license_application(
+                    request_id="license-request-001",
+                    source_work_item_id=910030,
+                    delivery_project_name="四川省调网络发令",
+                    screenshot_sources=[("notice-srv 合并截图.png", str(first)), ("direct-ui 合并截图.png", str(second))],
+                )
+
+        create_call = next(item for item in calls if "/workitems/$" in item[1])
+        patch_body = create_call[2]["json"]
+        fields = {item["path"].removeprefix("/fields/"): item["value"] for item in patch_body}
+        self.assertEqual(fields["System.Title"], "【四川省调网络发令】现场自测包申请")
+        self.assertEqual(fields["System.AssignedTo"], r"TELLHOW\zhoudanping")
+        self.assertEqual(fields[LICENSE_PROVINCE_FIELD], "四川")
+        self.assertEqual(fields[LICENSE_REGION_FIELD], "西南地区部")
+        self.assertEqual(fields[LICENSE_PRODUCT_LINE_FIELD], "调度产品线")
+        self.assertEqual(fields[LICENSE_PRODUCT_FIELD], "主配网调度运行指挥系统")
+        self.assertEqual(fields[LICENSE_PURPOSE_FIELD], "本地自研需求测试")
+        self.assertTrue(fields[LICENSE_REQUESTED_AT_FIELD].endswith("Z"))
+        self.assertEqual(fields["System.Description"].count("<img "), 2)
+        self.assertNotIn("<a ", fields["System.Description"])
+        attachment_relations = [item for item in patch_body if item["path"] == "/relations/-"]
+        self.assertEqual(len(attachment_relations), 2)
+        self.assertTrue(all(item["value"]["rel"] == "AttachedFile" for item in attachment_relations))
+        self.assertIn("AutoDev-license-request-001", fields["System.Tags"])
+        self.assertIn("License%E6%8E%88%E6%9D%83%E7%94%B3%E8%AF%B7", create_call[1])
+        self.assertEqual(result["id"], 1653001)
+        self.assertEqual(result["url"], "https://tfs.test/_workitems/edit/1653001")
+        self.assertTrue(result["created"])
 
     def test_tfs_delivery_artifacts_updates_discovered_html_field(self) -> None:
         client = TfsClient("https://tfs.test/DefaultCollection", pat="test-pat")
@@ -744,6 +810,9 @@ class WorkflowTests(unittest.TestCase):
         screenshots = [item for item in completed["artifacts"] if item["kind"] == "merge_screenshot"]
         self.assertEqual(len(screenshots), 1)
         self.assertIn("PR #", screenshots[0]["name"])
+        licenses = [item for item in completed["artifacts"] if item["kind"] == "license_request"]
+        self.assertEqual(len(licenses), 1)
+        self.assertIn("License 授权申请", licenses[0]["name"])
         self.assertNotIn("pull_request", {item["kind"] for item in completed["artifacts"]})
 
     def test_product_review_emails_before_and_after_merge(self) -> None:
@@ -759,6 +828,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(any(item["name"] == "delivery-email-preview.html" for item in completed["artifacts"]))
         self.assertEqual(
             len([item for item in completed["artifacts"] if item["kind"] == "merge_screenshot"]),
+            1,
+        )
+        self.assertEqual(
+            len([item for item in completed["artifacts"] if item["kind"] == "license_request"]),
             1,
         )
         self.assertNotIn("pull_request", {item["kind"] for item in completed["artifacts"]})
@@ -1055,18 +1128,43 @@ class WorkflowTests(unittest.TestCase):
 
     def test_new_intake_is_immediately_visible_and_home_shows_version(self) -> None:
         self.create_project("test-instant-board", "local_package")
+        headers = {"Authorization": "Bearer test-runner-token"}
+        stopped = self.client.post(
+            "/api/runner/heartbeat",
+            headers=headers,
+            json={"runner_id": "yangtao-pc", "hostname": "test-pc", "version": "1.0", "state": "stopping"},
+        )
+        self.assertEqual(stopped.status_code, 200, stopped.text)
         created = self.client.post("/api/requests", json={"work_item_id": 910020})
         self.assertEqual(created.status_code, 200, created.text)
+        self.assertFalse(created.json()["runner_online"])
+        self.assertEqual(created.json()["status"], "waiting_runner")
+        self.assertIn("执行器当前离线", created.json()["message"])
         intake_id = created.json()["id"]
 
         dashboard = self.client.get("/api/dashboard").json()
         visible = next(item for item in dashboard["active"] if item.get("intake_id") == intake_id)
-        self.assertEqual(visible["status"], "routing")
-        self.assertEqual(visible["current_activity"], "任务已提交，等待执行器扫描")
+        self.assertEqual(visible["status"], "waiting_runner")
+        self.assertIn("执行器当前离线", visible["current_activity"])
+        self.assertEqual(dashboard["counts"]["waiting_runner"], 1)
         self.assertGreaterEqual(dashboard["capacity"]["queued"], 1)
 
+        intake = self.client.get(f"/api/intakes/{intake_id}").json()["intake"]
+        self.assertFalse(intake["runner_online"])
+        self.assertEqual(intake["display_status"], "waiting_runner")
+
+        online = self.client.post(
+            "/api/runner/heartbeat",
+            headers=headers,
+            json={"runner_id": "yangtao-pc", "hostname": "test-pc", "version": "1.0", "state": "idle"},
+        )
+        self.assertEqual(online.status_code, 200, online.text)
+        dashboard = self.client.get("/api/dashboard").json()
+        visible = next(item for item in dashboard["active"] if item.get("intake_id") == intake_id)
+        self.assertEqual(visible["status"], "routing")
+
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.1"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha"), 1)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
@@ -1076,6 +1174,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("支持项目与别名", page.text)
         self.assertIn("可自助研发项目", page.text)
         self.assertIn("project-guide", page.text)
+
         script = self.client.get("/static/app.js").text
         self.assertIn("addOptimisticIntake", script)
         self.assertIn("renderActiveRuns", script)
@@ -1103,7 +1202,6 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn(".project-guide-panel", brand_styles)
         self.assertIn(".project-guide:hover .project-guide-panel", brand_styles)
 
-        headers = {"Authorization": "Bearer test-runner-token"}
         claimed = self.client.post(
             "/api/runner/intakes/claim", headers=headers, json={"runner_id": "yangtao-pc"}
         ).json()["intake"]
@@ -1115,6 +1213,41 @@ class WorkflowTests(unittest.TestCase):
         )
         self.assertEqual(routed.status_code, 200, routed.text)
         worker.process_once()
+
+    def test_queued_request_tracks_runner_offline_without_changing_workflow_status(self) -> None:
+        project_id = self.create_project("test-offline-queue", "local_package")
+        headers = {"Authorization": "Bearer test-runner-token"}
+        self.client.post(
+            "/api/runner/heartbeat",
+            headers=headers,
+            json={"runner_id": "yangtao-pc", "hostname": "test-pc", "version": "1.0", "state": "stopping"},
+        )
+
+        created = self.client.post(
+            "/api/requests", json={"project_id": project_id, "work_item_id": 910026}
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        self.assertEqual(created.json()["status"], "waiting_runner")
+        self.assertFalse(created.json()["runner_online"])
+
+        detail = self.client.get(f"/api/requests/{created.json()['id']}").json()["request"]
+        self.assertEqual(detail["status"], "queued")
+        self.assertEqual(detail["display_status"], "waiting_runner")
+        self.assertEqual(detail["status_label"], "等待执行器上线")
+        self.assertIn("待执行器上线", detail["display_message"])
+
+        dashboard = self.client.get("/api/dashboard").json()
+        queued = next(item for item in dashboard["active"] if item["id"] == created.json()["id"])
+        self.assertEqual(queued["status"], "queued")
+        self.assertEqual(queued["display_status"], "waiting_runner")
+        self.assertEqual(dashboard["counts"]["waiting_runner"], 1)
+        self.assertEqual(dashboard["counts"]["queued"], 0)
+        update_request(created.json()["id"], status="cancelled")
+        self.client.post(
+            "/api/runner/heartbeat",
+            headers=headers,
+            json={"runner_id": "yangtao-pc", "hostname": "test-pc", "version": "1.0", "state": "idle"},
+        )
 
     def test_local_runner_restart_waits_for_port_and_console_reports_result(self) -> None:
         restart_script = Path("local-runner/restart.ps1").read_text(encoding="utf-8-sig")
@@ -1210,7 +1343,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("自助项目", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.1"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")

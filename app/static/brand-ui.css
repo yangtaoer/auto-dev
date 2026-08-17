@@ -614,6 +614,47 @@ tbody tr:hover { background: #172943; }
 .live-activity b { color: #c3d2e6; }
 .routing-signal { border-color: #3e5f83; background: #111f32; }
 .routing-signal > i { border-color: #3e5f83; border-top-color: var(--acid); }
+
+/* Runner-offline queue: keep the task visibly alive without implying active execution. */
+.waiting-runner-card {
+  border-color: rgba(139, 116, 189, .72);
+  background: linear-gradient(145deg, rgba(20, 31, 53, .96), rgba(31, 26, 58, .82));
+  box-shadow: inset 3px 0 0 rgba(139, 116, 189, .9);
+}
+.waiting-runner-card .status-tag {
+  color: #c5b7eb;
+  border-color: rgba(139, 116, 189, .76);
+  background: rgba(91, 65, 148, .16);
+}
+.waiting-runner-card .live-activity > i {
+  border: 1px solid #8b74bd;
+  border-radius: 50%;
+  background: #8b74bd;
+  box-shadow: 0 0 0 0 rgba(139, 116, 189, .5);
+  animation: runner-wait-pulse 2.2s ease-out infinite;
+}
+.waiting-runner-head h2 { color: #e6e0f7; }
+.waiting-runner-signal {
+  border-color: rgba(139, 116, 189, .66);
+  background:
+    linear-gradient(90deg, rgba(139, 116, 189, .12), transparent 62%),
+    #111a2b;
+}
+.waiting-runner-signal > i {
+  border: 1px solid #8b74bd;
+  border-top-color: #8b74bd;
+  background: #8b74bd;
+  box-shadow: 0 0 0 0 rgba(139, 116, 189, .5);
+  animation: runner-wait-pulse 2.2s ease-out infinite;
+}
+.status-dot[data-status=waiting_runner]:before {
+  background: #8b74bd;
+  box-shadow: 0 0 9px rgba(139, 116, 189, .65);
+}
+@keyframes runner-wait-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(139, 116, 189, .55); }
+  70%, 100% { box-shadow: 0 0 0 9px rgba(139, 116, 189, 0); }
+}
 .modal { background: #142238; border-color: #46678d; }
 input,
 select,
@@ -629,6 +670,15 @@ textarea,
 .timeline-mark::after { background: #2c4564; }
 .event-list { border-left-color: #354d6e; }
 .artifact { background: #111f33; }
+.license-artifact {
+  border-color: rgba(128, 111, 193, .72);
+  background: linear-gradient(90deg, rgba(42, 39, 82, .92), #111f33 64%);
+  box-shadow: inset 3px 0 0 #806fc1;
+}
+.license-artifact b,
+.license-artifact small { display: block; }
+.license-artifact small { margin-top: 4px; }
+.artifact-link.license-link { border-color: #806fc1; color: #c9bdf0; }
 .menu-artifact { width: 100%; cursor: pointer; text-align: left; }
 .menu-artifact span { min-width: 0; }
 .menu-artifact b,

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .config import settings
 from .db import utc_now
-from .domain import DeliveryMode, RunStatus
+from .domain import REVIEW_DELIVERY_MODES, DeliveryMode, RunStatus, visible_delivery_artifacts
 from .services.codex_runner import CodexRunner
 from .services.delivery import (
     ArtifactService,
@@ -1001,6 +1001,9 @@ class Worker:
         self.store.update_request(request_id, status=RunStatus.DELIVERING.value, progress=96, completed_at=utc_now())
         detail = self.store.detail(request_id)
         project = detail["policy_snapshot"]
+        if detail["delivery_mode"] in REVIEW_DELIVERY_MODES:
+            self._ensure_license_application(request_id, detail, project)
+            detail = self.store.detail(request_id)
         if not project.get("simulation_mode"):
             manifest = self.artifacts.delivery_manifest_html(detail)
             tfs_result = TfsClient(project["tfs_collection_url"]).complete_delivery(
@@ -1016,6 +1019,86 @@ class Worker:
         self.store.update_request(request_id, status=RunStatus.DELIVERED.value, current_step="deliver", progress=100, completed_at=utc_now())
         self.store.update_step(request_id, "deliver", "completed", "交付产物与通知邮件已生成，TFS 状态及实际交付版本已更新")
         self.store.add_event(request_id, "delivery.completed", "需求研发交付完成")
+
+    def _ensure_license_application(self, request_id: str, detail: dict, project: dict) -> None:
+        existing = next(
+            (item for item in detail.get("artifacts", []) if item.get("kind") == "license_request"),
+            None,
+        )
+        if existing:
+            return
+
+        if project.get("simulation_mode"):
+            license_id = 900000 + int(detail["work_item_id"]) % 100000
+            license_url = (
+                f"{project['tfs_collection_url']}/{settings.tfs_license_project}"
+                f"/_workitems/edit/{license_id}"
+            )
+            self.store.add_artifact(
+                request_id,
+                "license_request",
+                f"License 授权申请 #{license_id}",
+                external_url=license_url,
+            )
+            self.store.add_event(
+                request_id,
+                "license.created",
+                f"演示模式：License 授权申请 #{license_id} 已生成",
+                metadata={"license_id": license_id, "url": license_url},
+            )
+            return
+
+        screenshots = [
+            item
+            for item in visible_delivery_artifacts(detail["delivery_mode"], detail.get("artifacts", []))
+            if item.get("kind") == "merge_screenshot"
+        ]
+        if not screenshots:
+            raise RuntimeError("截图交付缺少 PR 合并截图，无法创建 License 授权申请")
+
+        local_candidates = sorted(self.artifacts.request_dir(request_id).glob("pr-*-merged-*.png"))
+        sources: list[tuple[str, str]] = []
+        for index, artifact in enumerate(screenshots):
+            local_path = str(artifact.get("local_path") or "")
+            if local_path and Path(local_path).is_file():
+                source = local_path
+            else:
+                pr_number = re.search(r"PR #(\d+)", str(artifact.get("name") or ""))
+                matching = (
+                    list(self.artifacts.request_dir(request_id).glob(f"pr-{pr_number.group(1)}-merged-*.png"))
+                    if pr_number
+                    else []
+                )
+                if matching:
+                    source = str(matching[0])
+                elif index < len(local_candidates):
+                    source = str(local_candidates[index])
+                else:
+                    source = self.artifacts.artifact_url(artifact)
+            sources.append((str(artifact.get("name") or f"PR 合并截图 {index + 1}"), source))
+
+        license_item = TfsClient(project["tfs_collection_url"]).create_license_application(
+            request_id=request_id,
+            source_work_item_id=int(detail["work_item_id"]),
+            delivery_project_name=str(project.get("name") or detail.get("project_name") or "网络发令"),
+            screenshot_sources=sources,
+        )
+        self.store.add_artifact(
+            request_id,
+            "license_request",
+            f"License 授权申请 #{license_item['id']} · {license_item['title']}",
+            external_url=license_item["url"],
+        )
+        self.store.add_event(
+            request_id,
+            "license.created" if license_item.get("created") else "license.reused",
+            (
+                f"License 授权申请 #{license_item['id']} 已创建并指派给周丹平"
+                if license_item.get("created")
+                else f"已复用现有 License 授权申请 #{license_item['id']}"
+            ),
+            metadata=license_item,
+        )
 
     def _send_status_email(self, request_id: str, *, action_required: bool, terminal: bool = False) -> None:
         if self.store.remote:

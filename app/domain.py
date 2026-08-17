@@ -21,7 +21,7 @@ REVIEW_DELIVERY_MODES = {
     DeliveryMode.PRODUCT_MANUAL_REVIEW.value,
 }
 
-REVIEW_DELIVERABLE_KINDS = {"merge_screenshot", "menu_link"}
+REVIEW_DELIVERABLE_KINDS = {"merge_screenshot", "menu_link", "license_request"}
 
 
 def visible_delivery_artifacts(delivery_mode: str, artifacts: list[dict]) -> list[dict]:

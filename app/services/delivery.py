@@ -183,6 +183,7 @@ class ArtifactService:
             "config": "配置文件",
             "merge_screenshot": "PR 合并截图",
             "menu_link": "新增视图菜单链接",
+            "license_request": "License 授权申请",
         }
         lines: list[str] = []
         items = visible_delivery_artifacts(str(detail.get("delivery_mode") or ""), detail.get("artifacts", []))
@@ -509,13 +510,18 @@ class Mailer:
             "config": "配置文件",
             "merge_screenshot": "合并截图",
             "menu_link": "新增视图菜单链接",
+            "license_request": "License 授权申请",
         }
         artifact_lines = []
         deliverable_items = visible_delivery_artifacts(str(detail.get("delivery_mode") or ""), detail.get("artifacts", []))
         for item in deliverable_items:
             artifact_url = item.get("external_url") or f"{settings.public_base_url}/api/artifacts/{item['id']}"
             kind = kind_labels.get(item.get("kind"), item.get("kind") or "交付文件")
-            action_label = "下载截图" if item.get("kind") == "merge_screenshot" else "下载产物"
+            action_label = (
+                "下载截图"
+                if item.get("kind") == "merge_screenshot"
+                else ("打开申请" if item.get("kind") == "license_request" else "下载产物")
+            )
             if item.get("kind") == "menu_link":
                 artifact_lines.append(
                     f"""<tr><td style="padding:0 0 7px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d9deea;background:#f7f8fb"><tr><td width="42" align="center" style="padding:10px 6px;color:#6559a1;font:700 16px Consolas,'Courier New',monospace">↗</td><td style="padding:9px 12px"><div style="font-size:13px;font-weight:700;color:#20263a;word-break:break-all">{safe_text(item.get('name'))}</div><div style="margin-top:2px;color:#737b8d;font-size:10px;letter-spacing:.04em">{safe_text(kind)}</div></td></tr></table></td></tr>"""

@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.1",
+    version="1.0-Alpha",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -226,6 +226,35 @@ def runner_auth(authorization: Annotated[str | None, Header()] = None) -> None:
     expected = f"Bearer {settings.runner_token}"
     if not settings.runner_token or not authorization or not hmac.compare_digest(authorization, expected):
         raise HTTPException(status_code=401, detail="本机执行器令牌无效")
+
+
+def runner_record_online(runner: dict | None, *, now: datetime | None = None) -> bool:
+    if not runner or runner.get("state") == "stopping":
+        return False
+    try:
+        checked_at = now or datetime.now(UTC)
+        last_seen = datetime.fromisoformat(str(runner.get("last_seen_at") or ""))
+        if last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=UTC)
+        return (checked_at - last_seen).total_seconds() <= 90
+    except (TypeError, ValueError):
+        return False
+
+
+def runner_is_online(runner_id: str) -> bool:
+    return runner_record_online(row("SELECT * FROM runners WHERE runner_id=?", (runner_id,)))
+
+
+def add_runner_display_state(item: dict[str, Any]) -> dict[str, Any]:
+    """Expose an offline queue state without changing the persisted workflow status."""
+    actual_status = str(item.get("status") or "")
+    online = runner_is_online(str(item.get("runner_id") or ""))
+    item["runner_online"] = online
+    item["display_status"] = "waiting_runner" if actual_status == RunStatus.QUEUED.value and not online else actual_status
+    if item["display_status"] == "waiting_runner":
+        item["current_activity"] = "执行器当前离线，任务已安全排队，待执行器上线后自动继续"
+        item["display_message"] = item["current_activity"]
+    return item
 
 
 def runner_request(request_id: str) -> dict[str, Any]:
@@ -455,6 +484,14 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     )
     intake_items: list[dict[str, Any]] = []
     for intake in pending_intakes:
+        online = runner_is_online(str(intake["runner_id"]))
+        display_status = "routing" if online else "waiting_runner"
+        if not online:
+            activity = "执行器当前离线，任务已安全排队，待执行器上线后自动继续"
+        elif intake["status"] == "claimed":
+            activity = "执行器正在识别所属项目与交付策略"
+        else:
+            activity = "任务已提交，等待执行器扫描"
         intake_items.append(
             {
                 "id": intake["id"],
@@ -466,8 +503,9 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
                 "title": "正在读取 TFS 需求并识别项目…",
                 "project_name": "项目识别中",
                 "delivery_mode": "routing",
-                "status": "routing",
-                "current_activity": "执行器正在识别所属项目与交付策略" if intake["status"] == "claimed" else "任务已提交，等待执行器扫描",
+                "status": display_status,
+                "runner_online": online,
+                "current_activity": activity,
                 "created_at": intake["created_at"],
                 "updated_at": intake["updated_at"],
                 "completed_at": None,
@@ -521,6 +559,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     terminal_statuses = {"delivered", "failed", "rejected", "cancelled"}
     current_time = datetime.now(UTC)
     for item in (*active_requests, *recent_requests):
+        add_runner_display_state(item)
         item.pop("codex_thread_id", None)
         item["current_activity"] = public_engine_text(item.get("current_activity"))
         item["result_summary"] = public_engine_text(item.get("result_summary"))
@@ -540,11 +579,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     runners = rows("SELECT * FROM runners ORDER BY runner_id")
     now = datetime.now(UTC)
     for item in runners:
-        try:
-            age = (now - datetime.fromisoformat(item["last_seen_at"])).total_seconds()
-        except (TypeError, ValueError):
-            age = 999999
-        item["online"] = age <= 90 and item["state"] != "stopping"
+        item["online"] = runner_record_online(item, now=now)
         runner_detail = json_value(item.get("detail"), {})
         item["devcore_usage"] = runner_detail.get("codex_usage", {})
         item["current_request_ids"] = runner_detail.get(
@@ -610,7 +645,20 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     stats["failed"] += intake_failed_total
     stats["running"] += pending_total
     request_counts = {item["status"]: item["count"] for item in counts}
-    request_counts["routing"] = pending_total
+    waiting_runner_total = sum(1 for item in intake_items if item["status"] == "waiting_runner")
+    queued_scope = "" if user["role"] == "admin" else "AND requester_id=?"
+    queued_params: tuple[Any, ...] = () if user["role"] == "admin" else (user["id"],)
+    offline_queued_total = sum(
+        1
+        for item in rows(
+            f"SELECT runner_id FROM delivery_requests WHERE status='queued' {queued_scope}",
+            queued_params,
+        )
+        if not runner_is_online(str(item["runner_id"]))
+    )
+    request_counts["routing"] = max(0, pending_total - waiting_runner_total)
+    request_counts["queued"] = max(0, int(request_counts.get("queued") or 0) - offline_queued_total)
+    request_counts["waiting_runner"] = waiting_runner_total + offline_queued_total
     request_counts["failed"] = int(request_counts.get("failed") or 0) + intake_failed_total
     return {
         "counts": request_counts,
@@ -902,13 +950,25 @@ def submit_request(payload: DeliveryRequestInput, user: Annotated[dict, Depends(
             (payload.work_item_id,),
         ):
             raise HTTPException(status_code=409, detail="该需求已有正在执行的研发任务")
+        runner_id = str(runner_rows[0]["runner_id"])
+        online = runner_is_online(runner_id)
         try:
             intake_id = create_request_intake(
-                user["id"], payload.work_item_id, runner_rows[0]["runner_id"], selected_emails
+                user["id"], payload.work_item_id, runner_id, selected_emails
             )
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=409, detail="该需求正在识别项目或等待执行") from exc
-        return {"id": intake_id, "status": "routing", "routing": True}
+        return {
+            "id": intake_id,
+            "status": "routing" if online else "waiting_runner",
+            "routing": True,
+            "runner_online": online,
+            "message": (
+                "任务已提交，执行器正在识别项目"
+                if online
+                else "执行器当前离线，任务已进入队列；执行器上线后将自动继续"
+            ),
+        }
 
     project = row("SELECT * FROM projects WHERE id=? AND enabled=1", (payload.project_id,))
     if not project:
@@ -922,7 +982,17 @@ def submit_request(payload: DeliveryRequestInput, user: Annotated[dict, Depends(
         request_id = create_delivery_request(project, user["id"], payload.work_item_id, mode, selected_emails)
     except sqlite3.IntegrityError as exc:
         raise HTTPException(status_code=409, detail="该需求已有正在执行的研发任务") from exc
-    return {"id": request_id, "status": RunStatus.QUEUED.value}
+    online = runner_is_online(str(project["runner_id"]))
+    return {
+        "id": request_id,
+        "status": RunStatus.QUEUED.value if online else "waiting_runner",
+        "runner_online": online,
+        "message": (
+            "研发任务已进入队列"
+            if online
+            else "执行器当前离线，任务已进入队列；执行器上线后将自动继续"
+        ),
+    }
 
 
 @app.get("/api/intakes/{intake_id}")
@@ -932,13 +1002,26 @@ def get_request_intake(intake_id: str, user: Annotated[dict, Depends(current_use
         raise HTTPException(status_code=404, detail="自动识别任务不存在")
     if user["role"] != "admin" and intake["requester_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="无权访问该自动识别任务")
+    online = runner_is_online(str(intake["runner_id"]))
+    intake["runner_online"] = online
+    intake["display_status"] = "routing" if online else "waiting_runner"
+    intake["display_message"] = (
+        "执行器正在处理任务"
+        if online
+        else "执行器当前离线，任务已安全排队，待执行器上线后自动继续"
+    )
     return {"intake": intake}
 
 
 @app.get("/api/requests/{request_id}")
 def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
-    detail = public_request_payload(can_access_request(user, request_id))
-    detail["status_label"] = STATUS_LABELS.get(RunStatus(detail["status"]), detail["status"])
+    detail = public_request_payload(add_runner_display_state(can_access_request(user, request_id)))
+    display_status = detail.get("display_status") or detail["status"]
+    detail["status_label"] = (
+        "等待执行器上线"
+        if display_status == "waiting_runner"
+        else STATUS_LABELS.get(RunStatus(detail["status"]), detail["status"])
+    )
     detail["delivery_mode_label"] = DELIVERY_MODE_LABELS[DeliveryMode(detail["delivery_mode"])]
     return {"request": detail}
 

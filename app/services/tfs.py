@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import html
 import re
 import subprocess
+from datetime import UTC, datetime
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import quote, unquote
 
 import httpx
@@ -13,6 +16,12 @@ from .process_env import sanitized_process_env
 
 DELIVERY_ARTIFACTS_FIELD = "Custom.0bb5cb34-6fb8-4a13-9508-166612ddb2b8"
 ACTUAL_DELIVERY_VERSION_FIELD = "Custom.adf4ae15-611e-4565-9f47-a9f24561efa9"
+LICENSE_PROVINCE_FIELD = "Custom.e10bed6e-1009-4289-9f71-462a10698ab5"
+LICENSE_PRODUCT_FIELD = "Custom.e6ec2a4e-66c5-4d4d-85fc-72a4cfb8abaf"
+LICENSE_PRODUCT_LINE_FIELD = "Custom.ba3bada3-5db5-489c-8566-6ef7e5790912"
+LICENSE_REGION_FIELD = "Custom.4662e0f8-1a77-4dea-babc-04ddef70fb46"
+LICENSE_PURPOSE_FIELD = "Custom.979182e5-279b-40ad-92bf-8876c59b5c78"
+LICENSE_REQUESTED_AT_FIELD = "Custom.19699ae0-2390-4bf6-9052-47a7649c9481"
 
 
 @dataclass(slots=True)
@@ -103,6 +112,136 @@ class TfsClient:
             "state": fields.get("System.State", resolved_state),
             "actual_version": fields.get(ACTUAL_DELIVERY_VERSION_FIELD, actual_version),
         }
+
+    def create_license_application(
+        self,
+        *,
+        request_id: str,
+        source_work_item_id: int,
+        delivery_project_name: str,
+        screenshot_sources: list[tuple[str, str]],
+    ) -> dict:
+        """Create one idempotent License request with merge screenshots embedded as TFS attachments."""
+        if not screenshot_sources:
+            raise TfsError("截图交付没有可用于 License 申请的合并截图")
+
+        license_project = settings.tfs_license_project
+        project_path = quote(license_project, safe="")
+        request_tag = f"AutoDev-{request_id}"
+        wiql = {
+            "query": (
+                "SELECT [System.Id] FROM WorkItems "
+                "WHERE [System.TeamProject] = @Project "
+                "AND [System.WorkItemType] = 'License授权申请' "
+                f"AND [System.Tags] CONTAINS '{request_tag}' "
+                "ORDER BY [System.Id] DESC"
+            )
+        }
+        existing = self._request(
+            "POST",
+            f"{self.base_url}/{project_path}/_apis/wit/wiql?api-version=2.0",
+            json=wiql,
+        ).get("workItems", [])
+        if existing:
+            item = self._request(
+                "GET",
+                f"{self.base_url}/_apis/wit/workitems/{existing[0]['id']}?api-version=2.0",
+            )
+            return {
+                "id": int(item["id"]),
+                "url": self._work_item_web_url(item, license_project),
+                "title": str((item.get("fields") or {}).get("System.Title") or "License 授权申请"),
+                "created": False,
+            }
+
+        image_tags: list[str] = []
+        attachment_relations: list[dict] = []
+        for index, (display_name, source) in enumerate(screenshot_sources, 1):
+            content = self._read_delivery_image(source)
+            safe_stem = re.sub(r"[^a-zA-Z0-9_.-]+", "-", Path(display_name).stem).strip("-")
+            file_name = f"autodev-{source_work_item_id}-{index}-{safe_stem or 'merge'}.png"
+            attachment = self._request(
+                "POST",
+                f"{self.base_url}/_apis/wit/attachments?fileName={quote(file_name, safe='')}&api-version=2.0",
+                content=content,
+                headers={"Content-Type": "application/octet-stream"},
+            )
+            attachment_url = str(attachment.get("url") or "")
+            if not attachment_url:
+                raise TfsError(f"TFS 未返回第 {index} 张合并截图的附件地址")
+            image_tags.append(
+                f'<div style="margin:0 0 14px 0"><img src="{html.escape(attachment_url, quote=True)}" '
+                f'alt="{html.escape(display_name, quote=True)}" style="max-width:100%;height:auto" width="1100"></div>'
+            )
+            attachment_relations.append(
+                {
+                    "op": "add",
+                    "path": "/relations/-",
+                    "value": {
+                        "rel": "AttachedFile",
+                        "url": attachment_url,
+                        "attributes": {"comment": f"AutoDev PR 合并截图：{display_name}"},
+                    },
+                }
+            )
+
+        province = "重庆" if "重庆" in delivery_project_name else "四川"
+        title = f"【{delivery_project_name}】现场自测包申请"
+        description = (
+            "<div>"
+            f'<p><strong>AutoDev 自动研发交付合并凭证 · TFS #{source_work_item_id}</strong></p>'
+            + "".join(image_tags)
+            + "</div>"
+        )
+        requested_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        patch = [
+            {"op": "add", "path": "/fields/System.Title", "value": title},
+            {"op": "add", "path": "/fields/System.AssignedTo", "value": settings.tfs_license_assignee},
+            {"op": "add", "path": "/fields/System.Description", "value": description},
+            {"op": "add", "path": "/fields/System.Tags", "value": f"AutoDev; {request_tag}; TFS-{source_work_item_id}"},
+            {"op": "add", "path": f"/fields/{LICENSE_PROVINCE_FIELD}", "value": province},
+            {"op": "add", "path": f"/fields/{LICENSE_PRODUCT_FIELD}", "value": settings.tfs_license_product},
+            {"op": "add", "path": f"/fields/{LICENSE_PRODUCT_LINE_FIELD}", "value": settings.tfs_license_product_line},
+            {"op": "add", "path": f"/fields/{LICENSE_REGION_FIELD}", "value": settings.tfs_license_region},
+            {"op": "add", "path": f"/fields/{LICENSE_PURPOSE_FIELD}", "value": settings.tfs_license_purpose},
+            {"op": "add", "path": f"/fields/{LICENSE_REQUESTED_AT_FIELD}", "value": requested_at},
+            *attachment_relations,
+        ]
+        item = self._request(
+            "POST",
+            f"{self.base_url}/{project_path}/_apis/wit/workitems/${quote('License授权申请', safe='')}?api-version=2.0",
+            json=patch,
+            headers={"Content-Type": "application/json-patch+json"},
+        )
+        return {
+            "id": int(item["id"]),
+            "url": self._work_item_web_url(item, license_project),
+            "title": title,
+            "created": True,
+        }
+
+    @staticmethod
+    def _read_delivery_image(source: str) -> bytes:
+        local_path = Path(source)
+        if local_path.is_file():
+            content = local_path.read_bytes()
+        elif source.startswith(("http://", "https://")):
+            with httpx.Client(timeout=60, follow_redirects=True, trust_env=False) as client:
+                response = client.get(source)
+            if response.is_error:
+                raise TfsError(f"下载合并截图失败：HTTP {response.status_code}")
+            content = response.content
+        else:
+            raise TfsError(f"合并截图不存在：{source}")
+        if not content:
+            raise TfsError("合并截图内容为空")
+        return content
+
+    def _work_item_web_url(self, item: dict, project: str) -> str:
+        linked = str((((item.get("_links") or {}).get("html") or {}).get("href") or ""))
+        if linked:
+            return linked
+        return f"{self.base_url}/{quote(project, safe='')}/_workitems/edit/{item['id']}"
 
     @staticmethod
     def parse_origin(repo_path: str) -> tuple[str, str]:
