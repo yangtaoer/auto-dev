@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Iterator
 
 from .config import settings
-from .domain import DeliveryMode, PIPELINE_STEPS
+from .domain import DEFAULT_DELIVERY_OPTIONS, DeliveryMode, PIPELINE_STEPS
 from .security import hash_password
 
 
@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
     next_poll_at TEXT,
     email_sent_at TEXT,
     notification_emails TEXT NOT NULL DEFAULT '[]',
+    delivery_options TEXT NOT NULL DEFAULT '["auto_release"]',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -142,6 +143,7 @@ CREATE TABLE IF NOT EXISTS request_intakes (
     requester_id INTEGER NOT NULL REFERENCES users(id),
     runner_id TEXT NOT NULL,
     notification_emails TEXT NOT NULL DEFAULT '[]',
+    delivery_options TEXT NOT NULL DEFAULT '["auto_release"]',
     status TEXT NOT NULL DEFAULT 'queued',
     result_request_id TEXT REFERENCES delivery_requests(id),
     error_message TEXT NOT NULL DEFAULT '',
@@ -268,6 +270,12 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN supplement_requested_at TEXT")
     if "supplemented_at" not in request_columns:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN supplemented_at TEXT")
+    if "delivery_options" not in request_columns:
+        # NULL identifies pre-option tasks so an in-flight legacy delivery keeps its old behavior.
+        conn.execute("ALTER TABLE delivery_requests ADD COLUMN delivery_options TEXT")
+    intake_columns = {item["name"] for item in conn.execute("PRAGMA table_info(request_intakes)")}
+    if "delivery_options" not in intake_columns:
+        conn.execute("ALTER TABLE request_intakes ADD COLUMN delivery_options TEXT")
     for code, name in PIPELINE_STEPS:
         conn.execute(
             """INSERT OR IGNORE INTO delivery_steps(request_id,step_code,name,status)
@@ -416,6 +424,7 @@ def create_delivery_request(
     work_item_id: int,
     mode: str,
     notification_emails: list[str],
+    delivery_options: list[str] | None = None,
 ) -> str:
     request_id = str(uuid.uuid4())
     now = utc_now()
@@ -424,13 +433,15 @@ def create_delivery_request(
         conn.execute(
             """INSERT INTO delivery_requests(
                 id,work_item_id,project_id,requester_id,runner_id,delivery_mode,status,current_step,progress,
-                policy_snapshot,notification_emails,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,'queued','validate',0,?,?,?,?)""",
+                policy_snapshot,notification_emails,delivery_options,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,'queued','validate',0,?,?,?,?,?)""",
             (
                 request_id, work_item_id, project["id"], user_id,
                 project.get("runner_id", "yangtao-pc"), mode,
                 json.dumps(snapshot, ensure_ascii=False),
-                json.dumps(notification_emails, ensure_ascii=False), now, now,
+                json.dumps(notification_emails, ensure_ascii=False),
+                json.dumps(delivery_options if delivery_options is not None else DEFAULT_DELIVERY_OPTIONS, ensure_ascii=False),
+                now, now,
             ),
         )
         conn.executemany(
@@ -449,17 +460,20 @@ def create_request_intake(
     work_item_id: int,
     runner_id: str,
     notification_emails: list[str],
+    delivery_options: list[str] | None = None,
 ) -> str:
     intake_id = str(uuid.uuid4())
     now = utc_now()
     with transaction() as conn:
         conn.execute(
             """INSERT INTO request_intakes(
-                id,work_item_id,requester_id,runner_id,notification_emails,status,created_at,updated_at
-            ) VALUES(?,?,?,?,?,'queued',?,?)""",
+                id,work_item_id,requester_id,runner_id,notification_emails,delivery_options,status,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,'queued',?,?)""",
             (
                 intake_id, work_item_id, user_id, runner_id,
-                json.dumps(notification_emails, ensure_ascii=False), now, now,
+                json.dumps(notification_emails, ensure_ascii=False),
+                json.dumps(delivery_options if delivery_options is not None else DEFAULT_DELIVERY_OPTIONS, ensure_ascii=False),
+                now, now,
             ),
         )
     return intake_id
@@ -473,6 +487,9 @@ def request_intake_detail(intake_id: str) -> dict[str, Any] | None:
     )
     if intake:
         intake["notification_emails"] = json_value(intake["notification_emails"], [])
+        intake["delivery_options"] = (
+            None if intake.get("delivery_options") is None else json_value(intake["delivery_options"], DEFAULT_DELIVERY_OPTIONS)
+        )
     return intake
 
 
@@ -617,4 +634,9 @@ def request_detail(request_id: str) -> dict[str, Any] | None:
     request["supplement_requests"] = json_value(request.get("supplement_requests"), [])
     request["supplement_answers"] = json_value(request.get("supplement_answers"), [])
     request["notification_emails"] = json_value(request.get("notification_emails"), [request["requester_email"]])
+    request["delivery_options"] = (
+        None
+        if request.get("delivery_options") is None
+        else json_value(request.get("delivery_options"), DEFAULT_DELIVERY_OPTIONS)
+    )
     return request

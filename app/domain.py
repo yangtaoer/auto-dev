@@ -21,10 +21,23 @@ REVIEW_DELIVERY_MODES = {
     DeliveryMode.PRODUCT_MANUAL_REVIEW.value,
 }
 
-REVIEW_DELIVERABLE_KINDS = {"merge_screenshot", "menu_link", "license_request"}
+DELIVERY_OPTION_MERGE_SCREENSHOT = "merge_screenshot"
+DELIVERY_OPTION_LICENSE_REQUEST = "license_request"
+DELIVERY_OPTION_AUTO_RELEASE = "auto_release"
+DEFAULT_DELIVERY_OPTIONS = [DELIVERY_OPTION_AUTO_RELEASE]
+DELIVERY_OPTIONS = {
+    DELIVERY_OPTION_MERGE_SCREENSHOT,
+    DELIVERY_OPTION_LICENSE_REQUEST,
+    DELIVERY_OPTION_AUTO_RELEASE,
+}
+REVIEW_DELIVERABLE_KINDS = {"merge_screenshot", "menu_link", "license_request", "release_artifact"}
 
 
-def visible_delivery_artifacts(delivery_mode: str, artifacts: list[dict]) -> list[dict]:
+def visible_delivery_artifacts(
+    delivery_mode: str,
+    artifacts: list[dict],
+    delivery_options: list[str] | None = None,
+) -> list[dict]:
     """Return only user-facing deliverables allowed by the configured delivery mode."""
     visible = [
         item
@@ -33,7 +46,18 @@ def visible_delivery_artifacts(delivery_mode: str, artifacts: list[dict]) -> lis
         and not (item.get("kind") == "merge_screenshot" and "凭证" in str(item.get("name") or ""))
     ]
     if delivery_mode in REVIEW_DELIVERY_MODES:
-        return [item for item in visible if item.get("kind") in REVIEW_DELIVERABLE_KINDS]
+        allowed = {"menu_link"}
+        # None marks pre-option legacy rows and keeps their original screenshot/License behavior.
+        if delivery_options is None:
+            allowed.update({"merge_screenshot", "license_request"})
+        else:
+            if DELIVERY_OPTION_MERGE_SCREENSHOT in delivery_options:
+                allowed.add("merge_screenshot")
+            if DELIVERY_OPTION_LICENSE_REQUEST in delivery_options:
+                allowed.add("license_request")
+            if DELIVERY_OPTION_AUTO_RELEASE in delivery_options:
+                allowed.add("release_artifact")
+        return [item for item in visible if item.get("kind") in allowed]
     return visible
 
 
@@ -43,6 +67,7 @@ class RunStatus(StrEnum):
     DEVELOPING = "developing"
     SUBMITTING = "submitting"
     BUILDING = "building"
+    RELEASING = "releasing"
     WAITING_MERGE = "waiting_merge"
     CAPTURING = "capturing"
     DELIVERING = "delivering"
@@ -68,6 +93,7 @@ STATUS_LABELS = {
     RunStatus.DEVELOPING: "DevCore 研发中",
     RunStatus.SUBMITTING: "提交代码",
     RunStatus.BUILDING: "本地构建",
+    RunStatus.RELEASING: "自动发版",
     RunStatus.WAITING_MERGE: "等待 PR 合并",
     RunStatus.CAPTURING: "生成合并凭证",
     RunStatus.DELIVERING: "发送交付邮件",
@@ -86,5 +112,6 @@ PIPELINE_STEPS = [
     ("develop", "DevCore 自动研发"),
     ("clarify", "补充研发信息"),
     ("submit", "提交代码"),
+    ("release", "自动发版"),
     ("deliver", "生成与发送交付物"),
 ]

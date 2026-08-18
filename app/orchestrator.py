@@ -12,7 +12,14 @@ from pathlib import Path
 
 from .config import settings
 from .db import utc_now
-from .domain import REVIEW_DELIVERY_MODES, DeliveryMode, RunStatus, visible_delivery_artifacts
+from .domain import (
+    DELIVERY_OPTION_AUTO_RELEASE,
+    DELIVERY_OPTION_LICENSE_REQUEST,
+    DELIVERY_OPTION_MERGE_SCREENSHOT,
+    REVIEW_DELIVERY_MODES,
+    DeliveryMode,
+    RunStatus,
+)
 from .services.codex_runner import CodexRunner
 from .services.delivery import (
     ArtifactService,
@@ -24,6 +31,7 @@ from .services.delivery import (
     run_command,
 )
 from .services.tfs import TfsClient
+from .services.pipeline_release import TfsPipelineReleaseService
 from .services.process_env import git_authenticated_env, sanitized_process_env
 from .project_catalog import resolve_project_for_work_item
 from .live_stream import LiveCodexPublisher
@@ -169,6 +177,7 @@ class Worker:
                 f"需求准入通过：{work_item.get('work_item_type', '—')} / {work_item.get('state', '—')}，revision {work_item.get('revision', '—')}",
             )
             self.store.add_event(request_id, "tfs.validated", f"TFS #{work_item['id']} 准入校验通过")
+            self._validate_delivery_plan(request_id, detail, project)
             self._check_cancelled(request_id)
 
             self.store.update_request(request_id, current_step="prepare", progress=22)
@@ -940,20 +949,28 @@ class Worker:
 
     def _finish_merged_request(self, request_id: str, pr: dict) -> None:
         detail = self.store.detail(request_id)
-        self.store.update_request(request_id, status=RunStatus.CAPTURING.value, progress=91, merge_commit=pr.get("merge_commit"))
+        options = self._delivery_options(detail)
+        needs_capture = bool(options & {DELIVERY_OPTION_MERGE_SCREENSHOT, DELIVERY_OPTION_LICENSE_REQUEST})
+        self.store.update_request(
+            request_id,
+            status=RunStatus.CAPTURING.value if needs_capture else RunStatus.DELIVERING.value,
+            progress=91,
+            merge_commit=pr.get("merge_commit"),
+        )
         self.store.add_event(request_id, "pr.merged", f"PR #{pr['id']} 已合并", metadata=pr)
-        screenshot_id = self.artifacts.create_merge_evidence(
-            request_id,
-            pr,
-            detail["pr_url"],
-            repository_name=str(pr.get("repository") or detail["policy_snapshot"].get("project_key") or "repository"),
-        )
-        self.store.add_event(
-            request_id,
-            "pr.screenshot_captured",
-            f"PR #{pr['id']} 的真实浏览器页面截图已生成",
-            metadata={"artifact_id": screenshot_id},
-        )
+        if needs_capture:
+            screenshot_id = self.artifacts.create_merge_evidence(
+                request_id,
+                pr,
+                detail["pr_url"],
+                repository_name=str(pr.get("repository") or detail["policy_snapshot"].get("project_key") or "repository"),
+            )
+            self.store.add_event(
+                request_id,
+                "pr.screenshot_captured",
+                f"PR #{pr['id']} 的真实浏览器页面截图已生成",
+                metadata={"artifact_id": screenshot_id},
+            )
         if detail["policy_snapshot"].get("simulation_mode"):
             self._create_demo_artifacts(request_id, include_package=False)
         self._complete_delivery(request_id)
@@ -964,7 +981,14 @@ class Worker:
         repository_states: list[dict],
         completed: list[tuple[dict, dict]],
     ) -> None:
-        self.store.update_request(request_id, status=RunStatus.CAPTURING.value, progress=91)
+        detail = self.store.detail(request_id)
+        options = self._delivery_options(detail)
+        needs_capture = bool(options & {DELIVERY_OPTION_MERGE_SCREENSHOT, DELIVERY_OPTION_LICENSE_REQUEST})
+        self.store.update_request(
+            request_id,
+            status=RunStatus.CAPTURING.value if needs_capture else RunStatus.DELIVERING.value,
+            progress=91,
+        )
         merge_commits: list[str] = []
         for state, pr in completed:
             state["status"] = "completed"
@@ -977,19 +1001,20 @@ class Worker:
                 f"{state['name']} 的 PR #{pr['id']} 已合并",
                 metadata=pr,
             )
-            screenshot_id = self.artifacts.create_merge_evidence(
-                request_id,
-                pr,
-                state.get("pr_url", ""),
-                repository_name=state["name"],
-            )
-            state["merge_screenshot_artifact_id"] = screenshot_id
-            self.store.add_event(
-                request_id,
-                "pr.screenshot_captured",
-                f"{state.get('repository_short_name') or repository_short_name(state['name'])} · PR #{pr['id']} 的真实浏览器页面截图已生成",
-                metadata={"artifact_id": screenshot_id, "repository": state["name"]},
-            )
+            if needs_capture:
+                screenshot_id = self.artifacts.create_merge_evidence(
+                    request_id,
+                    pr,
+                    state.get("pr_url", ""),
+                    repository_name=state["name"],
+                )
+                state["merge_screenshot_artifact_id"] = screenshot_id
+                self.store.add_event(
+                    request_id,
+                    "pr.screenshot_captured",
+                    f"{state.get('repository_short_name') or repository_short_name(state['name'])} · PR #{pr['id']} 的真实浏览器页面截图已生成",
+                    metadata={"artifact_id": screenshot_id, "repository": state["name"]},
+                )
         self.store.update_request(
             request_id,
             repository_states=repository_states,
@@ -998,10 +1023,28 @@ class Worker:
         self._complete_delivery(request_id)
 
     def _complete_delivery(self, request_id: str) -> None:
-        self.store.update_request(request_id, status=RunStatus.DELIVERING.value, progress=96, completed_at=utc_now())
         detail = self.store.detail(request_id)
         project = detail["policy_snapshot"]
-        if detail["delivery_mode"] in REVIEW_DELIVERY_MODES:
+        options = self._delivery_options(detail)
+        if detail["delivery_mode"] in REVIEW_DELIVERY_MODES and DELIVERY_OPTION_AUTO_RELEASE in options:
+            self.store.update_request(
+                request_id,
+                status=RunStatus.RELEASING.value,
+                current_step="release",
+                progress=93,
+            )
+            self.store.update_step(request_id, "release", "running", "正在执行 TFS 自动发版并核验发布产物")
+            self._ensure_auto_release(request_id, detail, project)
+            self.store.update_step(request_id, "release", "completed", "TFS 自动发版成功，发布产物链接已生成")
+            detail = self.store.detail(request_id)
+        else:
+            reason = "本地打包项目不执行 TFS 自动发版" if detail["delivery_mode"] not in REVIEW_DELIVERY_MODES else "发起人未选择自动发版"
+            self.store.update_step(request_id, "release", "skipped", reason)
+        self.store.update_request(request_id, status=RunStatus.DELIVERING.value, current_step="deliver", progress=96)
+        if (
+            detail["delivery_mode"] in REVIEW_DELIVERY_MODES
+            and DELIVERY_OPTION_LICENSE_REQUEST in options
+        ):
             self._ensure_license_application(request_id, detail, project)
             detail = self.store.detail(request_id)
         if not project.get("simulation_mode"):
@@ -1019,6 +1062,90 @@ class Worker:
         self.store.update_request(request_id, status=RunStatus.DELIVERED.value, current_step="deliver", progress=100, completed_at=utc_now())
         self.store.update_step(request_id, "deliver", "completed", "交付产物与通知邮件已生成，TFS 状态及实际交付版本已更新")
         self.store.add_event(request_id, "delivery.completed", "需求研发交付完成")
+
+    @staticmethod
+    def _delivery_options(detail: dict) -> set[str]:
+        configured = detail.get("delivery_options")
+        if configured is None:
+            return {DELIVERY_OPTION_MERGE_SCREENSHOT, DELIVERY_OPTION_LICENSE_REQUEST}
+        return {str(item) for item in configured}
+
+    def _validate_delivery_plan(self, request_id: str, detail: dict, project: dict) -> None:
+        if detail["delivery_mode"] not in REVIEW_DELIVERY_MODES:
+            return
+        options = self._delivery_options(detail)
+        if DELIVERY_OPTION_AUTO_RELEASE not in options:
+            return
+        if project.get("simulation_mode"):
+            self.store.add_event(
+                request_id,
+                "release.plan_validated",
+                "演示模式：自动发版计划已确认",
+            )
+            return
+        plan = TfsPipelineReleaseService().resolve_plan(str(project.get("name") or detail.get("project_name") or ""))
+        self.store.add_event(
+            request_id,
+            "release.plan_validated",
+            (
+                f"自动发版计划：{plan.get('standardName')} / {plan.get('pipelineName')} "
+                f"(ID {plan.get('definitionId')}) / {plan.get('sourceBranch')} / {plan.get('definitionUrl')}"
+            ),
+            metadata=plan,
+        )
+
+    def _ensure_auto_release(self, request_id: str, detail: dict, project: dict) -> None:
+        existing = next(
+            (item for item in detail.get("artifacts", []) if item.get("kind") == "release_artifact"),
+            None,
+        )
+        if existing:
+            return
+        if project.get("simulation_mode"):
+            build_id = 1100000 + int(detail["work_item_id"]) % 100000
+            artifacts_url = (
+                f"{project['tfs_collection_url']}/DCS/_build/results?buildId={build_id}"
+                "&view=artifacts&pathAsName=false&type=publishedArtifacts"
+            )
+            result = {
+                "standardName": project.get("name") or detail.get("project_name"),
+                "pipelineName": "AutoDev 演示发版流水线",
+                "definitionId": 9000,
+                "sourceBranch": "refs/heads/dev",
+                "buildId": build_id,
+                "buildNumber": f"demo-{build_id}",
+                "result": "succeeded",
+                "artifacts": ["drop"],
+                "artifactsUrl": artifacts_url,
+            }
+        else:
+            service = TfsPipelineReleaseService()
+            plan = service.resolve_plan(str(project.get("name") or detail.get("project_name") or ""))
+            self.store.add_event(
+                request_id,
+                "release.started",
+                (
+                    f"开始自动发版：{plan.get('pipelineName')} (ID {plan.get('definitionId')}) / "
+                    f"{plan.get('sourceBranch')}"
+                ),
+                metadata=plan,
+            )
+            result = service.run(str(project.get("name") or detail.get("project_name") or ""))
+        self.store.add_artifact(
+            request_id,
+            "release_artifact",
+            f"自动发版 · {result.get('pipelineName')} · Build #{result.get('buildId')}",
+            external_url=str(result["artifactsUrl"]),
+        )
+        self.store.add_event(
+            request_id,
+            "release.completed",
+            (
+                f"自动发版成功：Build #{result.get('buildId')} / {result.get('buildNumber')} / "
+                f"产物 {', '.join(result.get('artifacts') or [])}"
+            ),
+            metadata=result,
+        )
 
     def _ensure_license_application(self, request_id: str, detail: dict, project: dict) -> None:
         existing = next(
@@ -1048,11 +1175,7 @@ class Worker:
             )
             return
 
-        screenshots = [
-            item
-            for item in visible_delivery_artifacts(detail["delivery_mode"], detail.get("artifacts", []))
-            if item.get("kind") == "merge_screenshot"
-        ]
+        screenshots = [item for item in detail.get("artifacts", []) if item.get("kind") == "merge_screenshot"]
         if not screenshots:
             raise RuntimeError("截图交付缺少 PR 合并截图，无法创建 License 授权申请")
 

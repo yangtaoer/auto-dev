@@ -42,6 +42,7 @@ STATUS = {
     "developing": "DevCore 研发中",
     "submitting": "提交代码",
     "building": "本地构建",
+    "releasing": "自动发版",
     "waiting_input": "待补充信息",
     "waiting_merge": "等待 PR 合并",
     "capturing": "生成合并凭证",

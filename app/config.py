@@ -62,7 +62,7 @@ class Settings:
     ).resolve()
     runner_token: str = env_secret("AUTODEV_RUNNER_TOKEN")
     cloud_url: str = os.getenv("AUTODEV_CLOUD_URL", "").rstrip("/")
-    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "1.0-Alpha").strip() or "1.0-Alpha"
+    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "1.0-Alpha.1").strip() or "1.0-Alpha.1"
     runner_monitor_host: str = os.getenv("AUTODEV_RUNNER_MONITOR_HOST", "127.0.0.1").strip()
     runner_monitor_port: int = int(os.getenv("AUTODEV_RUNNER_MONITOR_PORT", "28766"))
     max_artifact_mb: int = max(1, int(os.getenv("AUTODEV_MAX_ARTIFACT_MB", "200")))
@@ -89,6 +89,13 @@ class Settings:
     tfs_license_product_line: str = os.getenv("TFS_LICENSE_PRODUCT_LINE", "调度产品线").strip()
     tfs_license_region: str = os.getenv("TFS_LICENSE_REGION", "西南地区部").strip()
     tfs_license_purpose: str = os.getenv("TFS_LICENSE_PURPOSE", "本地自研需求测试").strip()
+    tfs_pipeline_skill_script: Path = Path(
+        os.getenv(
+            "TFS_PIPELINE_SKILL_SCRIPT",
+            str(Path.home() / ".codex" / "skills" / "tfs-run-pipeline" / "scripts" / "run_tfs_pipeline.py"),
+        )
+    ).resolve()
+    tfs_pipeline_timeout_seconds: int = max(300, int(os.getenv("TFS_PIPELINE_TIMEOUT_SECONDS", "3600")))
     smtp_host: str = os.getenv("SMTP_HOST", "")
     smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
     smtp_protocol: str = os.getenv("SMTP_PROTOCOL", "smtp").strip().lower()

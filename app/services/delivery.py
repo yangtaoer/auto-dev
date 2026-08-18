@@ -184,9 +184,14 @@ class ArtifactService:
             "merge_screenshot": "PR 合并截图",
             "menu_link": "新增视图菜单链接",
             "license_request": "License 授权申请",
+            "release_artifact": "自动发版产物",
         }
         lines: list[str] = []
-        items = visible_delivery_artifacts(str(detail.get("delivery_mode") or ""), detail.get("artifacts", []))
+        items = visible_delivery_artifacts(
+            str(detail.get("delivery_mode") or ""),
+            detail.get("artifacts", []),
+            detail.get("delivery_options"),
+        )
         for item in items:
             safe_name = html.escape(str(item.get("name") or "交付产物"))
             label = html.escape(kind_labels.get(str(item.get("kind") or ""), str(item.get("kind") or "交付产物")))
@@ -511,16 +516,25 @@ class Mailer:
             "merge_screenshot": "合并截图",
             "menu_link": "新增视图菜单链接",
             "license_request": "License 授权申请",
+            "release_artifact": "自动发版产物",
         }
         artifact_lines = []
-        deliverable_items = visible_delivery_artifacts(str(detail.get("delivery_mode") or ""), detail.get("artifacts", []))
+        deliverable_items = visible_delivery_artifacts(
+            str(detail.get("delivery_mode") or ""),
+            detail.get("artifacts", []),
+            detail.get("delivery_options"),
+        )
         for item in deliverable_items:
             artifact_url = item.get("external_url") or f"{settings.public_base_url}/api/artifacts/{item['id']}"
             kind = kind_labels.get(item.get("kind"), item.get("kind") or "交付文件")
             action_label = (
                 "下载截图"
                 if item.get("kind") == "merge_screenshot"
-                else ("打开申请" if item.get("kind") == "license_request" else "下载产物")
+                else (
+                    "打开申请"
+                    if item.get("kind") == "license_request"
+                    else ("查看发版产物" if item.get("kind") == "release_artifact" else "下载产物")
+                )
             )
             if item.get("kind") == "menu_link":
                 artifact_lines.append(

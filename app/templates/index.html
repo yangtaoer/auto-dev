@@ -88,10 +88,18 @@
   </div>
 
   <div class="modal-backdrop" id="request-modal" hidden>
-    <section class="modal request-modal"><button class="modal-close" data-close>×</button><p class="eyebrow">新研发任务 / NEW DEVELOPMENT RUN</p><h2>发起自动研发</h2><p class="muted">输入 TFS 用户情景编号，执行器会自动识别项目和交付策略。</p><p class="queue-note"><i></i>最多同时运行 5 个任务，超出后自动排队，不影响继续提交。</p>
+    <section class="modal request-modal"><button class="modal-close" data-close>×</button><p class="eyebrow">新研发任务 / NEW DEVELOPMENT RUN</p><h2>发起自动研发</h2><p class="muted">输入 TFS 用户情景编号，执行器会自动识别项目；通知对象与交付产物由本次任务独立确定。</p><p class="queue-note"><i></i>最多同时运行 5 个任务，执行器离线或并发已满时会自动排队。</p>
       <form id="request-form" class="form-grid">
         <label class="span-2"><span>TFS 用户情景编号</span><input type="number" name="work_item_id" min="1" placeholder="例如：1551572" required></label>
-        <div class="span-2 field-block"><div class="field-label">通知邮箱 <small>可多选，默认全部选中</small></div><div class="mail-choice-grid" id="request-email-options"></div></div>
+        <div class="span-2 field-block"><div class="field-label">通知邮箱 <small>可选择当前账号及所有启用项目经理的邮箱</small></div><div class="recipient-choice-list" id="request-email-options"></div></div>
+        <div class="span-2 field-block delivery-option-block">
+          <div class="field-label">交付产物 <small>适用于 PR 审核类项目；本地打包项目仍按项目定义交付</small></div>
+          <div class="delivery-choice-grid" id="request-delivery-options">
+            <label class="delivery-choice"><input type="checkbox" name="delivery_options" value="merge_screenshot"><span class="choice-index">01</span><span><b>代码合并截图</b><small>每个仓库一张 PR 已合并页面原图</small></span><i>✓</i></label>
+            <label class="delivery-choice"><input type="checkbox" name="delivery_options" value="license_request"><span class="choice-index">02</span><span><b>自动填写 License 申请</b><small>创建申请并在说明中直接嵌入合并截图</small></span><i>✓</i></label>
+            <label class="delivery-choice featured"><input type="checkbox" name="delivery_options" value="auto_release" checked><span class="choice-index">03</span><span><b>自动发版</b><small>PR 合并后运行交付流水线并返回发布产物页</small></span><i>✓</i></label>
+          </div>
+        </div>
         <p class="form-error span-2" id="request-error" hidden></p>
         <div class="modal-actions span-2"><button type="button" class="btn btn-ghost" data-close>取消</button><button type="submit" class="btn btn-primary">确认并进入队列 ↗</button></div>
       </form>

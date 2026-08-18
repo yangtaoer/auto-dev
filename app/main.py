@@ -8,7 +8,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
@@ -41,7 +41,14 @@ from .db import (
     update_step,
     utc_now,
 )
-from .domain import DELIVERY_MODE_LABELS, DeliveryMode, STATUS_LABELS, RunStatus, visible_delivery_artifacts
+from .domain import (
+    DEFAULT_DELIVERY_OPTIONS,
+    DELIVERY_MODE_LABELS,
+    DeliveryMode,
+    STATUS_LABELS,
+    RunStatus,
+    visible_delivery_artifacts,
+)
 from .orchestrator import worker
 from .live_stream import live_codex_streams
 from .security import hash_password, verify_password
@@ -61,7 +68,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha",
+    version="1.0-Alpha.1",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -136,6 +143,14 @@ class DeliveryRequestInput(BaseModel):
     work_item_id: int = Field(gt=0)
     delivery_mode: DeliveryMode | None = None
     notification_emails: list[str] = Field(default_factory=list)
+    delivery_options: list[Literal["merge_screenshot", "license_request", "auto_release"]] = Field(
+        default_factory=lambda: list(DEFAULT_DELIVERY_OPTIONS), min_length=1, max_length=3
+    )
+
+    @field_validator("delivery_options")
+    @classmethod
+    def unique_delivery_options(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(values))
 
 
 class SupplementAnswerInput(BaseModel):
@@ -324,6 +339,18 @@ def normalize_emails(emails: list[str], legacy_email: str | None = None) -> list
     return normalized
 
 
+def selectable_notification_users(user: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        public_user(item)
+        for item in rows(
+            """SELECT * FROM users
+               WHERE active=1 AND (role='pm' OR id=?)
+               ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END,display_name""",
+            (user["id"], user["id"]),
+        )
+    ]
+
+
 def request_recipients(detail: dict[str, Any]) -> list[str]:
     selected = list(detail.get("notification_emails") or [detail["requester_email"]])
     selected.extend(
@@ -505,6 +532,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
                 "delivery_mode": "routing",
                 "status": display_status,
                 "runner_online": online,
+                "delivery_options": intake.get("delivery_options") or list(DEFAULT_DELIVERY_OPTIONS),
                 "current_activity": activity,
                 "created_at": intake["created_at"],
                 "updated_at": intake["updated_at"],
@@ -525,6 +553,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
             "project_name": "项目识别失败",
             "delivery_mode": "routing",
             "status": "failed",
+            "delivery_options": intake.get("delivery_options") or list(DEFAULT_DELIVERY_OPTIONS),
             "current_activity": public_engine_text(intake.get("error_message") or "项目识别失败，请查看详情"),
             "created_at": intake["created_at"],
             "updated_at": intake["updated_at"],
@@ -564,7 +593,14 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
         item["current_activity"] = public_engine_text(item.get("current_activity"))
         item["result_summary"] = public_engine_text(item.get("result_summary"))
         item["error_message"] = public_engine_text(item.get("error_message"))
-        item["artifacts"] = visible_delivery_artifacts(item["delivery_mode"], artifact_map.get(item["id"], []))
+        item["delivery_options"] = (
+            None
+            if item.get("delivery_options") is None
+            else json_value(item.get("delivery_options"), DEFAULT_DELIVERY_OPTIONS)
+        )
+        item["artifacts"] = visible_delivery_artifacts(
+            item["delivery_mode"], artifact_map.get(item["id"], []), item["delivery_options"]
+        )
         item["repository_states"] = json_value(item.get("repository_states"), [])
         started_value = item.get("created_at") or item.get("started_at")
         ended_value = item.get("completed_at")
@@ -624,7 +660,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     queued_requests = row(
         "SELECT COUNT(*) count FROM delivery_requests WHERE status='queued'",
     ) or {"count": 0}
-    busy_statuses = "'validating','developing','submitting','building','capturing','delivering'"
+    busy_statuses = "'validating','developing','submitting','building','releasing','capturing','delivering'"
     busy_requests = row(
         f"SELECT COUNT(*) count FROM delivery_requests WHERE status IN ({busy_statuses})",
     ) or {"count": 0}
@@ -891,6 +927,12 @@ def list_users(_: Annotated[dict, Depends(admin_user)]) -> dict:
     return {"users": [public_user(item) for item in rows("SELECT * FROM users ORDER BY role,display_name")]}
 
 
+@app.get("/api/notification-recipients")
+def notification_recipients(user: Annotated[dict, Depends(current_user)]) -> dict:
+    """All active project-manager mailboxes selectable by any signed-in initiator."""
+    return {"users": selectable_notification_users(user)}
+
+
 @app.put("/api/users/{user_id}")
 def update_user(user_id: int, payload: UserUpdateInput, actor: Annotated[dict, Depends(admin_user)]) -> dict:
     existing = row("SELECT * FROM users WHERE id=?", (user_id,))
@@ -936,9 +978,13 @@ def update_user(user_id: int, payload: UserUpdateInput, actor: Annotated[dict, D
 def submit_request(payload: DeliveryRequestInput, user: Annotated[dict, Depends(current_user)]) -> dict:
     configured_emails = public_user(user)["emails"]
     selected_emails = normalize_emails(payload.notification_emails or configured_emails)
-    configured_lookup = {email.lower() for email in configured_emails}
-    if any(email.lower() not in configured_lookup for email in selected_emails):
-        raise HTTPException(status_code=422, detail="通知邮箱只能从当前账号已配置的邮箱中选择")
+    selectable_lookup = {
+        email.lower()
+        for target in selectable_notification_users(user)
+        for email in target.get("emails", [])
+    }
+    if any(email.lower() not in selectable_lookup for email in selected_emails):
+        raise HTTPException(status_code=422, detail="通知邮箱只能从当前账号或已启用项目经理的邮箱中选择")
     if payload.project_id is None:
         runner_rows = rows("SELECT DISTINCT runner_id FROM projects WHERE enabled=1 ORDER BY runner_id")
         if not runner_rows:
@@ -954,7 +1000,7 @@ def submit_request(payload: DeliveryRequestInput, user: Annotated[dict, Depends(
         online = runner_is_online(runner_id)
         try:
             intake_id = create_request_intake(
-                user["id"], payload.work_item_id, runner_id, selected_emails
+                user["id"], payload.work_item_id, runner_id, selected_emails, payload.delivery_options
             )
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=409, detail="该需求正在识别项目或等待执行") from exc
@@ -979,7 +1025,9 @@ def submit_request(payload: DeliveryRequestInput, user: Annotated[dict, Depends(
             raise HTTPException(status_code=403, detail="该项目不允许覆盖交付方式")
         mode = payload.delivery_mode.value
     try:
-        request_id = create_delivery_request(project, user["id"], payload.work_item_id, mode, selected_emails)
+        request_id = create_delivery_request(
+            project, user["id"], payload.work_item_id, mode, selected_emails, payload.delivery_options
+        )
     except sqlite3.IntegrityError as exc:
         raise HTTPException(status_code=409, detail="该需求已有正在执行的研发任务") from exc
     online = runner_is_online(str(project["runner_id"]))
@@ -1083,6 +1131,7 @@ def retry_request(request_id: str, user: Annotated[dict, Depends(current_user)])
             original["work_item_id"],
             original["delivery_mode"],
             original.get("notification_emails") or [original["requester_email"]],
+            original.get("delivery_options"),
         )
     except sqlite3.IntegrityError as exc:
         raise HTTPException(status_code=409, detail="该需求已有正在执行的研发任务") from exc
@@ -1256,6 +1305,7 @@ def runner_route_intake(intake_id: str, payload: RunnerIntakeRoute) -> dict:
             intake["work_item_id"],
             project["delivery_mode"],
             intake["notification_emails"],
+            intake.get("delivery_options"),
         )
     except sqlite3.IntegrityError:
         message = "该需求已有正在执行的研发任务"

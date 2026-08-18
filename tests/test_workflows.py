@@ -42,6 +42,7 @@ from app.services.delivery import (  # noqa: E402
     menu_link_from_view_path,
     repository_short_name,
 )
+from app.services.pipeline_release import TfsPipelineReleaseService  # noqa: E402
 from app.services.tfs import (  # noqa: E402
     ACTUAL_DELIVERY_VERSION_FIELD,
     DELIVERY_ARTIFACTS_FIELD,
@@ -98,8 +99,16 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()["project"]["id"]
 
-    def submit_and_process(self, project_id: int, work_item_id: int) -> dict:
-        response = self.client.post("/api/requests", json={"project_id": project_id, "work_item_id": work_item_id})
+    def submit_and_process(
+        self,
+        project_id: int,
+        work_item_id: int,
+        delivery_options: list[str] | None = None,
+    ) -> dict:
+        payload = {"project_id": project_id, "work_item_id": work_item_id}
+        if delivery_options is not None:
+            payload["delivery_options"] = delivery_options
+        response = self.client.post("/api/requests", json=payload)
         self.assertEqual(response.status_code, 200, response.text)
         request_id = response.json()["id"]
         worker.process_once()
@@ -350,11 +359,13 @@ class WorkflowTests(unittest.TestCase):
         service = ArtifactService(public_base_url="https://auto.example.test")
         detail = {
             "delivery_mode": "product_manual_review",
+            "delivery_options": ["merge_screenshot", "license_request", "auto_release"],
             "artifacts": [
                 {"id": 7, "kind": "merge_screenshot", "name": "notice-srv · PR #202 · 合并截图.png", "external_url": "https://oss.test/pr-202.png"},
                 {"id": 8, "kind": "menu_link", "name": "/direct/views/operationTicketOverview", "external_url": "/direct/views/operationTicketOverview"},
                 {"id": 9, "kind": "config", "name": "source.yml", "external_url": "https://oss.test/source.yml"},
                 {"id": 10, "kind": "license_request", "name": "License 授权申请 #1652475", "external_url": "https://tfs.test/_workitems/edit/1652475"},
+                {"id": 11, "kind": "release_artifact", "name": "自动发版 · Build #1170472", "external_url": "https://tfs.test/DCS/_build/results?buildId=1170472&view=artifacts"},
             ],
         }
         manifest = service.delivery_manifest_html(detail)
@@ -363,6 +374,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("新增视图菜单链接", manifest)
         self.assertIn("License 授权申请", manifest)
         self.assertIn("https://tfs.test/_workitems/edit/1652475", manifest)
+        self.assertIn("自动发版产物", manifest)
+        self.assertIn("buildId=1170472", manifest)
         self.assertNotIn("source.yml", manifest)
 
     def test_tfs_license_application_embeds_merge_screenshots_and_required_fields(self) -> None:
@@ -801,7 +814,9 @@ class WorkflowTests(unittest.TestCase):
 
     def test_sichuan_review_then_merge(self) -> None:
         project_id = self.create_project("test-sichuan", "sichuan_auto_review")
-        detail = self.submit_and_process(project_id, 910002)
+        detail = self.submit_and_process(
+            project_id, 910002, ["merge_screenshot", "license_request"]
+        )
         self.assertEqual(detail["status"], "waiting_merge")
         response = self.client.post(f"/api/requests/{detail['id']}/simulate-merge")
         self.assertEqual(response.status_code, 200, response.text)
@@ -813,11 +828,16 @@ class WorkflowTests(unittest.TestCase):
         licenses = [item for item in completed["artifacts"] if item["kind"] == "license_request"]
         self.assertEqual(len(licenses), 1)
         self.assertIn("License 授权申请", licenses[0]["name"])
+        self.assertFalse(any(item["kind"] == "release_artifact" for item in completed["artifacts"]))
         self.assertNotIn("pull_request", {item["kind"] for item in completed["artifacts"]})
 
     def test_product_review_emails_before_and_after_merge(self) -> None:
         project_id = self.create_project("test-product", "product_manual_review")
-        detail = self.submit_and_process(project_id, 910003)
+        detail = self.submit_and_process(
+            project_id,
+            910003,
+            ["merge_screenshot", "license_request", "auto_release"],
+        )
         self.assertEqual(detail["status"], "waiting_merge")
         self.assertTrue(any(item["name"] == "review-email-preview.html" for item in detail["artifacts"]))
         self.assertNotIn("pull_request", {item["kind"] for item in detail["artifacts"]})
@@ -834,7 +854,74 @@ class WorkflowTests(unittest.TestCase):
             len([item for item in completed["artifacts"] if item["kind"] == "license_request"]),
             1,
         )
+        releases = [item for item in completed["artifacts"] if item["kind"] == "release_artifact"]
+        self.assertEqual(len(releases), 1)
+        self.assertIn("view=artifacts", releases[0]["external_url"])
         self.assertNotIn("pull_request", {item["kind"] for item in completed["artifacts"]})
+
+    def test_review_delivery_defaults_to_auto_release_only(self) -> None:
+        project_id = self.create_project("test-default-release", "product_manual_review")
+        detail = self.submit_and_process(project_id, 910031)
+        self.assertEqual(detail["delivery_options"], ["auto_release"])
+        self.client.post(f"/api/requests/{detail['id']}/simulate-merge")
+        completed = self.client.get(f"/api/requests/{detail['id']}").json()["request"]
+        self.assertEqual(completed["status"], "delivered")
+        kinds = {item["kind"] for item in completed["artifacts"]}
+        self.assertIn("release_artifact", kinds)
+        self.assertNotIn("merge_screenshot", kinds)
+        self.assertNotIn("license_request", kinds)
+        release_step = next(step for step in completed["steps"] if step["step_code"] == "release")
+        self.assertEqual(release_step["status"], "completed")
+
+    def test_pipeline_release_skill_adapter_resolves_and_runs_without_pat_on_command_line(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            script_path = Path(directory) / "fake_pipeline_skill.py"
+            script_path.write_text(
+                """import json
+import os
+import sys
+
+arguments = sys.argv[1:]
+assert \"test-pipeline-pat\" not in arguments
+project_name = arguments[arguments.index(\"--project-name\") + 1]
+if \"--confirm-run\" in arguments:
+    assert os.environ.get(\"TFS_PAT\") == \"test-pipeline-pat\"
+    print(json.dumps({
+        \"standardName\": project_name,
+        \"pipelineName\": \"standard-release\",
+        \"definitionId\": 1974,
+        \"sourceBranch\": \"refs/heads/dev\",
+        \"buildId\": 1170472,
+        \"buildNumber\": \"20260818.1\",
+        \"result\": \"succeeded\",
+        \"expectedArtifactFound\": True,
+        \"artifacts\": [\"drop\"],
+        \"artifactsUrl\": \"http://dev.test/DCS/_build/results?buildId=1170472&view=artifacts\"
+    }))
+else:
+    print(json.dumps({
+        \"standardName\": project_name,
+        \"pipelineName\": \"standard-release\",
+        \"definitionId\": 1974,
+        \"sourceBranch\": \"refs/heads/dev\",
+        \"definitionUrl\": \"http://dev.test/DCS/_build?definitionId=1974\"
+    }))
+""",
+                encoding="utf-8",
+            )
+            fake_settings = SimpleNamespace(
+                tfs_pat="test-pipeline-pat",
+                tfs_pipeline_timeout_seconds=30,
+            )
+            with patch("app.services.pipeline_release.settings", fake_settings):
+                service = TfsPipelineReleaseService(script_path=script_path)
+                plan = service.resolve_plan("四川省调网络发令")
+                result = service.run("四川省调网络发令")
+
+        self.assertEqual(plan["definitionId"], 1974)
+        self.assertEqual(result["result"], "succeeded")
+        self.assertTrue(result["expectedArtifactFound"])
+        self.assertIn("buildId=1170472", result["artifactsUrl"])
 
     def test_real_pr_screenshot_uses_repository_short_name_and_is_idempotent(self) -> None:
         self.assertEqual(repository_short_name("dcsd-notice-srv-sichuancd-dm"), "notice-srv")
@@ -1048,6 +1135,7 @@ class WorkflowTests(unittest.TestCase):
                 "project_id": project_id,
                 "work_item_id": 910023,
                 "notification_emails": ["admin@example.com"],
+                "delivery_options": ["merge_screenshot", "auto_release"],
             },
         )
         self.assertEqual(created.status_code, 200, created.text)
@@ -1063,6 +1151,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(new_detail["work_item_id"], 910023)
         self.assertEqual(new_detail["delivery_mode"], "product_manual_review")
         self.assertEqual(new_detail["notification_emails"], ["admin@example.com"])
+        self.assertEqual(new_detail["delivery_options"], ["merge_screenshot", "auto_release"])
         original = self.client.get(f"/api/requests/{original_id}").json()["request"]
         self.assertTrue(any(event["event_type"] == "request.retried" for event in original["events"]))
         second_retry = self.client.post(f"/api/requests/{original_id}/retry")
@@ -1164,7 +1253,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.1"), 1)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
@@ -1174,6 +1263,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("支持项目与别名", page.text)
         self.assertIn("可自助研发项目", page.text)
         self.assertIn("project-guide", page.text)
+        self.assertEqual(page.text.count('name="delivery_options"'), 3)
+        self.assertIn('value="auto_release" checked', page.text)
+        self.assertNotIn('value="merge_screenshot" checked', page.text)
+        self.assertNotIn('value="license_request" checked', page.text)
 
         script = self.client.get("/static/app.js").text
         self.assertIn("addOptimisticIntake", script)
@@ -1187,6 +1280,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("recent.slice(0,8)", script)
         self.assertNotIn("activeEl.innerHTML=state.dashboard.active", script)
         self.assertIn("const projectRequest=api('/api/projects')", script)
+        self.assertIn("api('/api/notification-recipients')", script)
+        self.assertIn("delivery_options", script)
+        self.assertIn("release_artifact", script)
         self.assertIn("renderProjectGuide", script)
         self.assertNotIn("project-guide-trigger')?.addEventListener('click'", script)
 
@@ -1343,7 +1439,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("自助项目", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.1"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
@@ -1772,17 +1868,31 @@ class WorkflowTests(unittest.TestCase):
                 "/api/auth/login", json={"username": username, "password": "password123"}
             )
             self.assertEqual(logged_in.status_code, 200, logged_in.text)
+            directory = pm_client.get("/api/notification-recipients")
+            self.assertEqual(directory.status_code, 200, directory.text)
+            selectable = {
+                email
+                for target in directory.json()["users"]
+                for email in target["emails"]
+            }
+            self.assertIn("pm.backup@example.com", selectable)
+            self.assertIn("pm@example.com", selectable)
             submitted = pm_client.post(
                 "/api/requests",
                 json={
                     "project_id": project_id,
                     "work_item_id": 910006,
-                    "notification_emails": ["pm.backup@example.com"],
+                    "notification_emails": ["pm.backup@example.com", "pm@example.com"],
+                    "delivery_options": ["auto_release"],
                 },
             )
             self.assertEqual(submitted.status_code, 200, submitted.text)
             detail = pm_client.get(f"/api/requests/{submitted.json()['id']}").json()["request"]
-            self.assertEqual(detail["notification_emails"], ["pm.backup@example.com"])
+            self.assertEqual(
+                detail["notification_emails"],
+                ["pm.backup@example.com", "pm@example.com"],
+            )
+            self.assertEqual(detail["delivery_options"], ["auto_release"])
             rejected = pm_client.post(
                 "/api/requests",
                 json={
