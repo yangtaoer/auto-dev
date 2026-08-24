@@ -47,11 +47,13 @@ chmod +x *.sh
 .\local-runner\start.ps1
 ```
 
-需要登录 Windows 后自动运行：
+需要随 Windows 开机自动运行：
 
 ```powershell
 .\local-runner\install-startup-task.ps1
 ```
+
+首次执行会弹出 Windows UAC 管理员确认。该命令会注册开机、用户登录和每 5 分钟恢复三类触发器。开机初期网络或云端暂不可用时，执行器会保持运行并自动重连，不再因首次心跳失败退出。
 
 本机运行管理：
 

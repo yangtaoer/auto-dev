@@ -61,14 +61,34 @@ foreach ($Name in @("runner-token.txt", "tfs-pat.txt", "tfs-reviewer-pat.txt", "
 }
 
 if ($RegisterStartupTask) {
+    $Identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $WindowsPrincipal = New-Object System.Security.Principal.WindowsPrincipal($Identity)
+    if (-not $WindowsPrincipal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw "注册开机自启需要管理员权限，请运行 local-runner\install-startup-task.ps1 并确认 Windows UAC 提示。"
+    }
     $TaskName = "AutoDevLocalRunner"
     $StartScript = Join-Path $RunnerDir "task-entry.ps1"
     $Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$StartScript`""
     $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $Arguments -WorkingDirectory $ProjectRoot
-    $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-    $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 20 -RestartInterval (New-TimeSpan -Minutes 1)
-    Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Description "全自助需求研发本机 Codex 执行器" -Force | Out-Null
-    Write-Host "已注册登录启动任务：$TaskName"
+    $CurrentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $Triggers = @(
+        (New-ScheduledTaskTrigger -AtStartup),
+        (New-ScheduledTaskTrigger -AtLogOn -User $CurrentUser),
+        (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650))
+    )
+    $Settings = New-ScheduledTaskSettingsSet `
+        -StartWhenAvailable `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -DontStopOnIdleEnd `
+        -WakeToRun `
+        -ExecutionTimeLimit ([TimeSpan]::Zero) `
+        -MultipleInstances IgnoreNew `
+        -RestartCount 99 `
+        -RestartInterval (New-TimeSpan -Minutes 1)
+    $Principal = New-ScheduledTaskPrincipal -UserId $CurrentUser -LogonType Interactive -RunLevel Limited
+    Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Triggers -Settings $Settings -Principal $Principal -Description "AutoDev 本机 DevCore 执行器（开机、登录自动启动，失败定时恢复）" -Force | Out-Null
+    Write-Host "已注册开机自启任务：$TaskName（开机/登录触发，异常退出后每 5 分钟兜底恢复）"
 }
 
 & (Join-Path $RunnerDir "install-client-shortcut.ps1")

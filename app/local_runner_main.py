@@ -19,6 +19,21 @@ from .store import RemoteStore
 logger = logging.getLogger("autodev.runner")
 
 
+def report_initial_heartbeat(store: RemoteStore, codex_usage: dict, max_concurrency: int) -> bool:
+    """Announce startup without making temporary boot-time network loss fatal."""
+    try:
+        store.heartbeat(
+            "starting",
+            codex_usage=codex_usage,
+            current_request_ids=[],
+            max_concurrency=max_concurrency,
+        )
+    except Exception as exc:
+        logger.warning("首次心跳上报失败，执行器保持运行并等待网络恢复：%s", exc)
+        return False
+    return True
+
+
 def configure_logging() -> None:
     log_dir = settings.data_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -120,12 +135,7 @@ def main() -> None:
     try:
         refresh_codex_usage(force=True)
         monitor.start()
-        store.heartbeat(
-            "starting",
-            codex_usage=get_codex_usage(),
-            current_request_ids=[],
-            max_concurrency=worker.max_concurrency,
-        )
+        report_initial_heartbeat(store, get_codex_usage(), worker.max_concurrency)
         try:
             sync_project_catalog()
         except Exception as exc:

@@ -77,12 +77,14 @@ AUTODEV_RUNNER_ID=yangtao-pc
 
 如启用 OSS 交付，在 `local-runner/.env.runner` 中配置 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ALIYUN_OSS_REGION`、`ALIYUN_OSS_ENDPOINT` 和 `ALIYUN_OSS_BUCKET`。默认对象前缀为 `autodev`，签名链接和产物保留期为 3 天，Runner 每 72 小时执行一次 OSS 与本机交付目录清理。
 
-验收完成后注册登录自启：
+验收完成后注册开机自启：
 
 ```powershell
 .\local-runner\install-startup-task.ps1
 .\local-runner\status.ps1
 ```
+
+首次注册需要确认 Windows UAC 管理员提示。计划任务同时包含开机、当前用户登录和每 5 分钟恢复触发器；执行器会容忍开机初期网络未就绪并持续重连云端。
 
 日常管理命令：
 

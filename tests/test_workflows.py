@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
 from app.db import update_request, update_step  # noqa: E402
+from app.local_runner_main import report_initial_heartbeat  # noqa: E402
 from app.orchestrator import Worker, worker  # noqa: E402
 from app.project_catalog import (  # noqa: E402
     load_project_presets,
@@ -1253,7 +1254,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.1"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.2"), 1)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
@@ -1346,6 +1347,8 @@ else:
         )
 
     def test_local_runner_restart_waits_for_port_and_console_reports_result(self) -> None:
+        install_script = Path("local-runner/install.ps1").read_text(encoding="utf-8-sig")
+        startup_script = Path("local-runner/install-startup-task.ps1").read_text(encoding="utf-8-sig")
         restart_script = Path("local-runner/restart.ps1").read_text(encoding="utf-8-sig")
         stop_script = Path("local-runner/stop.ps1").read_text(encoding="utf-8-sig")
         status_script = Path("local-runner/status.ps1").read_text(encoding="utf-8-sig")
@@ -1366,6 +1369,33 @@ else:
         self.assertIn('text.see("end")', client_source)
         self.assertIn("执行器仍有", restart_script)
         self.assertIn("param([switch]$Force)", restart_script)
+        self.assertIn("New-ScheduledTaskTrigger -AtStartup", install_script)
+        self.assertIn("New-ScheduledTaskTrigger -AtLogOn", install_script)
+        self.assertIn("RepetitionInterval (New-TimeSpan -Minutes 5)", install_script)
+        self.assertIn("MultipleInstances IgnoreNew", install_script)
+        self.assertIn("RestartCount 99", install_script)
+        self.assertIn("WindowsBuiltInRole]::Administrator", startup_script)
+        self.assertIn("-Verb RunAs", startup_script)
+        self.assertIn('Join-Path $RunnerDir "restart.ps1"', startup_script)
+
+    def test_initial_runner_heartbeat_failure_does_not_abort_startup(self) -> None:
+        class OfflineStore:
+            def heartbeat(self, *_args, **_kwargs) -> None:
+                raise OSError("network is not ready")
+
+        class OnlineStore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[tuple, dict]] = []
+
+            def heartbeat(self, *args, **kwargs) -> None:
+                self.calls.append((args, kwargs))
+
+        self.assertFalse(report_initial_heartbeat(OfflineStore(), {"available": False}, 5))
+        online = OnlineStore()
+        self.assertTrue(report_initial_heartbeat(online, {"available": True}, 5))
+        self.assertEqual(online.calls[0][0], ("starting",))
+        self.assertEqual(online.calls[0][1]["current_request_ids"], [])
+        self.assertEqual(online.calls[0][1]["max_concurrency"], 5)
 
     def test_worker_never_exceeds_five_parallel_tasks(self) -> None:
         class QueueStore:
@@ -1439,7 +1469,7 @@ else:
         self.assertNotIn("自助项目", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.1"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.2"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
