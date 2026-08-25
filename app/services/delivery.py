@@ -598,7 +598,7 @@ class Mailer:
                     "pr_url": state.get("pr_url"),
                 }
                 for state in detail.get("repository_states", [])
-                if state.get("pr_url")
+                if state.get("pr_url") and state.get("status") != "completed"
             ]
             if not review_items and pr_url:
                 review_items = [{"repository": "主仓库", "pr_id": detail.get("pr_id"), "pr_url": pr_url}]
@@ -626,7 +626,7 @@ class Mailer:
             "当前产物 / CURRENT FILES" if waiting_input else "交付产物 / DELIVERABLES"
         )
         code_section = ""
-        if not waiting_input and not (action_required and detail.get("delivery_mode") == DeliveryMode.PRODUCT_MANUAL_REVIEW.value):
+        if not action_required:
             code_section = f"""<div style="margin-bottom:5px;color:#6b7280;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">代码信息 / CODE DELIVERY</div>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;border:1px solid #dde2ec;background:#f8f9fc">
         <tr>

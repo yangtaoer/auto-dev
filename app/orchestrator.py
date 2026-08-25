@@ -479,10 +479,20 @@ class Worker:
                 if pr["status"] == "abandoned":
                     raise RuntimeError(f"{state['name']} 的 PR #{state['pr_id']} 已被放弃，无法完成交付")
                 if pr["status"] == "completed":
+                    state["status"] = "completed"
+                    state["merge_commit"] = pr.get("merge_commit") or ""
                     completed.append((state, pr))
                 else:
+                    state["status"] = "waiting_merge"
                     pending.append(int(state["pr_id"]))
             if pending:
+                self.store.update_request(request_id, repository_states=repository_states)
+                self._fallback_auto_review_to_product_review(
+                    request_id,
+                    detail,
+                    repository_states,
+                    pending,
+                )
                 self.store.add_event(
                     request_id,
                     "pr.polled",
@@ -497,6 +507,54 @@ class Worker:
             else:
                 self.store.add_event(request_id, "pr.poll_failed", str(exc), level="warning")
                 self._schedule_next_poll(request_id, backoff=True)
+
+    def _fallback_auto_review_to_product_review(
+        self,
+        request_id: str,
+        detail: dict,
+        repository_states: list[dict],
+        pending_pr_ids: list[int],
+    ) -> bool:
+        """Notify project managers once when an approved PR did not auto-complete."""
+        if detail.get("delivery_mode") != DeliveryMode.SICHUAN_AUTO_REVIEW.value:
+            return False
+        pending_ids = {int(pr_id) for pr_id in pending_pr_ids}
+        pending_states = [
+            state
+            for state in repository_states
+            if state.get("pr_id") and int(state["pr_id"]) in pending_ids
+        ]
+        if not pending_states or any(state.get("manual_review_fallback_at") for state in pending_states):
+            return False
+
+        # The first merge poll is the explicit confirmation point. Auto-complete normally
+        # finishes before this poll; remaining active PRs now follow the product-review path.
+        self._send_status_email(request_id, action_required=True)
+        fallback_at = utc_now()
+        for state in pending_states:
+            state["manual_review_fallback_at"] = fallback_at
+            state["review_strategy"] = DeliveryMode.PRODUCT_MANUAL_REVIEW.value
+        self.store.update_request(request_id, repository_states=repository_states)
+        pr_numbers = "、".join(f"#{pr_id}" for pr_id in pending_pr_ids)
+        self.store.update_step(
+            request_id,
+            "deliver",
+            "running",
+            f"四川审核已通过，但 PR {pr_numbers} 未自动完成；已转产品审核并持续监控",
+        )
+        self.store.add_event(
+            request_id,
+            "pr.auto_complete_fallback",
+            f"四川审核后 PR {pr_numbers} 仍未自动合并，已按产品审核交付通知项目经理",
+            level="warning",
+            metadata={"pending_pr_ids": pending_pr_ids, "fallback_at": fallback_at},
+        )
+        self.store.add_event(
+            request_id,
+            "mail.action_required",
+            "已邮件通知项目经理安排产品部审核并合并未完成的 PR",
+        )
+        return True
 
     def _validate(self, detail: dict, project: dict) -> dict:
         if not project.get("enabled"):

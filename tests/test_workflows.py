@@ -39,6 +39,7 @@ from app.services.dm7_plugin import discover_dm7_plugin  # noqa: E402
 from app.services.delivery import (  # noqa: E402
     ArtifactService,
     Mailer,
+    added_files,
     changed_files,
     menu_link_from_view_path,
     repository_short_name,
@@ -353,6 +354,19 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("secret-source.yml", rendered)
         self.assertNotIn("代码信息 / CODE DELIVERY", rendered)
 
+        fallback_detail = {
+            **detail,
+            "delivery_mode": "sichuan_auto_review",
+            "repository_states": [
+                {**detail["repository_states"][0], "status": "completed"},
+                {**detail["repository_states"][1], "status": "waiting_merge"},
+            ],
+        }
+        fallback = Mailer().delivery_html(fallback_detail, action_required=True)
+        self.assertNotIn("direct-ui · PR #201", fallback)
+        self.assertIn("notice-srv · PR #202", fallback)
+        self.assertNotIn("代码信息 / CODE DELIVERY", fallback)
+
     def test_view_xml_path_becomes_menu_link_and_tfs_manifest_contains_artifacts(self) -> None:
         source = "src/main/resources/META-INF/resources/tbp_config/runtime/module/direct/views/operationTicketOverview.view.xml"
         self.assertEqual(menu_link_from_view_path(source), "/direct/views/operationTicketOverview")
@@ -378,6 +392,53 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("自动发版产物", manifest)
         self.assertIn("buildId=1170472", manifest)
         self.assertNotIn("source.yml", manifest)
+
+    def test_only_new_view_xml_files_become_menu_link_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = Path(temporary)
+            subprocess.run(["git", "-C", str(repository), "init", "-q"], check=True)
+            subprocess.run(["git", "-C", str(repository), "config", "user.name", "AutoDev Test"], check=True)
+            subprocess.run(
+                ["git", "-C", str(repository), "config", "user.email", "autodev-test@example.com"],
+                check=True,
+            )
+            views = repository / "src/main/resources/META-INF/resources/tbp_config/runtime/module/direct/views"
+            views.mkdir(parents=True)
+            existing = views / "existing.view.xml"
+            existing.write_text("<view version='1' />\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(repository), "commit", "-q", "-m", "initial"], check=True)
+            base_commit = subprocess.run(
+                ["git", "-C", str(repository), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            existing.write_text("<view version='2' />\n", encoding="utf-8")
+            added = views / "operationTicketOverview.view.xml"
+            added.write_text("<view />\n", encoding="utf-8")
+            records: list[tuple[str, str, str]] = []
+
+            def record(_request_id: str, kind: str, name: str, _local_path: str, external_url: str) -> int:
+                records.append((kind, name, external_url))
+                return len(records)
+
+            service = ArtifactService(
+                recorder=record,
+                detail_loader=lambda _request_id: {"artifacts": []},
+            )
+            ids = service.collect_menu_links("new-page-request", repository, base_commit)
+            self.assertIn(
+                "src/main/resources/META-INF/resources/tbp_config/runtime/module/direct/views/operationTicketOverview.view.xml",
+                added_files(repository, base_commit),
+            )
+            self.assertEqual(ids, [1])
+            self.assertEqual(
+                records,
+                [("menu_link", "/direct/views/operationTicketOverview", "/direct/views/operationTicketOverview")],
+            )
+            self.assertNotIn("/direct/views/existing", {item[1] for item in records})
 
     def test_tfs_license_application_embeds_merge_screenshots_and_required_fields(self) -> None:
         client = TfsClient("https://tfs.test/DefaultCollection", pat="test-pat")
@@ -832,6 +893,88 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(any(item["kind"] == "release_artifact" for item in completed["artifacts"]))
         self.assertNotIn("pull_request", {item["kind"] for item in completed["artifacts"]})
 
+    def test_sichuan_review_falls_back_to_product_review_when_pr_stays_active(self) -> None:
+        detail = {
+            "id": "sichuan-fallback-request",
+            "status": "waiting_merge",
+            "delivery_mode": "sichuan_auto_review",
+            "policy_snapshot": {
+                "simulation_mode": False,
+                "tfs_collection_url": "https://tfs.test/DefaultCollection",
+            },
+            "repository_states": [
+                {
+                    "name": "dcsd-direct-ui-sichuan",
+                    "repository_path": "C:/work/direct",
+                    "pr_id": 301,
+                    "pr_url": "https://tfs.test/pr/301",
+                    "status": "waiting_merge",
+                },
+                {
+                    "name": "dcsd-notice-srv-sichuan",
+                    "repository_path": "C:/work/notice",
+                    "pr_id": 302,
+                    "pr_url": "https://tfs.test/pr/302",
+                    "status": "waiting_merge",
+                },
+            ],
+        }
+
+        class RecordingStore:
+            remote = False
+
+            def __init__(self) -> None:
+                self.value = detail
+                self.events: list[tuple[str, str]] = []
+                self.steps: list[tuple[str, str, str]] = []
+
+            def detail(self, _request_id: str) -> dict:
+                return self.value
+
+            def update_request(self, _request_id: str, **fields) -> None:
+                self.value.update(fields)
+
+            def update_step(self, _request_id: str, step: str, status: str, message: str = "") -> None:
+                self.steps.append((step, status, message))
+
+            def add_event(self, _request_id: str, event_type: str, message: str, **_kwargs) -> None:
+                self.events.append((event_type, message))
+
+            def get_status(self, _request_id: str) -> str:
+                return self.value["status"]
+
+            @staticmethod
+            def add_artifact(*_args, **_kwargs) -> int:
+                return 1
+
+        store = RecordingStore()
+        fallback_worker = Worker(store=store)
+        pr_results = {
+            301: {"id": 301, "status": "active", "merge_commit": ""},
+            302: {"id": 302, "status": "completed", "merge_commit": "merged302"},
+        }
+        with patch("app.orchestrator.TfsClient") as tfs_client, patch.object(
+            fallback_worker, "_send_status_email"
+        ) as send_email:
+            tfs_client.return_value.get_pull_request.side_effect = (
+                lambda _repo_path, pr_id: pr_results[pr_id]
+            )
+            fallback_worker.poll_merge(detail["id"])
+            fallback_worker.poll_merge(detail["id"])
+
+        send_email.assert_called_once_with(detail["id"], action_required=True)
+        pending_state, completed_state = store.value["repository_states"]
+        self.assertEqual(pending_state["review_strategy"], "product_manual_review")
+        self.assertTrue(pending_state["manual_review_fallback_at"])
+        self.assertEqual(completed_state["status"], "completed")
+        self.assertEqual(completed_state["merge_commit"], "merged302")
+        self.assertFalse(completed_state.get("manual_review_fallback_at"))
+        self.assertEqual(
+            len([event for event in store.events if event[0] == "pr.auto_complete_fallback"]),
+            1,
+        )
+        self.assertIn("已转产品审核", store.steps[0][2])
+
     def test_product_review_emails_before_and_after_merge(self) -> None:
         project_id = self.create_project("test-product", "product_manual_review")
         detail = self.submit_and_process(
@@ -1254,7 +1397,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.2"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.3"), 1)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
@@ -1469,7 +1612,7 @@ else:
         self.assertNotIn("自助项目", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.2"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.3"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
@@ -1697,13 +1840,14 @@ else:
         self.assertEqual(chengdu["base_branch"], "dev")
         self.assertEqual(len(chengdu["repository_paths"]), 9)
 
-    def test_local_project_preset_catalog_contains_nanchong_product_review(self) -> None:
+    def test_local_project_preset_catalog_contains_nanchong_sichuan_review(self) -> None:
         projects = load_project_presets()
         nanchong = next(item for item in projects if item["project_key"] == "nanchong-network-command")
         self.assertEqual(nanchong["name"], "南充网络发令")
         self.assertEqual(nanchong["tfs_area_path"], "XiNanArea-New\\四川省区团队")
         self.assertEqual(nanchong["routing_title_keywords"], ["南充网络发令", "南充网络下令"])
-        self.assertEqual(nanchong["delivery_mode"], "product_manual_review")
+        self.assertEqual(nanchong["delivery_mode"], "sichuan_auto_review")
+        self.assertEqual(nanchong["reviewer_name"], "朱星舟")
         self.assertEqual(nanchong["base_branch"], "dev")
         self.assertEqual(len(nanchong["repository_paths"]), 7)
         self.assertTrue(all(path.startswith("C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuannc\\") for path in nanchong["repository_paths"]))
@@ -1711,8 +1855,8 @@ else:
     def test_local_project_catalog_contains_new_network_command_projects(self) -> None:
         projects = {item["project_key"]: item for item in load_project_presets()}
         expected = {
-            "sichuan-dispatch-network-command": ("四川省调网络发令", "product_manual_review", 9),
-            "chongqing-dispatch-network-command": ("重庆市调网络发令", "product_manual_review", 10),
+            "sichuan-dispatch-network-command": ("四川省调网络发令", "sichuan_auto_review", 9),
+            "chongqing-dispatch-network-command": ("重庆市调网络发令", "sichuan_auto_review", 10),
             "aba-network-command": ("阿坝网络发令", "sichuan_auto_review", 9),
             "guangan-network-command": ("广安网络发令", "sichuan_auto_review", 9),
             "bazhong-network-command": ("巴中网络发令", "sichuan_auto_review", 9),
@@ -1730,6 +1874,8 @@ else:
         chongqing = projects["chongqing-dispatch-network-command"]
         self.assertEqual(chongqing["repository_base_branches"], {"dcsd-springboot-starter": "chongqing"})
         for key in (
+            "sichuan-dispatch-network-command",
+            "chongqing-dispatch-network-command",
             "aba-network-command",
             "guangan-network-command",
             "bazhong-network-command",
@@ -1801,7 +1947,7 @@ else:
         }
         project, item = resolve_project_for_work_item(1643001)
         self.assertEqual(project["project_key"], "nanchong-network-command")
-        self.assertEqual(project["delivery_mode"], "product_manual_review")
+        self.assertEqual(project["delivery_mode"], "sichuan_auto_review")
         self.assertEqual(item["id"], 1643001)
 
     def test_multi_repository_merge_waits_for_all_prs_then_delivers(self) -> None:

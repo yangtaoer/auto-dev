@@ -3,12 +3,12 @@
   "name": "南充网络发令",
   "enabled": true,
   "simulation_mode": false,
-  "delivery_mode": "product_manual_review",
+  "delivery_mode": "sichuan_auto_review",
   "allow_requirement_override": false,
   "tfs_collection_url": "http://dev.tellhowsoft.com/DefaultCollection",
   "tfs_project": "XiNanArea-New",
   "tfs_area_path": "XiNanArea-New\\四川省区团队",
-  "reviewer_name": "",
+  "reviewer_name": "朱星舟",
   "routing_title_keywords": [
     "南充网络发令",
     "南充网络下令"
