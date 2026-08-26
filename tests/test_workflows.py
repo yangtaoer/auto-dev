@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -26,7 +27,8 @@ os.environ["AUTODEV_RUNNER_TOKEN"] = "test-runner-token"
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
-from app.db import update_request, update_step  # noqa: E402
+from app.config import settings  # noqa: E402
+from app.db import SCHEMA, init_db, update_request, update_step  # noqa: E402
 from app.local_runner_main import report_initial_heartbeat  # noqa: E402
 from app.orchestrator import Worker, worker  # noqa: E402
 from app.project_catalog import (  # noqa: E402
@@ -77,6 +79,57 @@ class WorkflowTests(unittest.TestCase):
         self.client.post("/api/auth/logout")
         response = self.client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
         self.assertEqual(response.status_code, 200, response.text)
+
+    def test_existing_database_is_migrated_before_joint_index_creation(self) -> None:
+        legacy_request_definitions = (
+            "    joint_group_id TEXT,\n",
+            "    joint_project_index INTEGER NOT NULL DEFAULT 0,\n",
+            "    joint_project_count INTEGER NOT NULL DEFAULT 1,\n",
+        )
+        legacy_intake_definitions = (
+            "    result_request_ids TEXT NOT NULL DEFAULT '[]',\n",
+            "    matched_project_keys TEXT NOT NULL DEFAULT '[]',\n",
+            "    classification_summary TEXT NOT NULL DEFAULT '[]',\n",
+            "    title TEXT NOT NULL DEFAULT '',\n",
+            "    completed_at TEXT,\n",
+            "    review_email_sent_at TEXT,\n",
+            "    email_sent_at TEXT,\n",
+        )
+        legacy_schema = SCHEMA
+        for definition in legacy_request_definitions:
+            legacy_schema = legacy_schema.replace(definition, "", 1)
+        intake_start = legacy_schema.index("CREATE TABLE IF NOT EXISTS request_intakes")
+        intake_end = legacy_schema.index("CREATE UNIQUE INDEX IF NOT EXISTS uq_active_intake_work_item")
+        intake_schema = legacy_schema[intake_start:intake_end]
+        for definition in legacy_intake_definitions:
+            intake_schema = intake_schema.replace(definition, "", 1)
+        legacy_schema = legacy_schema[:intake_start] + intake_schema + legacy_schema[intake_end:]
+
+        original_data_dir = settings.data_dir
+        with tempfile.TemporaryDirectory() as directory:
+            legacy_data_dir = Path(directory)
+            database = legacy_data_dir / "autodev.db"
+            conn = sqlite3.connect(database)
+            try:
+                conn.executescript(legacy_schema)
+                conn.commit()
+            finally:
+                conn.close()
+            try:
+                object.__setattr__(settings, "data_dir", legacy_data_dir)
+                init_db()
+                conn = sqlite3.connect(database)
+                try:
+                    request_columns = {row[1] for row in conn.execute("PRAGMA table_info(delivery_requests)")}
+                    intake_columns = {row[1] for row in conn.execute("PRAGMA table_info(request_intakes)")}
+                    indexes = {row[1] for row in conn.execute("PRAGMA index_list(delivery_requests)")}
+                finally:
+                    conn.close()
+                self.assertTrue({"joint_group_id", "joint_project_index", "joint_project_count"} <= request_columns)
+                self.assertTrue({"result_request_ids", "matched_project_keys", "classification_summary"} <= intake_columns)
+                self.assertIn("ix_delivery_requests_joint_group", indexes)
+            finally:
+                object.__setattr__(settings, "data_dir", original_data_dir)
 
     def create_project(self, key: str, mode: str, *, allow_override: bool = False) -> int:
         payload = {
@@ -1635,7 +1688,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.7"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.8"), 1)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
@@ -1850,7 +1903,7 @@ else:
         self.assertNotIn("<span>自主</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.7"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.8"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")

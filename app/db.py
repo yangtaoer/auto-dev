@@ -141,8 +141,6 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_active_work_item
 ON delivery_requests(project_id, work_item_id)
 WHERE status NOT IN ('delivered','rejected','failed','cancelled');
-CREATE INDEX IF NOT EXISTS ix_delivery_requests_joint_group
-ON delivery_requests(joint_group_id, joint_project_index);
 CREATE TABLE IF NOT EXISTS request_intakes (
     id TEXT PRIMARY KEY,
     work_item_id INTEGER NOT NULL,
