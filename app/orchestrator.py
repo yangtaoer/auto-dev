@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -17,6 +18,7 @@ from .domain import (
     DELIVERY_OPTION_LICENSE_REQUEST,
     DELIVERY_OPTION_MERGE_SCREENSHOT,
     REVIEW_DELIVERY_MODES,
+    SICHUAN_APPROVAL_DELIVERY_MODES,
     DeliveryMode,
     RunStatus,
 )
@@ -299,7 +301,7 @@ class Worker:
             if not project.get("simulation_mode") and not paths:
                 raise RuntimeError("DevCore 执行完成，但没有产生代码变更")
             mode = DeliveryMode(detail["delivery_mode"])
-            if mode == DeliveryMode.SICHUAN_AUTO_REVIEW and result.get("risks"):
+            if mode.value in SICHUAN_APPROVAL_DELIVERY_MODES and result.get("risks"):
                 risk_text = "；".join(str(item) for item in result["risks"])
                 self.store.update_request(
                     request_id,
@@ -345,7 +347,7 @@ class Worker:
                     state["commit_hash"] = commit_hash
                     state["status"] = "pushed"
                     commits.append(commit_hash)
-                    if mode == DeliveryMode.LOCAL_PACKAGE:
+                    if mode in {DeliveryMode.LOCAL_PACKAGE, DeliveryMode.SICHUAN_REVIEW_LOCAL_PACKAGE}:
                         self.artifacts.collect_changed_assets(
                             request_id,
                             state_worktree,
@@ -353,7 +355,7 @@ class Worker:
                             project,
                             repository_name=state["name"],
                         )
-                    else:
+                    if mode != DeliveryMode.LOCAL_PACKAGE:
                         self.artifacts.collect_menu_links(request_id, state_worktree, state["base_commit"])
                 if mode == DeliveryMode.LOCAL_PACKAGE:
                     commits = self._merge_local_package_to_base(
@@ -379,11 +381,17 @@ class Worker:
                 self._deliver_local_package(request_id, detail, project, worktree, work_item)
                 return
 
-            verification_command = project.get("build_command", "").strip()
-            if mode == DeliveryMode.SICHUAN_AUTO_REVIEW and not project.get("simulation_mode") and not verification_command:
+            verification_command = str(
+                project.get("verification_command") or project.get("build_command") or ""
+            ).strip()
+            if mode.value in SICHUAN_APPROVAL_DELIVERY_MODES and not project.get("simulation_mode") and not verification_command:
                 raise RuntimeError("四川自动审核交付必须配置构建/校验命令，校验通过后才允许服务账号批准")
             if not project.get("simulation_mode") and verification_command:
-                output = run_command(verification_command, worktree)
+                output = run_command(
+                    verification_command,
+                    worktree,
+                    env_overrides=self._build_environment(detail, changed_states),
+                )
                 self.store.add_event(request_id, "verification.completed", "PR 前构建/校验通过", metadata={"output_tail": output[-1000:]})
 
             if project.get("simulation_mode"):
@@ -409,7 +417,7 @@ class Worker:
             pr_numbers = "、".join(f"#{item[1]['id']}" for item in pull_requests)
             self.store.update_step(request_id, "submit", "completed", f"PR {pr_numbers} 已创建并关联需求")
 
-            if mode == DeliveryMode.SICHUAN_AUTO_REVIEW:
+            if mode.value in SICHUAN_APPROVAL_DELIVERY_MODES:
                 if project.get("simulation_mode"):
                     self.store.add_event(request_id, "pr.approved", "演示模式：四川审核服务账号已批准 PR")
                 else:
@@ -551,7 +559,7 @@ class Worker:
         pending_pr_ids: list[int],
     ) -> bool:
         """Notify project managers once when an approved PR did not auto-complete."""
-        if detail.get("delivery_mode") != DeliveryMode.SICHUAN_AUTO_REVIEW.value:
+        if detail.get("delivery_mode") not in SICHUAN_APPROVAL_DELIVERY_MODES:
             return False
         pending_ids = {int(pr_id) for pr_id in pending_pr_ids}
         pending_states = [
@@ -597,7 +605,7 @@ class Worker:
         if project.get("simulation_mode"):
             return {
                 "id": detail["work_item_id"], "revision": 1,
-                "title": f"演示需求 #{detail['work_item_id']} · 全自助业务能力优化",
+                "title": f"演示需求 #{detail['work_item_id']} · 全自主业务能力优化",
                 "state": "已评审", "work_item_type": "用户情景",
                 "area_path": project.get("tfs_area_path", ""),
                 "description": "演示模式需求说明，用于验证三种交付流程。",
@@ -1040,10 +1048,89 @@ class Worker:
             self.artifacts.collect_packages(request_id, worktree, project.get("package_patterns", []))
         self._complete_delivery(request_id)
 
+    @staticmethod
+    def _build_environment(detail: dict, repository_states: list[dict]) -> dict[str, str]:
+        changed_names = [
+            str(state.get("name") or "").strip()
+            for state in repository_states
+            if str(state.get("name") or "").strip() and state.get("changed_files")
+        ]
+        return {
+            "AUTODEV_CHANGED_REPOSITORIES": json.dumps(changed_names, ensure_ascii=False),
+            "AUTODEV_WORK_ITEM_ID": str(detail.get("work_item_id") or ""),
+            "AUTODEV_REQUEST_ID": str(detail.get("id") or ""),
+        }
+
+    def _deliver_reviewed_local_package(self, request_id: str, repository_states: list[dict]) -> None:
+        """Build only repositories changed by a PR, from their merged target-branch commits."""
+        detail = self.store.detail(request_id)
+        project = detail["policy_snapshot"]
+        changed_states = [state for state in repository_states if state.get("changed_files")]
+        if not changed_states:
+            raise RuntimeError("审核合并完成，但没有识别到需要打包的前端或后端仓库")
+        git_env = git_authenticated_env(settings.tfs_pat) if settings.tfs_pat else sanitized_process_env()
+        for state in changed_states:
+            worktree = Path(state["worktree_path"])
+            target_branch = str(state.get("base_branch") or project.get("base_branch") or "dev")
+            remote_target = f"origin/{target_branch}"
+            git(worktree, "fetch", "origin", target_branch, env=git_env)
+            merged_commit = str(state.get("merge_commit") or state.get("commit_hash") or "").strip()
+            if merged_commit:
+                contains_merge = subprocess.run(
+                    ["git", "-C", str(worktree), "merge-base", "--is-ancestor", merged_commit, remote_target],
+                    capture_output=True,
+                    text=True,
+                    env=git_env,
+                    check=False,
+                )
+                if contains_merge.returncode:
+                    raise RuntimeError(
+                        f"{state['name']} 的 PR 合并提交尚未出现在 {remote_target}，未开始打包"
+                    )
+            git(worktree, "checkout", "--detach", remote_target, env=git_env)
+            state["build_commit"] = git(worktree, "rev-parse", "HEAD", env=git_env)
+            state["status"] = "merged_build_ready"
+
+        workspace_root = Path(changed_states[0]["worktree_path"]).parent
+        build_command = str(project.get("build_command") or "").strip()
+        if not build_command:
+            raise RuntimeError("四川审核后本地打包交付必须配置 build_command")
+        self.store.update_request(
+            request_id,
+            status=RunStatus.BUILDING.value,
+            current_step="release",
+            progress=92,
+            repository_states=repository_states,
+        )
+        changed_label = "、".join(state["name"] for state in changed_states)
+        self.store.update_step(
+            request_id,
+            "release",
+            "running",
+            f"PR 已合并，正在按变更端构建：{changed_label}",
+        )
+        output = run_command(
+            build_command,
+            workspace_root,
+            env_overrides=self._build_environment(detail, changed_states),
+        )
+        self.store.add_event(
+            request_id,
+            "build.completed",
+            f"已按变更端完成本地打包：{changed_label}",
+            metadata={"repositories": [state["name"] for state in changed_states], "output_tail": output[-1000:]},
+        )
+        self.artifacts.collect_packages(request_id, workspace_root, project.get("package_patterns", []))
+        self.store.update_step(request_id, "release", "completed", f"已生成 {changed_label} 的本地交付包")
+        self._complete_delivery(request_id)
+
     def _finish_merged_request(self, request_id: str, pr: dict) -> None:
         detail = self.store.detail(request_id)
         options = self._delivery_options(detail)
-        needs_capture = bool(options & {DELIVERY_OPTION_MERGE_SCREENSHOT, DELIVERY_OPTION_LICENSE_REQUEST})
+        needs_capture = bool(
+            (not detail.get("delivery_mode") or detail.get("delivery_mode") in REVIEW_DELIVERY_MODES)
+            and options & {DELIVERY_OPTION_MERGE_SCREENSHOT, DELIVERY_OPTION_LICENSE_REQUEST}
+        )
         self.store.update_request(
             request_id,
             status=RunStatus.CAPTURING.value if needs_capture else RunStatus.DELIVERING.value,
@@ -1065,7 +1152,10 @@ class Worker:
                 metadata={"artifact_id": screenshot_id},
             )
         if detail["policy_snapshot"].get("simulation_mode"):
-            self._create_demo_artifacts(request_id, include_package=False)
+            self._create_demo_artifacts(
+                request_id,
+                include_package=detail.get("delivery_mode") == DeliveryMode.SICHUAN_REVIEW_LOCAL_PACKAGE.value,
+            )
         self._complete_delivery(request_id)
 
     def _finish_merged_repositories(
@@ -1076,7 +1166,10 @@ class Worker:
     ) -> None:
         detail = self.store.detail(request_id)
         options = self._delivery_options(detail)
-        needs_capture = bool(options & {DELIVERY_OPTION_MERGE_SCREENSHOT, DELIVERY_OPTION_LICENSE_REQUEST})
+        needs_capture = bool(
+            (not detail.get("delivery_mode") or detail.get("delivery_mode") in REVIEW_DELIVERY_MODES)
+            and options & {DELIVERY_OPTION_MERGE_SCREENSHOT, DELIVERY_OPTION_LICENSE_REQUEST}
+        )
         self.store.update_request(
             request_id,
             status=RunStatus.CAPTURING.value if needs_capture else RunStatus.DELIVERING.value,
@@ -1113,6 +1206,9 @@ class Worker:
             repository_states=repository_states,
             merge_commit=merge_commits[0] if merge_commits else None,
         )
+        if detail.get("delivery_mode") == DeliveryMode.SICHUAN_REVIEW_LOCAL_PACKAGE.value:
+            self._deliver_reviewed_local_package(request_id, repository_states)
+            return
         self._complete_delivery(request_id)
 
     def _complete_delivery(self, request_id: str) -> None:
@@ -1130,6 +1226,9 @@ class Worker:
             self._ensure_auto_release(request_id, detail, project)
             self.store.update_step(request_id, "release", "completed", "TFS 自动发版成功，发布产物链接已生成")
             detail = self.store.detail(request_id)
+        elif detail["delivery_mode"] == DeliveryMode.SICHUAN_REVIEW_LOCAL_PACKAGE.value:
+            # The reviewed local-package flow completed this step immediately before final delivery.
+            pass
         else:
             reason = "本地打包项目不执行 TFS 自动发版" if detail["delivery_mode"] not in REVIEW_DELIVERY_MODES else "发起人未选择自动发版"
             self.store.update_step(request_id, "release", "skipped", reason)
@@ -1151,8 +1250,12 @@ class Worker:
                 f"TFS 已更新为{tfs_result['state']}，实际交付版本 V1.0，交付产物路径已写入",
                 metadata=tfs_result,
             )
+        # Freeze the completion timestamp before rendering the final email so the
+        # timeline never falls back to the misleading "进行中" placeholder.
+        completed_at = utc_now()
+        self.store.update_request(request_id, completed_at=completed_at)
         self._send_status_email(request_id, action_required=False)
-        self.store.update_request(request_id, status=RunStatus.DELIVERED.value, current_step="deliver", progress=100, completed_at=utc_now())
+        self.store.update_request(request_id, status=RunStatus.DELIVERED.value, current_step="deliver", progress=100)
         self.store.update_step(request_id, "deliver", "completed", "交付产物与通知邮件已生成，TFS 状态及实际交付版本已更新")
         self.store.add_event(request_id, "delivery.completed", "需求研发交付完成")
 
@@ -1410,7 +1513,7 @@ class Worker:
             archive = target / "package" / "demo-delivery.zip"
             archive.parent.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
-                package.writestr("README.txt", "全自助研发演示交付包")
+                package.writestr("README.txt", "全自主研发演示交付包")
             self.store.add_artifact(request_id, "package", archive.name, str(archive))
 
     def _schedule_next_poll(self, request_id: str, *, backoff: bool = False) -> None:

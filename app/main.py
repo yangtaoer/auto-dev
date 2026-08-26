@@ -46,6 +46,7 @@ from .domain import (
     DELIVERY_MODE_LABELS,
     DeliveryMode,
     STATUS_LABELS,
+    TERMINAL_STATUSES,
     RunStatus,
     visible_delivery_artifacts,
 )
@@ -68,7 +69,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.4",
+    version="1.0-Alpha.5",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -122,6 +123,7 @@ class ProjectInput(BaseModel):
     repository_paths: list[str] = Field(default_factory=list, max_length=30)
     base_branch: str = "dev"
     repository_base_branches: dict[str, str] = Field(default_factory=dict)
+    verification_command: str = ""
     build_command: str = ""
     package_patterns: list[str] = []
     sql_patterns: list[str] = ["**/*.sql"]
@@ -707,6 +709,132 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
             "active": capacity_active,
             "queued": capacity_queued,
             "available": max(0, settings.runner_max_concurrency - capacity_active),
+        },
+    }
+
+
+@app.get("/api/delivery-records")
+def delivery_records(
+    user: Annotated[dict, Depends(current_user)],
+    page: int = 1,
+    page_size: int = 10,
+    status: str = "",
+    project_key: str = "",
+    requester_id: int | None = None,
+    keyword: str = "",
+    date_from: str = "",
+    date_to: str = "",
+) -> dict:
+    """Return a scoped, filterable delivery ledger without loading the entire history."""
+    page = max(1, page)
+    page_size = max(5, min(50, page_size))
+    status = status.strip()
+    project_key = project_key.strip()
+    keyword = keyword.strip()[:120]
+    allowed_statuses = {item.value for item in RunStatus}
+    if status and status not in allowed_statuses:
+        raise HTTPException(status_code=400, detail="交付状态筛选值无效")
+
+    conditions: list[str] = []
+    params: list[Any] = []
+    if user["role"] != "admin":
+        conditions.append("r.requester_id=?")
+        params.append(user["id"])
+    elif requester_id is not None:
+        conditions.append("r.requester_id=?")
+        params.append(requester_id)
+    if status:
+        conditions.append("r.status=?")
+        params.append(status)
+    if project_key:
+        conditions.append("p.project_key=?")
+        params.append(project_key)
+    if keyword:
+        conditions.append("(CAST(r.work_item_id AS TEXT) LIKE ? OR r.title LIKE ?)")
+        search = f"%{keyword}%"
+        params.extend((search, search))
+
+    local_timezone = timezone(timedelta(hours=8))
+
+    def day_boundary(value: str, *, following_day: bool = False) -> str:
+        try:
+            parsed = datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=local_timezone)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="日期筛选必须使用 YYYY-MM-DD 格式") from exc
+        if following_day:
+            parsed += timedelta(days=1)
+        return parsed.astimezone(UTC).isoformat()
+
+    if date_from:
+        conditions.append("r.created_at>=?")
+        params.append(day_boundary(date_from))
+    if date_to:
+        conditions.append("r.created_at<?")
+        params.append(day_boundary(date_to, following_day=True))
+    where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+    from_clause = "FROM delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id"
+    total_row = row(f"SELECT COUNT(*) count {from_clause} {where_clause}", tuple(params)) or {"count": 0}
+    total = int(total_row.get("count") or 0)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = min(page, total_pages)
+    activity_select = """(SELECT e.message FROM delivery_events e
+        WHERE e.request_id=r.id ORDER BY e.id DESC LIMIT 1) current_activity"""
+    items = rows(
+        f"""SELECT r.*,p.name project_name,p.project_key,p.tfs_collection_url,
+                   u.display_name requester_name,{activity_select}
+            {from_clause} {where_clause}
+            ORDER BY r.created_at DESC LIMIT ? OFFSET ?""",
+        (*params, page_size, (page - 1) * page_size),
+    )
+    request_ids = [item["id"] for item in items]
+    artifact_map: dict[str, list[dict[str, Any]]] = {request_id: [] for request_id in request_ids}
+    if request_ids:
+        placeholders = ",".join("?" for _ in request_ids)
+        for artifact in rows(
+            f"""SELECT id,request_id,kind,name,external_url,size_bytes
+                FROM delivery_artifacts
+                WHERE request_id IN ({placeholders})
+                  AND kind NOT IN ('report','pull_request','merge_evidence')
+                  AND NOT (kind='merge_screenshot' AND name LIKE '%凭证%')
+                ORDER BY id""",
+            tuple(request_ids),
+        ):
+            artifact_map.setdefault(artifact["request_id"], []).append(artifact)
+
+    current_time = datetime.now(UTC)
+    terminal_statuses = {item.value for item in TERMINAL_STATUSES}
+    for item in items:
+        add_runner_display_state(item)
+        item.pop("codex_thread_id", None)
+        item["current_activity"] = public_engine_text(item.get("current_activity"))
+        item["result_summary"] = public_engine_text(item.get("result_summary"))
+        item["error_message"] = public_engine_text(item.get("error_message"))
+        item["delivery_options"] = (
+            None
+            if item.get("delivery_options") is None
+            else json_value(item.get("delivery_options"), DEFAULT_DELIVERY_OPTIONS)
+        )
+        item["artifacts"] = visible_delivery_artifacts(
+            item["delivery_mode"], artifact_map.get(item["id"], []), item["delivery_options"]
+        )
+        item["repository_states"] = json_value(item.get("repository_states"), [])
+        started_value = item.get("created_at") or item.get("started_at")
+        ended_value = item.get("completed_at")
+        if not ended_value and item.get("status") in terminal_statuses:
+            ended_value = item.get("updated_at")
+        try:
+            started = datetime.fromisoformat(started_value) if started_value else None
+            ended = datetime.fromisoformat(ended_value) if ended_value else current_time
+            item["duration_seconds"] = max(0, int((ended - started).total_seconds())) if started else None
+        except (TypeError, ValueError):
+            item["duration_seconds"] = None
+    return {
+        "items": items,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
         },
     }
 

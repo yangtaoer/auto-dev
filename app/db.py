@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS projects (
     repository_paths TEXT NOT NULL DEFAULT '[]',
     base_branch TEXT NOT NULL DEFAULT 'dev',
     repository_base_branches TEXT NOT NULL DEFAULT '{}',
+    verification_command TEXT NOT NULL DEFAULT '',
     build_command TEXT NOT NULL DEFAULT '',
     package_patterns TEXT NOT NULL DEFAULT '[]',
     sql_patterns TEXT NOT NULL DEFAULT '["**/*.sql"]',
@@ -227,7 +228,7 @@ def init_db() -> None:
                     package_patterns,sql_patterns,config_patterns,protected_patterns,notification_cc,runner_id,created_at,updated_at
                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    "demo-sichuan", "四川全自助示例项目", 1, 1,
+                    "demo-sichuan", "四川全自主示例项目", 1, 1,
                     DeliveryMode.PRODUCT_MANUAL_REVIEW.value, 0,
                     "http://dev.tellhowsoft.com/DefaultCollection", "XiNanArea-New",
                     "XiNanArea-New\\四川省区团队", "", "dev", "",
@@ -255,6 +256,8 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE projects ADD COLUMN repository_paths TEXT NOT NULL DEFAULT '[]'")
     if "repository_base_branches" not in project_columns:
         conn.execute("ALTER TABLE projects ADD COLUMN repository_base_branches TEXT NOT NULL DEFAULT '{}'")
+    if "verification_command" not in project_columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN verification_command TEXT NOT NULL DEFAULT ''")
     request_columns = {item["name"] for item in conn.execute("PRAGMA table_info(delivery_requests)")}
     if "runner_id" not in request_columns:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN runner_id TEXT NOT NULL DEFAULT 'yangtao-pc'")

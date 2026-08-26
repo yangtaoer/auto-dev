@@ -1,9 +1,10 @@
 const USER = window.__USER__;
-const state = { projects: [], projectGuideSignature:'', users: [], notificationUsers:[], analytics:null, dashboard: {active:[],recent:[],counts:{},runners:[],stats:{},capacity:{limit:5,active:0,queued:0,available:5}}, filter:'all', selectedRequest:null, selectedTerminal:false, selectedIntake:null, routingGeneration:0, live:{requestId:null,watcherId:null,cursor:0,generation:0,timer:null,lastGroup:'',lastKind:'',lastBubble:null} };
+const state = { projects: [], projectGuideSignature:'', users: [], notificationUsers:[], analytics:null, dashboard: {active:[],recent:[],counts:{},runners:[],stats:{},capacity:{limit:5,active:0,queued:0,available:5}}, records:{items:[],page:1,pageSize:10,total:0,totalPages:1,filters:{keyword:'',project_key:'',status:'',requester_id:'',date_from:'',date_to:''}}, selectedRequest:null, selectedTerminal:false, selectedIntake:null, routingGeneration:0, live:{requestId:null,watcherId:null,cursor:0,generation:0,timer:null,lastGroup:'',lastKind:'',lastBubble:null} };
 const MODE = {
   routing:['自动识别中','正在读取 TFS 需求并识别项目与交付策略。'],
   local_package:['本地打包交付','提交到最新目标分支后在本机执行构建，交付安装包、SQL、配置和说明。'],
   sichuan_auto_review:['四川审核后交付','创建 PR 并自动审核；合并后按本次选择生成交付产物。'],
+  sichuan_review_local_package:['四川审核后本地打包交付','创建 PR 并由四川审核自动合并；随后仅对本次修改的端进行本地打包。'],
   product_manual_review:['产品审核后交付','等待产品审核合并；完成后按本次选择生成交付产物。']
 };
 const STATUS = {routing:'项目识别中',waiting_runner:'等待执行器上线',queued:'等待执行',validating:'准入校验',developing:'DevCore 研发中',submitting:'提交代码',building:'本地构建',releasing:'自动发版',waiting_input:'待补充信息',waiting_merge:'等待 PR 合并',capturing:'截取 PR 页面',delivering:'发送交付邮件',delivered:'已交付',waiting_approval:'等待人工确认',rejected:'准入驳回',failed:'执行失败',cancelled:'已取消'};
@@ -52,7 +53,7 @@ function toast(message){const el=document.querySelector('#toast');el.textContent
 function switchView(name){
   document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===`view-${name}`));
   document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.view===name));
-  const titles={dashboard:['控制室 / CONTROL ROOM / 01','任务总览'],requests:['交付台账 / DELIVERY LEDGER / 02','交付记录'],projects:['支持项目 / SUPPORTED PROJECTS / 03','自助项目'],analytics:['运行洞察 / PLATFORM ANALYTICS / 04','统计看板'],users:['账号管理 / ACCESS REGISTRY / 05','账号管理']};
+  const titles={dashboard:['控制室 / CONTROL ROOM / 01','任务总览'],requests:['交付台账 / DELIVERY LEDGER / 02','交付记录'],projects:['支持项目 / SUPPORTED PROJECTS / 03','自主'],analytics:['运行洞察 / PLATFORM ANALYTICS / 04','统计看板'],users:['账号管理 / ACCESS REGISTRY / 05','账号管理']};
   document.querySelector('#view-code').textContent=titles[name][0];document.querySelector('#view-title').textContent=titles[name][1];
 }
 
@@ -61,8 +62,9 @@ async function refresh(){
   const analyticsRequest=USER.role==='admin'?api('/api/admin/analytics'):Promise.resolve(null);
   const projectRequest=api('/api/projects');
   const recipientRequest=api('/api/notification-recipients');
-  const [dashboard,projects,me,users,analytics,recipients]=await Promise.all([api('/api/dashboard'),projectRequest,api('/api/me'),userRequest,analyticsRequest,recipientRequest]);
-  Object.assign(USER,me.user);state.dashboard=dashboard;state.projects=projects.projects;state.users=users.users||[];state.notificationUsers=recipients.users||[];state.analytics=analytics;renderDashboard();renderProjects();renderProjectGuide();renderAnalytics();renderUsers();renderRequestEmailOptions(false);
+  const recordsRequest=api(deliveryRecordsUrl());
+  const [dashboard,projects,me,users,analytics,recipients,records]=await Promise.all([api('/api/dashboard'),projectRequest,api('/api/me'),userRequest,analyticsRequest,recipientRequest,recordsRequest]);
+  Object.assign(USER,me.user);state.dashboard=dashboard;state.projects=projects.projects;state.users=users.users||[];state.notificationUsers=recipients.users||[];state.analytics=analytics;applyDeliveryRecords(records);renderDashboard();renderProjects();renderProjectGuide();renderAnalytics();renderUsers();renderRequestEmailOptions(false);renderRecordFilterOptions();renderAllTable();
   if(state.selectedRequest&&!state.selectedTerminal) refreshDetail(state.selectedRequest,true);
 }
 function renderDashboard(){
@@ -81,7 +83,7 @@ function renderDashboard(){
   if(capacityStatus)capacityStatus.innerHTML=`<b>${Number(capacity.active)||0} / ${Number(capacity.limit)||5}</b><span>并发槽位${capacity.queued?` · ${Number(capacity.queued)} 个排队`:''}</span>`;
   document.body.classList.toggle('has-active-runs',state.dashboard.active.length>0);
   document.querySelector('#recent-table').innerHTML=state.dashboard.recent.slice(0,5).map(recentRow).join('')||'<tr><td colspan="7" class="muted">暂无记录</td></tr>';
-  renderAllTable();bindRows();
+  bindRows();
   const runners=state.dashboard.runners||[],online=runners.filter(r=>r.online),status=document.querySelector('#runner-status');
   status.classList.toggle('offline',online.length===0);status.querySelector('span').textContent=online.length?'执行器在线':'执行器离线';
 }
@@ -93,10 +95,17 @@ function updateRunCard(card,r){const intake=r.record_type==='intake'||r.intake_i
 function renderActiveRuns(container,runs){const existing=new Map([...container.children].map(card=>[card.dataset.runKey,card])),desired=new Set();runs.forEach((run,index)=>{const key=activeRunKey(run);desired.add(key);let card=existing.get(key);if(!card){card=createRunCard()}updateRunCard(card,run);const position=container.children[index];if(position!==card)container.insertBefore(card,position||null)});existing.forEach((card,key)=>{if(desired.has(key))return;card.classList.add('run-leaving');setTimeout(()=>{if(!state.dashboard.active.some(run=>activeRunKey(run)===key))card.remove()},280)})}
 function recentRow(r){const intake=r.record_type==='intake'||r.intake_id,visualStatus=runVisualStatus(r);return `<tr class="clickable-row" ${intake?`data-intake-id="${r.intake_id||r.id}" data-work-item-id="${r.work_item_id}"`:`data-id="${r.id}"`}><td class="demand-cell"><b>${tfsLink(r,`#${r.work_item_id}`)}</b><span>${escapeHtml(r.title||'等待读取')}</span></td><td>${escapeHtml(r.project_name)}</td><td>${MODE[r.delivery_mode]?.[0]||r.delivery_mode}</td><td><span class="status-dot" data-status="${visualStatus}">${STATUS[visualStatus]||visualStatus}</span></td><td><span class="activity-cell">${escapeHtml(engineText(r.current_activity||'—'))}</span></td><td class="duration-cell">${fmtDuration(requestDuration(r))}</td><td>${fmt(r.updated_at)}</td></tr>`}
 function renderAllTable(){
-  const data=state.filter==='all'?state.dashboard.recent:state.dashboard.recent.filter(x=>x.status===state.filter);
+  const data=state.records.items||[];
   const el=document.querySelector('#all-table');if(!el)return;
   el.innerHTML=data.map(r=>{const intake=r.record_type==='intake'||r.intake_id,visualStatus=runVisualStatus(r);return `<tr class="clickable-row" ${intake?`data-intake-id="${r.intake_id||r.id}" data-work-item-id="${r.work_item_id}"`:`data-id="${r.id}"`}><td class="demand-cell"><b>${tfsLink(r,`#${r.work_item_id}`)} · ${escapeHtml(r.project_name)}</b><span>${escapeHtml(r.title||'等待读取')}</span><small>${MODE[r.delivery_mode]?.[0]||r.delivery_mode}</small></td><td><span class="status-dot" data-status="${visualStatus}">${STATUS[visualStatus]||visualStatus}</span></td><td>${escapeHtml(r.requester_name)}</td><td>${fmt(r.created_at)}</td><td>${fmt(r.completed_at)}</td><td class="duration-cell">${fmtDuration(requestDuration(r))}</td><td><div class="artifact-links">${deliveryLinks(r)}</div></td></tr>`}).join('')||'<tr><td colspan="7" class="muted">没有符合条件的记录</td></tr>';bindRows();bindArtifactPreviews(el);bindMenuLinks(el);
+  renderRecordPagination();
 }
+
+function deliveryRecordsUrl(){const query=new URLSearchParams({page:String(state.records.page||1),page_size:String(state.records.pageSize||10)});Object.entries(state.records.filters||{}).forEach(([key,value])=>{if(String(value??'').trim())query.set(key,String(value).trim())});return `/api/delivery-records?${query}`}
+function applyDeliveryRecords(result){const pagination=result?.pagination||{};state.records.items=result?.items||[];state.records.page=Number(pagination.page)||1;state.records.pageSize=Number(pagination.page_size)||10;state.records.total=Number(pagination.total)||0;state.records.totalPages=Number(pagination.total_pages)||1}
+async function loadDeliveryRecords(page=state.records.page){state.records.page=Math.max(1,Number(page)||1);const result=await api(deliveryRecordsUrl());applyDeliveryRecords(result);renderAllTable()}
+function renderRecordFilterOptions(){const projectSelect=document.querySelector('#record-project-filter');if(!projectSelect)return;const projectSignature=JSON.stringify(state.projects.map(p=>[p.project_key,p.name]));if(projectSelect.dataset.signature!==projectSignature){projectSelect.dataset.signature=projectSignature;projectSelect.innerHTML='<option value="">全部项目</option>'+state.projects.map(p=>`<option value="${escapeHtml(p.project_key)}">${escapeHtml(p.name)}</option>`).join('');projectSelect.value=state.records.filters.project_key||''}const requesterSelect=document.querySelector('#record-requester-filter');if(requesterSelect){const requesterSignature=JSON.stringify(state.users.map(u=>[u.id,u.display_name]));if(requesterSelect.dataset.signature!==requesterSignature){requesterSelect.dataset.signature=requesterSignature;requesterSelect.innerHTML='<option value="">全部提交人</option>'+state.users.map(u=>`<option value="${u.id}">${escapeHtml(u.display_name)}</option>`).join('');requesterSelect.value=state.records.filters.requester_id||''}}}
+function renderRecordPagination(){const pagination=document.querySelector('#record-pagination'),total=document.querySelector('#record-total');if(!pagination)return;const page=state.records.page,totalPages=state.records.totalPages;if(total)total.textContent=`共 ${state.records.total} 条`;const pages=[];for(let value=Math.max(1,page-2);value<=Math.min(totalPages,page+2);value+=1)pages.push(value);pagination.innerHTML=`<span>第 ${page} / ${totalPages} 页</span><div><button type="button" data-page="${page-1}" ${page<=1?'disabled':''}>← 上一页</button>${pages.map(value=>`<button type="button" data-page="${value}" class="${value===page?'active':''}">${value}</button>`).join('')}<button type="button" data-page="${page+1}" ${page>=totalPages?'disabled':''}>下一页 →</button></div>`;pagination.querySelectorAll('[data-page]').forEach(button=>button.onclick=()=>loadDeliveryRecords(button.dataset.page).catch(error=>toast(error.message)))}
 function bindRows(){document.querySelectorAll('.clickable-row').forEach(el=>el.onclick=()=>el.dataset.intakeId?openRoutingDetail(el.dataset.intakeId,el.dataset.workItemId):openDetail(el.dataset.id))}
 
 function renderProjects(){
@@ -234,7 +243,8 @@ document.querySelector('#close-artifact-preview').onclick=closeArtifactPreview;
 document.querySelector('#artifact-preview').onclick=event=>{if(event.target===event.currentTarget)closeArtifactPreview()};
 document.querySelector('#open-request').onclick=()=>{document.querySelector('#request-form').reset();renderRequestEmailOptions(true);document.querySelector('#request-error').hidden=true;document.querySelector('#request-modal').hidden=false;setTimeout(()=>document.querySelector('#request-form [name="work_item_id"]').focus(),0)};
 document.querySelector('#logout').onclick=async()=>{await api('/api/auth/logout',{method:'POST'});location.href='/login'};
-document.querySelectorAll('.chip').forEach(btn=>btn.onclick=()=>{document.querySelectorAll('.chip').forEach(x=>x.classList.remove('active'));btn.classList.add('active');state.filter=btn.dataset.filter;renderAllTable()});
+document.querySelector('#record-filters')?.addEventListener('submit',event=>{event.preventDefault();const data=new FormData(event.currentTarget);state.records.filters={keyword:String(data.get('keyword')||'').trim(),project_key:String(data.get('project_key')||''),status:String(data.get('status')||''),requester_id:String(data.get('requester_id')||''),date_from:String(data.get('date_from')||''),date_to:String(data.get('date_to')||'')};loadDeliveryRecords(1).catch(error=>toast(error.message))});
+document.querySelector('#reset-record-filters')?.addEventListener('click',()=>{const form=document.querySelector('#record-filters');form.reset();state.records.filters={keyword:'',project_key:'',status:'',requester_id:'',date_from:'',date_to:''};loadDeliveryRecords(1).catch(error=>toast(error.message))});
 document.querySelector('#new-user')?.addEventListener('click',()=>openUser());
 document.querySelector('#add-user-email')?.addEventListener('click',()=>addEmailRow());
 

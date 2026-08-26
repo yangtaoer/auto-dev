@@ -27,7 +27,16 @@ BRAND_MARK_CID = "autodev-brand-mark"
 BRAND_MARK_PATH = Path(__file__).resolve().parents[1] / "static" / "brand" / "autodev-email-mark.png"
 
 
-def run_command(command: str, cwd: Path, timeout_minutes: int = 60) -> str:
+def run_command(
+    command: str,
+    cwd: Path,
+    timeout_minutes: int = 60,
+    *,
+    env_overrides: dict[str, str] | None = None,
+) -> str:
+    process_env = sanitized_process_env()
+    if env_overrides:
+        process_env.update({str(key): str(value) for key, value in env_overrides.items()})
     result = subprocess.run(
         command,
         cwd=cwd,
@@ -37,7 +46,7 @@ def run_command(command: str, cwd: Path, timeout_minutes: int = 60) -> str:
         encoding="utf-8",
         errors="replace",
         timeout=timeout_minutes * 60,
-        env=sanitized_process_env(),
+        env=process_env,
         check=False,
     )
     output = (result.stdout + "\n" + result.stderr).strip()

@@ -1,0 +1,58 @@
+{
+  "project_key": "network-command-app",
+  "name": "网络发令APP",
+  "enabled": true,
+  "simulation_mode": false,
+  "delivery_mode": "sichuan_review_local_package",
+  "allow_requirement_override": false,
+  "tfs_collection_url": "http://dev.tellhowsoft.com/DefaultCollection",
+  "tfs_project": "XiNanArea-New",
+  "tfs_area_path": "XiNanArea-New\\四川省区团队",
+  "reviewer_name": "朱星舟",
+  "routing_title_keywords": [
+    "网络发令APP",
+    "四川网络发令APP",
+    "四川网络发令app",
+    "成都网络发令APP",
+    "成都网络发令app",
+    "成都app"
+  ],
+  "allowed_work_item_types": [
+    "用户情景"
+  ],
+  "allowed_states": [
+    "新建",
+    "已评审"
+  ],
+  "repository_path": "C:\\work\\workSpaceTellHow\\dcsd-app\\dcsd-app-ui",
+  "repository_paths": [
+    "C:\\work\\workSpaceTellHow\\dcsd-app\\dcsd-app-ui",
+    "C:\\work\\workSpaceTellHow\\dcsd-app\\dcsd-app-starter"
+  ],
+  "base_branch": "dev",
+  "repository_base_branches": {},
+  "verification_command": "pwsh.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\yangt\\Documents\\全自助需求研发交付\\local-runner\\project-scripts\\network-command-app-package.ps1\" -ValidateOnly",
+  "build_command": "pwsh.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\yangt\\Documents\\全自助需求研发交付\\local-runner\\project-scripts\\network-command-app-package.ps1\"",
+  "package_patterns": [
+    "release/network-command-app-*.zip"
+  ],
+  "sql_patterns": [
+    "**/*.sql"
+  ],
+  "config_patterns": [
+    "**/*.yml",
+    "**/*.yaml",
+    "**/*.properties",
+    "**/*.xml",
+    "**/.env*",
+    "**/config/*.js"
+  ],
+  "protected_patterns": [
+    "**/production/**",
+    "**/*prod*.yml",
+    "**/*prod*.yaml",
+    "**/*prod*.properties"
+  ],
+  "notification_cc": "",
+  "runner_id": "yangtao-pc"
+}

@@ -1484,6 +1484,87 @@ else:
         forbidden = self.client.get("/api/admin/analytics")
         self.assertEqual(forbidden.status_code, 403)
 
+    def test_delivery_records_support_pagination_filters_and_requester_scope(self) -> None:
+        self.client.post("/api/auth/logout")
+        self.client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        project_id = self.create_project("ledger-pagination-project", "local_package")
+        for index in range(13):
+            work_item_id = 931000 + index
+            created = self.client.post(
+                "/api/requests",
+                json={"project_id": project_id, "work_item_id": work_item_id},
+            )
+            self.assertEqual(created.status_code, 200, created.text)
+            status = "failed" if index % 3 == 0 else "delivered"
+            update_request(
+                created.json()["id"],
+                status=status,
+                title=f"交付台账筛选样例 {index:02d}",
+                completed_at="2026-08-26T04:00:00+00:00",
+            )
+
+        second_page = self.client.get(
+            "/api/delivery-records",
+            params={"project_key": "ledger-pagination-project", "page": 2, "page_size": 5},
+        )
+        self.assertEqual(second_page.status_code, 200, second_page.text)
+        ledger = second_page.json()
+        self.assertEqual(ledger["pagination"], {"page": 2, "page_size": 5, "total": 13, "total_pages": 3})
+        self.assertEqual(len(ledger["items"]), 5)
+        self.assertTrue(all(item["project_key"] == "ledger-pagination-project" for item in ledger["items"]))
+
+        failed = self.client.get(
+            "/api/delivery-records",
+            params={"project_key": "ledger-pagination-project", "status": "failed", "page_size": 50},
+        ).json()
+        self.assertEqual(failed["pagination"]["total"], 5)
+        self.assertTrue(all(item["status"] == "failed" for item in failed["items"]))
+        keyword = self.client.get(
+            "/api/delivery-records",
+            params={"project_key": "ledger-pagination-project", "keyword": "931007"},
+        ).json()
+        self.assertEqual(keyword["pagination"]["total"], 1)
+        self.assertEqual(keyword["items"][0]["work_item_id"], 931007)
+        page = self.client.get("/")
+        self.assertIn('id="record-filters"', page.text)
+        self.assertIn('id="record-pagination"', page.text)
+
+        created_user = self.client.post(
+            "/api/users",
+            json={
+                "username": "ledger_scope_pm",
+                "display_name": "台账范围项目经理",
+                "emails": ["ledger.scope@example.com"],
+                "password": "password123",
+                "role": "pm",
+                "active": True,
+            },
+        )
+        self.assertEqual(created_user.status_code, 200, created_user.text)
+        with TestClient(app) as pm_client:
+            logged_in = pm_client.post(
+                "/api/auth/login", json={"username": "ledger_scope_pm", "password": "password123"}
+            )
+            self.assertEqual(logged_in.status_code, 200, logged_in.text)
+            own = pm_client.post(
+                "/api/requests",
+                json={"project_id": project_id, "work_item_id": 931099},
+            )
+            self.assertEqual(own.status_code, 200, own.text)
+            update_request(
+                own.json()["id"],
+                status="delivered",
+                title="项目经理自己的交付记录",
+                completed_at="2026-08-26T04:05:00+00:00",
+            )
+            scoped = pm_client.get(
+                "/api/delivery-records",
+                params={"project_key": "ledger-pagination-project", "page_size": 50},
+            )
+            self.assertEqual(scoped.status_code, 200, scoped.text)
+            self.assertEqual(scoped.json()["pagination"]["total"], 1)
+            self.assertEqual(scoped.json()["items"][0]["work_item_id"], 931099)
+
     def test_public_task_payload_masks_engine_identity(self) -> None:
         project_id = self.create_project("test-devcore-mask", "local_package")
         created = self.client.post(
@@ -1553,7 +1634,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.4"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.5"), 1)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
@@ -1561,7 +1642,7 @@ else:
         self.assertIn("control-strip", page.text)
         self.assertIn('id="project-guide"', page.text)
         self.assertIn("支持项目与别名", page.text)
-        self.assertIn("可自助研发项目", page.text)
+        self.assertIn("可自主研发项目", page.text)
         self.assertIn("project-guide", page.text)
         self.assertEqual(page.text.count('name="delivery_options"'), 3)
         self.assertIn('value="auto_release" checked', page.text)
@@ -1760,15 +1841,15 @@ else:
 
     def test_project_menu_is_hidden_from_project_manager(self) -> None:
         admin_page = self.client.get("/")
-        self.assertIn("自助项目", admin_page.text)
+        self.assertIn("<span>自主</span>", admin_page.text)
         self.client.post("/api/auth/logout")
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
-        self.assertNotIn("自助项目", pm_page.text)
+        self.assertNotIn("<span>自主</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.4"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.5"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
@@ -2007,6 +2088,106 @@ else:
         self.assertEqual(nanchong["base_branch"], "dev")
         self.assertEqual(len(nanchong["repository_paths"]), 7)
         self.assertTrue(all(path.startswith("C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuannc\\") for path in nanchong["repository_paths"]))
+
+    def test_network_command_app_preset_enforces_reviewed_changed_side_packaging(self) -> None:
+        projects = {item["project_key"]: item for item in load_project_presets()}
+        project = projects["network-command-app"]
+        self.assertEqual(project["name"], "网络发令APP")
+        self.assertEqual(project["delivery_mode"], "sichuan_review_local_package")
+        self.assertEqual(project["reviewer_name"], "朱星舟")
+        self.assertEqual(project["base_branch"], "dev")
+        self.assertEqual(
+            [Path(value).name for value in project["repository_paths"]],
+            ["dcsd-app-ui", "dcsd-app-starter"],
+        )
+        self.assertIn("-ValidateOnly", project["verification_command"])
+        self.assertEqual(project["package_patterns"], ["release/network-command-app-*.zip"])
+        script = (
+            Path(__file__).resolve().parents[1]
+            / "local-runner"
+            / "project-scripts"
+            / "network-command-app-package.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("AUTODEV_CHANGED_REPOSITORIES", script)
+        self.assertIn("nanchongydzt-build", script)
+        self.assertIn("VUE_APP_PLATFORM", script)
+        self.assertIn("ddyxzhyy", script)
+        self.assertIn("fetchYdztToken", script)
+
+    def test_reviewed_local_package_builds_only_changed_repository_side(self) -> None:
+        class Store:
+            remote = False
+
+            def __init__(self, workspace: Path) -> None:
+                self.request = {
+                    "id": "reviewed-package-request",
+                    "work_item_id": 930090,
+                    "delivery_mode": "sichuan_review_local_package",
+                    "policy_snapshot": {
+                        "base_branch": "dev",
+                        "build_command": "pwsh.exe package.ps1",
+                        "package_patterns": ["release/network-command-app-*.zip"],
+                    },
+                }
+                self.steps: list[tuple[str, str, str]] = []
+                self.events: list[tuple[str, str]] = []
+                self.workspace = workspace
+
+            def detail(self, request_id: str) -> dict:
+                return self.request
+
+            def update_request(self, request_id: str, **fields) -> None:
+                self.request.update(fields)
+
+            def update_step(self, request_id: str, code: str, status: str, message: str) -> None:
+                self.steps.append((code, status, message))
+
+            def add_event(self, request_id: str, event_type: str, message: str, **kwargs) -> None:
+                self.events.append((event_type, message))
+
+            def add_artifact(self, *args, **kwargs) -> int:
+                return 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            ui = workspace / "dcsd-app-ui"
+            backend = workspace / "dcsd-app-starter"
+            ui.mkdir()
+            backend.mkdir()
+            states = [
+                {
+                    "name": "dcsd-app-ui",
+                    "worktree_path": str(ui),
+                    "base_branch": "dev",
+                    "merge_commit": "merge-ui",
+                    "changed_files": ["src/views/nanchong/App.vue"],
+                },
+                {
+                    "name": "dcsd-app-starter",
+                    "worktree_path": str(backend),
+                    "base_branch": "dev",
+                    "merge_commit": "merge-backend",
+                    "changed_files": [],
+                },
+            ]
+            store = Store(workspace)
+            reviewed_worker = Worker(store=store)
+            with patch("app.orchestrator.git", side_effect=lambda _path, *args, **_kwargs: "build-ui" if args[:2] == ("rev-parse", "HEAD") else ""), patch(
+                "app.orchestrator.subprocess.run", return_value=SimpleNamespace(returncode=0)
+            ), patch("app.orchestrator.run_command", return_value="build ok") as build, patch.object(
+                reviewed_worker.artifacts, "collect_packages"
+            ) as collect, patch.object(reviewed_worker, "_complete_delivery") as complete:
+                reviewed_worker._deliver_reviewed_local_package("reviewed-package-request", states)
+
+        build.assert_called_once()
+        environment = build.call_args.kwargs["env_overrides"]
+        self.assertEqual(json.loads(environment["AUTODEV_CHANGED_REPOSITORIES"]), ["dcsd-app-ui"])
+        self.assertEqual(build.call_args.args[1], workspace)
+        collect.assert_called_once_with(
+            "reviewed-package-request", workspace, ["release/network-command-app-*.zip"]
+        )
+        complete.assert_called_once_with("reviewed-package-request")
+        self.assertTrue(any("dcsd-app-ui" in message for _, _, message in store.steps))
 
     def test_local_project_catalog_contains_new_network_command_projects(self) -> None:
         projects = {item["project_key"]: item for item in load_project_presets()}

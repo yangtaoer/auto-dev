@@ -114,7 +114,7 @@ def resolve_project_for_work_item(
         area = fetched_item.get("area_path", "未知")
         if area_matched:
             raise RuntimeError(
-                f"TFS #{work_item_id} 的 Area Path“{area}”已进入自助范围，"
+                f"TFS #{work_item_id} 的 Area Path“{area}”已进入自主范围，"
                 f"但标题“{fetched_item.get('title', '')}”未命中任何项目路由关键字"
             )
         raise RuntimeError(f"TFS #{work_item_id} 的 Area Path“{area}”未匹配任何本机项目预设")

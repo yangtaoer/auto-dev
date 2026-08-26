@@ -6,12 +6,14 @@ from enum import StrEnum
 class DeliveryMode(StrEnum):
     LOCAL_PACKAGE = "local_package"
     SICHUAN_AUTO_REVIEW = "sichuan_auto_review"
+    SICHUAN_REVIEW_LOCAL_PACKAGE = "sichuan_review_local_package"
     PRODUCT_MANUAL_REVIEW = "product_manual_review"
 
 
 DELIVERY_MODE_LABELS = {
     DeliveryMode.LOCAL_PACKAGE: "本地打包交付",
     DeliveryMode.SICHUAN_AUTO_REVIEW: "四川审核后交付",
+    DeliveryMode.SICHUAN_REVIEW_LOCAL_PACKAGE: "四川审核后本地打包交付",
     DeliveryMode.PRODUCT_MANUAL_REVIEW: "产品审核后交付",
 }
 
@@ -19,6 +21,11 @@ DELIVERY_MODE_LABELS = {
 REVIEW_DELIVERY_MODES = {
     DeliveryMode.SICHUAN_AUTO_REVIEW.value,
     DeliveryMode.PRODUCT_MANUAL_REVIEW.value,
+}
+
+SICHUAN_APPROVAL_DELIVERY_MODES = {
+    DeliveryMode.SICHUAN_AUTO_REVIEW.value,
+    DeliveryMode.SICHUAN_REVIEW_LOCAL_PACKAGE.value,
 }
 
 DELIVERY_OPTION_MERGE_SCREENSHOT = "merge_screenshot"
