@@ -35,7 +35,7 @@ from .services.delivery import (
 from .services.tfs import TfsClient
 from .services.pipeline_release import TfsPipelineReleaseService
 from .services.process_env import git_authenticated_env, sanitized_process_env
-from .project_catalog import resolve_project_for_work_item
+from .project_catalog import resolve_projects_for_work_item
 from .live_stream import LiveCodexPublisher
 from .store import LocalStore
 
@@ -142,11 +142,18 @@ class Worker:
 
     def _route_intake(self, intake: dict) -> None:
         try:
-            project, item = resolve_project_for_work_item(intake["work_item_id"])
-            request_id = self.store.route_intake(intake["id"], project_key=project["project_key"])
+            projects, item, classification = resolve_projects_for_work_item(intake["work_item_id"])
+            project_keys = [str(project["project_key"]) for project in projects]
+            request_ids = self.store.route_intake(
+                intake["id"],
+                project_key=project_keys[0],
+                project_keys=project_keys,
+                classification=classification,
+                work_item_title=str(item.get("title") or ""),
+            )
             logger.info(
-                "TFS 需求已自动匹配项目 intake_id=%s work_item_id=%s project=%s area_path=%s request_id=%s",
-                intake["id"], intake["work_item_id"], project["project_key"], item.get("area_path", ""), request_id,
+                "TFS 需求已自动归类 intake_id=%s work_item_id=%s projects=%s area_path=%s request_ids=%s",
+                intake["id"], intake["work_item_id"], project_keys, item.get("area_path", ""), request_ids,
             )
         except Exception as exc:
             message = str(exc)[:2000]
@@ -430,8 +437,9 @@ class Worker:
                         f"四川审核人 {project.get('reviewer_name') or settings.tfs_reviewer_name} 已批准 {len(pull_requests)} 个 PR；操作已记录审计",
                     )
             else:
-                self._send_status_email(request_id, action_required=True)
-                self.store.add_event(request_id, "mail.action_required", "已邮件通知项目经理安排产品部审核并合并 PR")
+                if not (detail.get("joint_group_id") and self.store.remote):
+                    self._send_status_email(request_id, action_required=True)
+                    self.store.add_event(request_id, "mail.action_required", "已邮件通知项目经理安排产品部审核并合并 PR")
 
             self.store.update_request(
                 request_id,
@@ -442,6 +450,18 @@ class Worker:
             )
             self.store.update_step(request_id, "deliver", "running", "本机执行器正在循环检测 PR 合并状态")
             self.store.add_event(request_id, "pr.waiting_merge", f"开始监控 PR {pr_numbers} 合并状态")
+            if (
+                mode == DeliveryMode.PRODUCT_MANUAL_REVIEW
+                and detail.get("joint_group_id")
+                and self.store.remote
+            ):
+                review_notice = self.store.notify_joint_review(request_id)
+                if not review_notice.get("sent"):
+                    self.store.add_event(
+                        request_id,
+                        "joint.review_email_deferred",
+                        "等待同组产品审核项目全部创建 PR 后统一发送审核通知",
+                    )
         except Cancelled:
             self._cancel(request_id)
         except Exception as exc:
@@ -626,10 +646,17 @@ class Worker:
         if configured_area and not item["area_path"].startswith(configured_area):
             raise RuntimeError(f"需求区域 {item['area_path']} 不在项目准入范围 {configured_area} 内")
         title_keywords = [str(value).strip() for value in project.get("routing_title_keywords", []) if str(value).strip()]
-        if title_keywords and not any(keyword.casefold() in item["title"].casefold() for keyword in title_keywords):
+        requirement_text = " ".join(
+            (
+                str(item.get("title") or ""),
+                self._plain_text(item.get("description", "")),
+                self._plain_text(item.get("acceptance_criteria", "")),
+            )
+        ).casefold()
+        if title_keywords and not any(keyword.casefold() in requirement_text for keyword in title_keywords):
             raise RuntimeError(
-                f"需求标题“{item['title']}”未命中项目“{project.get('name', project.get('project_key', ''))}”"
-                f"的路由关键字：{'、'.join(title_keywords)}"
+                f"需求内容未命中项目“{project.get('name', project.get('project_key', ''))}”"
+                f"的识别关键字：{'、'.join(title_keywords)}"
             )
         if not item.get("description"):
             raise RuntimeError("需求描述为空，无法自动研发")
@@ -1239,6 +1266,31 @@ class Worker:
         ):
             self._ensure_license_application(request_id, detail, project)
             detail = self.store.detail(request_id)
+        if detail.get("joint_group_id") and self.store.remote:
+            completed_at = utc_now()
+            self.store.update_request(
+                request_id,
+                status=RunStatus.DELIVERED.value,
+                current_step="deliver",
+                progress=100,
+                completed_at=completed_at,
+            )
+            self.store.update_step(
+                request_id,
+                "deliver",
+                "completed",
+                "本项目交付已完成，正在等待联合研发中的其他项目",
+            )
+            self.store.add_event(
+                request_id,
+                "joint.child_completed",
+                f"联合研发子任务已完成：{detail.get('project_name') or project.get('name')}",
+                metadata={"joint_group_id": detail["joint_group_id"]},
+            )
+            result = self.store.finalize_joint(request_id)
+            if result.get("finalized"):
+                self.store.add_event(request_id, "joint.delivery_completed", "全部联合项目已完成并汇总交付")
+            return
         if not project.get("simulation_mode"):
             manifest = self.artifacts.delivery_manifest_html(detail)
             tfs_result = TfsClient(project["tfs_collection_url"]).complete_delivery(
@@ -1529,8 +1581,12 @@ class Worker:
             raise Cancelled()
 
     def _cancel(self, request_id: str) -> None:
+        detail = self.store.detail(request_id)
         self.store.update_request(request_id, status=RunStatus.CANCELLED.value, completed_at=utc_now())
         self.store.add_event(request_id, "request.cancelled", "任务已取消", level="warning")
+        if detail and detail.get("joint_group_id") and self.store.remote:
+            self.store.finalize_joint(request_id)
+            return
         self._send_terminal_email(request_id)
 
     def _fail(self, request_id: str, exc: Exception) -> None:
@@ -1541,6 +1597,9 @@ class Worker:
         if detail and detail.get("current_step"):
             self.store.update_step(request_id, detail["current_step"], "failed", message[:1000])
         self.store.add_event(request_id, "request.failed", message, level="error")
+        if detail and detail.get("joint_group_id") and self.store.remote:
+            self.store.finalize_joint(request_id)
+            return
         self._send_terminal_email(request_id)
 
 

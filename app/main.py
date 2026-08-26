@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 from .config import ROOT, settings
 from .db import (
     create_delivery_request,
+    create_joint_delivery_requests,
     create_request_intake,
     claim_request_intake,
     add_artifact,
@@ -54,6 +55,7 @@ from .orchestrator import worker
 from .live_stream import live_codex_streams
 from .security import hash_password, verify_password
 from .services.delivery import ArtifactService, Mailer
+from .services.tfs import TfsClient
 
 
 @asynccontextmanager
@@ -69,7 +71,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.6",
+    version="1.0-Alpha.7",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -172,6 +174,9 @@ class RunnerProjectSync(BaseModel):
 class RunnerIntakeRoute(BaseModel):
     runner_id: str = Field(pattern=r"^[a-zA-Z0-9_.-]{2,80}$")
     project_key: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{2,60}$")
+    project_keys: list[str] = Field(default_factory=list, min_length=0, max_length=5)
+    classification: list[dict[str, Any]] = Field(default_factory=list, max_length=5)
+    work_item_title: str = Field(default="", max_length=500)
     error_message: str = Field(default="", max_length=2000)
 
 
@@ -413,6 +418,156 @@ def send_cloud_email(request_id: str, *, action_required: bool, terminal: bool =
     mailer.send(to=recipients, subject=subject, html_body=html_body, attachments=attachments)
     if terminal or not action_required:
         update_request(request_id, email_sent_at=utc_now())
+    return True
+
+
+def joint_group_children(joint_group_id: str) -> list[dict[str, Any]]:
+    return [
+        detail
+        for item in rows(
+            """SELECT id FROM delivery_requests
+               WHERE joint_group_id=? ORDER BY joint_project_index,id""",
+            (joint_group_id,),
+        )
+        if (detail := request_detail(item["id"])) is not None
+    ]
+
+
+def joint_child_summary(child: dict[str, Any]) -> dict[str, Any]:
+    """Expose just enough sibling state for the combined task view."""
+    public = public_request_payload(add_runner_display_state(dict(child)))
+    display_status = public.get("display_status") or public["status"]
+    latest_event = public.get("events", [{}])[0] if public.get("events") else {}
+    return {
+        "id": public["id"],
+        "project_id": public["project_id"],
+        "project_key": public["project_key"],
+        "project_name": public["project_name"],
+        "delivery_mode": public["delivery_mode"],
+        "delivery_mode_label": DELIVERY_MODE_LABELS[DeliveryMode(public["delivery_mode"])],
+        "status": public["status"],
+        "display_status": display_status,
+        "status_label": (
+            "等待执行器上线"
+            if display_status == "waiting_runner"
+            else STATUS_LABELS.get(RunStatus(public["status"]), public["status"])
+        ),
+        "current_step": public.get("current_step"),
+        "current_activity": latest_event.get("message") or public.get("result_summary") or "等待执行",
+        "result_summary": public.get("result_summary") or "",
+        "error_message": public.get("error_message") or "",
+        "repository_states": public.get("repository_states") or [],
+        "pr_id": public.get("pr_id"),
+        "pr_url": public.get("pr_url"),
+        "created_at": public.get("created_at"),
+        "started_at": public.get("started_at"),
+        "completed_at": public.get("completed_at"),
+        "updated_at": public.get("updated_at"),
+        "joint_project_index": public.get("joint_project_index"),
+        "joint_project_count": public.get("joint_project_count"),
+    }
+
+
+def joint_request_detail(joint_group_id: str) -> dict[str, Any]:
+    intake = request_intake_detail(joint_group_id)
+    children = joint_group_children(joint_group_id)
+    if not intake or not children:
+        raise HTTPException(status_code=404, detail="联合研发任务不存在")
+    detail = dict(children[0])
+    artifacts: list[dict[str, Any]] = []
+    repository_states: list[dict[str, Any]] = []
+    notification_cc: list[str] = []
+    for child in children:
+        project_name = str(child.get("project_name") or child.get("project_key") or "项目")
+        visible = visible_delivery_artifacts(
+            child["delivery_mode"], child.get("artifacts", []), child.get("delivery_options")
+        )
+        for artifact in visible:
+            item = dict(artifact)
+            item["name"] = f"【{project_name}】{item.get('name') or '交付产物'}"
+            item["project_name"] = project_name
+            artifacts.append(item)
+        for state in child.get("repository_states", []):
+            item = dict(state)
+            item["name"] = f"{project_name} / {item.get('name') or 'repository'}"
+            repository_states.append(item)
+        notification_cc.extend(
+            value.strip()
+            for value in str(child.get("policy_snapshot", {}).get("notification_cc") or "").split(",")
+            if value.strip()
+        )
+    started_values = [child.get("started_at") for child in children if child.get("started_at")]
+    completed_values = [child.get("completed_at") for child in children if child.get("completed_at")]
+    result_lines = [
+        f"【{child['project_name']}】{child.get('result_summary') or child.get('error_message') or child['status']}"
+        for child in children
+    ]
+    policy_snapshot = dict(detail.get("policy_snapshot") or {})
+    policy_snapshot["notification_cc"] = ",".join(dict.fromkeys(notification_cc))
+    detail.update(
+        {
+            "id": joint_group_id,
+            "joint_group_id": joint_group_id,
+            "joint_children": children,
+            "joint_project_count": len(children),
+            "title": intake.get("title") or detail.get("title"),
+            "project_name": " + ".join(child["project_name"] for child in children),
+            "status": intake.get("status") or "routed",
+            "created_at": intake.get("created_at") or detail.get("created_at"),
+            "started_at": min(started_values) if started_values else detail.get("started_at"),
+            "completed_at": max(completed_values) if completed_values else intake.get("completed_at"),
+            "notification_emails": intake.get("notification_emails") or detail.get("notification_emails"),
+            "classification_summary": intake.get("classification_summary") or [],
+            "matched_project_keys": intake.get("matched_project_keys") or [],
+            "artifacts": artifacts,
+            "repository_states": repository_states,
+            "result_summary": "\n".join(result_lines),
+            "error_message": intake.get("error_message") or "",
+            "policy_snapshot": policy_snapshot,
+        }
+    )
+    return detail
+
+
+def send_joint_email(
+    joint_group_id: str,
+    *,
+    action_required: bool = False,
+    terminal_status: str | None = None,
+) -> bool:
+    detail = joint_request_detail(joint_group_id)
+    intake = request_intake_detail(joint_group_id) or {}
+    marker = "review_email_sent_at" if action_required else "email_sent_at"
+    if intake.get(marker):
+        return False
+    mailer = Mailer()
+    subject = mailer.delivery_subject(
+        detail, action_required=action_required, terminal_status=terminal_status
+    )
+    html_body = mailer.delivery_html(
+        detail, action_required=action_required, terminal_status=terminal_status
+    )
+    recipients = request_recipients(detail)
+    if not mailer.configured():
+        first_request_id = detail["joint_children"][0]["id"]
+        preview_name = (
+            "joint-review-email-preview.html" if action_required else "joint-delivery-email-preview.html"
+        )
+        path = ArtifactService().request_dir(first_request_id) / preview_name
+        path.write_text(html_body, encoding="utf-8")
+        add_artifact(first_request_id, "email_preview", path.name, str(path))
+    else:
+        attachments = [
+            Path(item["local_path"])
+            for item in detail["artifacts"]
+            if item.get("kind") == "merge_screenshot" and item.get("local_path")
+        ]
+        mailer.send(to=recipients, subject=subject, html_body=html_body, attachments=attachments)
+    with transaction() as conn:
+        conn.execute(
+            f"UPDATE request_intakes SET {marker}=?,updated_at=? WHERE id=?",
+            (utc_now(), utc_now(), joint_group_id),
+        )
     return True
 
 
@@ -1178,14 +1333,35 @@ def get_request_intake(intake_id: str, user: Annotated[dict, Depends(current_use
         raise HTTPException(status_code=404, detail="自动识别任务不存在")
     if user["role"] != "admin" and intake["requester_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="无权访问该自动识别任务")
+    children = joint_group_children(intake_id) if intake.get("result_request_ids") else []
     online = runner_is_online(str(intake["runner_id"]))
     intake["runner_online"] = online
-    intake["display_status"] = "routing" if online else "waiting_runner"
-    intake["display_message"] = (
-        "执行器正在处理任务"
-        if online
-        else "执行器当前离线，任务已安全排队，待执行器上线后自动继续"
-    )
+    intake["joint"] = len(children) > 1
+    intake["children"] = [joint_child_summary(child) for child in children]
+    if intake["status"] in {"queued", "claimed"}:
+        intake["display_status"] = "routing" if online else "waiting_runner"
+        intake["display_message"] = (
+            "执行器正在读取 TFS 内容并归类所属项目"
+            if online
+            else "执行器当前离线，任务已安全排队，待执行器上线后自动继续"
+        )
+    elif intake["status"] == "routed":
+        intake["display_status"] = "joint_running" if len(children) > 1 else (
+            children[0].get("display_status") if children else "queued"
+        )
+        intake["display_message"] = (
+            f"已识别 {len(children)} 个项目，正在并行完成研发、审核与交付"
+            if len(children) > 1
+            else "项目已识别，研发任务正在执行"
+        )
+    elif intake["status"] == "finalizing":
+        intake["display_status"] = "delivering"
+        intake["display_message"] = "全部项目已完成，正在统一更新 TFS 与发送汇总邮件"
+    else:
+        intake["display_status"] = intake["status"]
+        intake["display_message"] = intake.get("error_message") or (
+            "多项目联合研发已全部交付" if intake["status"] == "delivered" else "联合研发任务已结束"
+        )
     return {"intake": intake}
 
 
@@ -1199,6 +1375,18 @@ def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -
         else STATUS_LABELS.get(RunStatus(detail["status"]), detail["status"])
     )
     detail["delivery_mode_label"] = DELIVERY_MODE_LABELS[DeliveryMode(detail["delivery_mode"])]
+    joint_group_id = str(detail.get("joint_group_id") or "")
+    if joint_group_id:
+        intake = request_intake_detail(joint_group_id) or {}
+        siblings = joint_group_children(joint_group_id)
+        detail["joint_children"] = [joint_child_summary(child) for child in siblings]
+        detail["joint_status"] = intake.get("status") or "routed"
+        detail["joint_title"] = intake.get("title") or detail.get("title")
+        detail["classification_summary"] = intake.get("classification_summary") or []
+        if detail["status"] == RunStatus.DELIVERED.value and detail["joint_status"] not in {
+            "delivered", "failed", "cancelled"
+        }:
+            detail["status_label"] = "本项目已完成，等待联合项目"
     return {"request": detail}
 
 
@@ -1247,6 +1435,8 @@ def stop_devcore_watch(
 @app.post("/api/requests/{request_id}/retry")
 def retry_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
     original = can_access_request(user, request_id)
+    if original.get("joint_group_id"):
+        raise HTTPException(status_code=409, detail="联合研发任务需要按原 TFS 编号整体重新发起，不能只重试其中一个项目")
     if original["status"] != RunStatus.FAILED.value:
         raise HTTPException(status_code=409, detail="只有执行失败的任务可以重新发起")
     project = row("SELECT * FROM projects WHERE id=? AND enabled=1", (original["project_id"],))
@@ -1336,6 +1526,35 @@ def supplement_request(
 @app.post("/api/requests/{request_id}/cancel")
 def cancel_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
     detail = can_access_request(user, request_id)
+    joint_group_id = str(detail.get("joint_group_id") or "")
+    if joint_group_id:
+        intake = request_intake_detail(joint_group_id) or {}
+        if intake.get("status") in {"delivered", "failed", "cancelled"}:
+            raise HTTPException(status_code=409, detail="联合研发任务已经结束")
+        completed_at = utc_now()
+        children = joint_group_children(joint_group_id)
+        for child in children:
+            if child["status"] in {"delivered", "failed", "rejected", "cancelled"}:
+                continue
+            update_request(child["id"], status=RunStatus.CANCELLED.value, completed_at=completed_at)
+            add_event(
+                child["id"],
+                "joint.request_cancelled",
+                f"{user['display_name']} 取消了整个联合研发任务",
+                level="warning",
+                metadata={"joint_group_id": joint_group_id},
+            )
+        with transaction() as conn:
+            conn.execute(
+                """UPDATE request_intakes SET status='cancelled',error_message=?,completed_at=?,updated_at=?
+                   WHERE id=?""",
+                (f"{user['display_name']} 取消了联合研发任务", completed_at, completed_at, joint_group_id),
+            )
+        try:
+            send_joint_email(joint_group_id, terminal_status="cancelled")
+        except Exception as exc:
+            add_event(request_id, "mail.terminal_failed", f"联合任务取消通知邮件发送失败：{str(exc)[:1000]}", level="error")
+        return {"ok": True, "joint": True}
     if detail["status"] in {"delivered", "failed", "rejected", "cancelled"}:
         raise HTTPException(status_code=409, detail="任务已经结束")
     update_request(request_id, status=RunStatus.CANCELLED.value, completed_at=utc_now())
@@ -1401,40 +1620,67 @@ def runner_route_intake(intake_id: str, payload: RunnerIntakeRoute) -> dict:
     if intake["runner_id"] != payload.runner_id:
         raise HTTPException(status_code=403, detail="该自动识别任务不属于当前执行器")
     if intake["status"] == "routed":
-        return {"ok": True, "request_id": intake["result_request_id"]}
+        request_ids = intake.get("result_request_ids") or (
+            [intake["result_request_id"]] if intake.get("result_request_id") else []
+        )
+        return {"ok": True, "request_id": intake.get("result_request_id"), "request_ids": request_ids}
     if intake["status"] != "claimed":
         raise HTTPException(status_code=409, detail="自动识别任务当前不可提交结果")
 
-    if not payload.project_key:
+    project_keys = list(dict.fromkeys(payload.project_keys or ([payload.project_key] if payload.project_key else [])))
+    if not project_keys:
         message = payload.error_message or "未找到符合准入范围的自动研发项目"
         with transaction() as conn:
             conn.execute(
                 "UPDATE request_intakes SET status='failed',error_message=?,updated_at=? WHERE id=?",
                 (message, utc_now(), intake_id),
             )
-        return {"ok": True, "request_id": None}
+        return {"ok": True, "request_id": None, "request_ids": []}
 
-    project = row(
-        "SELECT * FROM projects WHERE project_key=? AND runner_id=? AND enabled=1",
-        (payload.project_key, payload.runner_id),
+    placeholders = ",".join("?" for _ in project_keys)
+    project_rows = rows(
+        f"SELECT * FROM projects WHERE project_key IN ({placeholders}) AND runner_id=? AND enabled=1",
+        (*project_keys, payload.runner_id),
     )
-    if not project:
-        message = f"本机识别到项目 {payload.project_key}，但云端目录不存在或已停用"
+    project_lookup = {item["project_key"]: item for item in project_rows}
+    missing_keys = [key for key in project_keys if key not in project_lookup]
+    if missing_keys:
+        message = f"本机识别到项目 {'、'.join(missing_keys)}，但云端目录不存在或已停用"
         with transaction() as conn:
             conn.execute(
                 "UPDATE request_intakes SET status='failed',error_message=?,updated_at=? WHERE id=?",
                 (message, utc_now(), intake_id),
             )
-        return {"ok": True, "request_id": None}
+        return {"ok": True, "request_id": None, "request_ids": []}
+    selected_projects = [project_lookup[key] for key in project_keys]
+    classification = [
+        item
+        for item in payload.classification
+        if str(item.get("project_key") or "") in project_lookup
+    ]
     try:
-        request_id = create_delivery_request(
-            project,
-            intake["requester_id"],
-            intake["work_item_id"],
-            project["delivery_mode"],
-            intake["notification_emails"],
-            intake.get("delivery_options"),
-        )
+        if len(selected_projects) == 1:
+            project = selected_projects[0]
+            request_ids = [
+                create_delivery_request(
+                    project,
+                    intake["requester_id"],
+                    intake["work_item_id"],
+                    project["delivery_mode"],
+                    intake["notification_emails"],
+                    intake.get("delivery_options"),
+                )
+            ]
+        else:
+            request_ids = create_joint_delivery_requests(
+                selected_projects,
+                intake["requester_id"],
+                intake["work_item_id"],
+                intake["notification_emails"],
+                intake.get("delivery_options"),
+                intake_id,
+                classification,
+            )
     except sqlite3.IntegrityError:
         message = "该需求已有正在执行的研发任务"
         with transaction() as conn:
@@ -1442,14 +1688,28 @@ def runner_route_intake(intake_id: str, payload: RunnerIntakeRoute) -> dict:
                 "UPDATE request_intakes SET status='failed',error_message=?,updated_at=? WHERE id=?",
                 (message, utc_now(), intake_id),
             )
-        return {"ok": True, "request_id": None}
+        return {"ok": True, "request_id": None, "request_ids": []}
     with transaction() as conn:
         conn.execute(
-            """UPDATE request_intakes SET status='routed',result_request_id=?,error_message='',updated_at=?
+            """UPDATE request_intakes SET status='routed',result_request_id=?,result_request_ids=?,
+                   matched_project_keys=?,classification_summary=?,title=?,error_message='',updated_at=?
                WHERE id=?""",
-            (request_id, utc_now(), intake_id),
+            (
+                request_ids[0],
+                json.dumps(request_ids, ensure_ascii=False),
+                json.dumps(project_keys, ensure_ascii=False),
+                json.dumps(classification, ensure_ascii=False),
+                payload.work_item_title,
+                utc_now(),
+                intake_id,
+            ),
         )
-    return {"ok": True, "request_id": request_id}
+    return {
+        "ok": True,
+        "request_id": request_ids[0],
+        "request_ids": request_ids,
+        "joint": len(request_ids) > 1,
+    }
 
 
 @app.post("/api/runner/claim", dependencies=[Depends(runner_auth)])
@@ -1500,6 +1760,7 @@ def runner_tasks(runner_id: str, limit: int = 80) -> dict:
     limit = max(1, min(120, limit))
     tasks = rows(
         """SELECT r.id,r.work_item_id,r.title,r.status,r.current_step,r.delivery_mode,
+                  r.joint_group_id,r.joint_project_index,r.joint_project_count,
                   r.created_at,r.updated_at,r.started_at,r.completed_at,r.error_message,
                   p.name project_name,u.display_name requester_name,
                   (SELECT e.message FROM delivery_events e WHERE e.request_id=r.id ORDER BY e.id DESC LIMIT 1) current_activity
@@ -1628,6 +1889,141 @@ def runner_notify(request_id: str, payload: RunnerNotifyInput) -> dict:
         )
         add_event(request_id, event_type, message, level="warning" if payload.terminal else "info")
     return {"ok": True, "sent": sent}
+
+
+@app.post("/api/runner/requests/{request_id}/joint-review-notify", dependencies=[Depends(runner_auth)])
+def runner_notify_joint_review(request_id: str) -> dict:
+    child = runner_request(request_id)
+    joint_group_id = str(child.get("joint_group_id") or "")
+    if not joint_group_id:
+        return {"ok": True, "joint": False, "sent": False}
+    children = joint_group_children(joint_group_id)
+    product_review_children = [
+        item
+        for item in children
+        if item.get("delivery_mode") == DeliveryMode.PRODUCT_MANUAL_REVIEW.value
+    ]
+    ready_statuses = {"waiting_merge", "delivered"}
+    if not product_review_children or any(
+        item["status"] not in ready_statuses for item in product_review_children
+    ):
+        return {
+            "ok": True,
+            "joint": True,
+            "sent": False,
+            "waiting_request_ids": [
+                item["id"] for item in product_review_children if item["status"] not in ready_statuses
+            ],
+        }
+    sent = send_joint_email(joint_group_id, action_required=True)
+    if sent:
+        for item in children:
+            add_event(
+                item["id"],
+                "joint.mail.action_required",
+                f"已统一发送 {len(product_review_children)} 个产品审核项目的 PR 待合并邮件",
+                metadata={"joint_group_id": joint_group_id},
+            )
+    return {"ok": True, "joint": True, "sent": sent}
+
+
+@app.post("/api/runner/requests/{request_id}/joint-finalize", dependencies=[Depends(runner_auth)])
+def runner_finalize_joint(request_id: str) -> dict:
+    child = runner_request(request_id)
+    joint_group_id = str(child.get("joint_group_id") or "")
+    if not joint_group_id:
+        return {"ok": True, "joint": False, "finalized": False}
+    children = joint_group_children(joint_group_id)
+    terminal_statuses = {"delivered", "failed", "rejected", "cancelled"}
+    pending = [item for item in children if item["status"] not in terminal_statuses]
+    if pending:
+        return {
+            "ok": True,
+            "joint": True,
+            "finalized": False,
+            "pending_request_ids": [item["id"] for item in pending],
+        }
+    with transaction() as conn:
+        claimed = conn.execute(
+            """UPDATE request_intakes SET status='finalizing',updated_at=?
+               WHERE id=? AND status='routed'""",
+            (utc_now(), joint_group_id),
+        ).rowcount
+    if not claimed:
+        intake = request_intake_detail(joint_group_id) or {}
+        return {
+            "ok": True,
+            "joint": True,
+            "finalized": intake.get("status") in {"delivered", "failed"},
+            "status": intake.get("status"),
+        }
+
+    failed_children = [item for item in children if item["status"] != "delivered"]
+    completed_at = utc_now()
+    if failed_children:
+        reason = "；".join(
+            f"{item['project_name']}：{item.get('error_message') or item['status']}"
+            for item in failed_children
+        )[:3000]
+        with transaction() as conn:
+            conn.execute(
+                """UPDATE request_intakes SET status='failed',error_message=?,completed_at=?,updated_at=?
+                   WHERE id=?""",
+                (reason, completed_at, completed_at, joint_group_id),
+            )
+        for item in children:
+            add_event(
+                item["id"],
+                "joint.delivery_failed",
+                f"联合研发终止：{reason}",
+                level="error",
+                metadata={"joint_group_id": joint_group_id},
+            )
+        try:
+            send_joint_email(joint_group_id, terminal_status="failed")
+        except Exception as exc:
+            add_event(request_id, "mail.terminal_failed", f"联合研发终态邮件发送失败：{str(exc)[:1000]}", level="error")
+        return {"ok": True, "joint": True, "finalized": True, "status": "failed"}
+
+    aggregate = joint_request_detail(joint_group_id)
+    try:
+        manifest = ArtifactService().delivery_manifest_html(aggregate)
+        tfs_result = TfsClient(aggregate["policy_snapshot"]["tfs_collection_url"]).complete_delivery(
+            aggregate["work_item_id"], manifest, actual_version="V1.0"
+        )
+    except Exception as exc:
+        message = f"联合交付汇总写入 TFS 失败：{str(exc)[:2500]}"
+        with transaction() as conn:
+            conn.execute(
+                """UPDATE request_intakes SET status='failed',error_message=?,completed_at=?,updated_at=?
+                   WHERE id=?""",
+                (message, completed_at, completed_at, joint_group_id),
+            )
+        add_event(request_id, "joint.tfs_failed", message, level="error")
+        try:
+            send_joint_email(joint_group_id, terminal_status="failed")
+        except Exception:
+            pass
+        return {"ok": True, "joint": True, "finalized": True, "status": "failed", "error": message}
+
+    with transaction() as conn:
+        conn.execute(
+            """UPDATE request_intakes SET status='delivered',error_message='',completed_at=?,updated_at=?
+               WHERE id=?""",
+            (completed_at, completed_at, joint_group_id),
+        )
+    for item in children:
+        add_event(
+            item["id"],
+            "joint.delivery_completed",
+            "全部联合项目均已交付，TFS 状态和交付产物已统一更新",
+            metadata={"joint_group_id": joint_group_id, "tfs": tfs_result},
+        )
+    try:
+        send_joint_email(joint_group_id)
+    except Exception as exc:
+        add_event(request_id, "mail.delivery_failed", f"联合研发最终邮件发送失败：{str(exc)[:1000]}", level="error")
+    return {"ok": True, "joint": True, "finalized": True, "status": "delivered"}
 
 
 @app.post("/api/runner/requests/{request_id}/test-email", dependencies=[Depends(runner_auth)])

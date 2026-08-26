@@ -132,12 +132,17 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
     email_sent_at TEXT,
     notification_emails TEXT NOT NULL DEFAULT '[]',
     delivery_options TEXT NOT NULL DEFAULT '["auto_release"]',
+    joint_group_id TEXT,
+    joint_project_index INTEGER NOT NULL DEFAULT 0,
+    joint_project_count INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_active_work_item
 ON delivery_requests(project_id, work_item_id)
 WHERE status NOT IN ('delivered','rejected','failed','cancelled');
+CREATE INDEX IF NOT EXISTS ix_delivery_requests_joint_group
+ON delivery_requests(joint_group_id, joint_project_index);
 CREATE TABLE IF NOT EXISTS request_intakes (
     id TEXT PRIMARY KEY,
     work_item_id INTEGER NOT NULL,
@@ -147,8 +152,15 @@ CREATE TABLE IF NOT EXISTS request_intakes (
     delivery_options TEXT NOT NULL DEFAULT '["auto_release"]',
     status TEXT NOT NULL DEFAULT 'queued',
     result_request_id TEXT REFERENCES delivery_requests(id),
+    result_request_ids TEXT NOT NULL DEFAULT '[]',
+    matched_project_keys TEXT NOT NULL DEFAULT '[]',
+    classification_summary TEXT NOT NULL DEFAULT '[]',
+    title TEXT NOT NULL DEFAULT '',
     error_message TEXT NOT NULL DEFAULT '',
     claimed_at TEXT,
+    completed_at TEXT,
+    review_email_sent_at TEXT,
+    email_sent_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -276,9 +288,32 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     if "delivery_options" not in request_columns:
         # NULL identifies pre-option tasks so an in-flight legacy delivery keeps its old behavior.
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN delivery_options TEXT")
+    if "joint_group_id" not in request_columns:
+        conn.execute("ALTER TABLE delivery_requests ADD COLUMN joint_group_id TEXT")
+    if "joint_project_index" not in request_columns:
+        conn.execute("ALTER TABLE delivery_requests ADD COLUMN joint_project_index INTEGER NOT NULL DEFAULT 0")
+    if "joint_project_count" not in request_columns:
+        conn.execute("ALTER TABLE delivery_requests ADD COLUMN joint_project_count INTEGER NOT NULL DEFAULT 1")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_delivery_requests_joint_group ON delivery_requests(joint_group_id, joint_project_index)"
+    )
     intake_columns = {item["name"] for item in conn.execute("PRAGMA table_info(request_intakes)")}
     if "delivery_options" not in intake_columns:
         conn.execute("ALTER TABLE request_intakes ADD COLUMN delivery_options TEXT")
+    if "result_request_ids" not in intake_columns:
+        conn.execute("ALTER TABLE request_intakes ADD COLUMN result_request_ids TEXT NOT NULL DEFAULT '[]'")
+    if "matched_project_keys" not in intake_columns:
+        conn.execute("ALTER TABLE request_intakes ADD COLUMN matched_project_keys TEXT NOT NULL DEFAULT '[]'")
+    if "classification_summary" not in intake_columns:
+        conn.execute("ALTER TABLE request_intakes ADD COLUMN classification_summary TEXT NOT NULL DEFAULT '[]'")
+    if "title" not in intake_columns:
+        conn.execute("ALTER TABLE request_intakes ADD COLUMN title TEXT NOT NULL DEFAULT ''")
+    if "completed_at" not in intake_columns:
+        conn.execute("ALTER TABLE request_intakes ADD COLUMN completed_at TEXT")
+    if "review_email_sent_at" not in intake_columns:
+        conn.execute("ALTER TABLE request_intakes ADD COLUMN review_email_sent_at TEXT")
+    if "email_sent_at" not in intake_columns:
+        conn.execute("ALTER TABLE request_intakes ADD COLUMN email_sent_at TEXT")
     for code, name in PIPELINE_STEPS:
         conn.execute(
             """INSERT OR IGNORE INTO delivery_steps(request_id,step_code,name,status)
@@ -428,6 +463,10 @@ def create_delivery_request(
     mode: str,
     notification_emails: list[str],
     delivery_options: list[str] | None = None,
+    *,
+    joint_group_id: str | None = None,
+    joint_project_index: int = 0,
+    joint_project_count: int = 1,
 ) -> str:
     request_id = str(uuid.uuid4())
     now = utc_now()
@@ -436,14 +475,16 @@ def create_delivery_request(
         conn.execute(
             """INSERT INTO delivery_requests(
                 id,work_item_id,project_id,requester_id,runner_id,delivery_mode,status,current_step,progress,
-                policy_snapshot,notification_emails,delivery_options,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,'queued','validate',0,?,?,?,?,?)""",
+                policy_snapshot,notification_emails,delivery_options,joint_group_id,joint_project_index,joint_project_count,
+                created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,'queued','validate',0,?,?,?,?,?,?,?,?)""",
             (
                 request_id, work_item_id, project["id"], user_id,
                 project.get("runner_id", "yangtao-pc"), mode,
                 json.dumps(snapshot, ensure_ascii=False),
                 json.dumps(notification_emails, ensure_ascii=False),
                 json.dumps(delivery_options if delivery_options is not None else DEFAULT_DELIVERY_OPTIONS, ensure_ascii=False),
+                joint_group_id, joint_project_index, joint_project_count,
                 now, now,
             ),
         )
@@ -456,6 +497,67 @@ def create_delivery_request(
             (request_id, "info", "request.created", "研发申请已进入队列", now),
         )
     return request_id
+
+
+def create_joint_delivery_requests(
+    projects: list[dict[str, Any]],
+    user_id: int,
+    work_item_id: int,
+    notification_emails: list[str],
+    delivery_options: list[str] | None,
+    joint_group_id: str,
+    classification: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    """Atomically create one independently executable child request per matched project."""
+    if not projects:
+        raise ValueError("联合研发至少需要一个项目")
+    now = utc_now()
+    total = len(projects)
+    request_ids = [str(uuid.uuid4()) for _ in projects]
+    classification_lookup = {
+        str(item.get("project_key") or ""): item
+        for item in (classification or [])
+        if isinstance(item, dict)
+    }
+    with transaction() as conn:
+        for index, (request_id, project) in enumerate(zip(request_ids, projects, strict=True), 1):
+            snapshot = project_for_api(project)
+            snapshot["joint_classification"] = classification_lookup.get(str(project.get("project_key") or ""), {})
+            snapshot["joint_project_keys"] = [str(item.get("project_key") or "") for item in projects]
+            conn.execute(
+                """INSERT INTO delivery_requests(
+                    id,work_item_id,project_id,requester_id,runner_id,delivery_mode,status,current_step,progress,
+                    policy_snapshot,notification_emails,delivery_options,joint_group_id,joint_project_index,
+                    joint_project_count,created_at,updated_at
+                ) VALUES(?,?,?,?,?,?,'queued','validate',0,?,?,?,?,?,?,?,?)""",
+                (
+                    request_id, work_item_id, project["id"], user_id,
+                    project.get("runner_id", "yangtao-pc"), project["delivery_mode"],
+                    json.dumps(snapshot, ensure_ascii=False),
+                    json.dumps(notification_emails, ensure_ascii=False),
+                    json.dumps(
+                        delivery_options if delivery_options is not None else DEFAULT_DELIVERY_OPTIONS,
+                        ensure_ascii=False,
+                    ),
+                    joint_group_id, index, total, now, now,
+                ),
+            )
+            conn.executemany(
+                "INSERT INTO delivery_steps(request_id,step_code,name,status) VALUES(?,?,?,'pending')",
+                [(request_id, code, name) for code, name in PIPELINE_STEPS],
+            )
+            conn.execute(
+                "INSERT INTO delivery_events(request_id,level,event_type,message,metadata,created_at) VALUES(?,?,?,?,?,?)",
+                (
+                    request_id,
+                    "info",
+                    "joint.request_created",
+                    f"联合研发子任务 {index}/{total} 已进入队列：{project['name']}",
+                    json.dumps({"joint_group_id": joint_group_id, "project_index": index, "project_count": total}, ensure_ascii=False),
+                    now,
+                ),
+            )
+    return request_ids
 
 
 def create_request_intake(
@@ -493,6 +595,9 @@ def request_intake_detail(intake_id: str) -> dict[str, Any] | None:
         intake["delivery_options"] = (
             None if intake.get("delivery_options") is None else json_value(intake["delivery_options"], DEFAULT_DELIVERY_OPTIONS)
         )
+        intake["result_request_ids"] = json_value(intake.get("result_request_ids"), [])
+        intake["matched_project_keys"] = json_value(intake.get("matched_project_keys"), [])
+        intake["classification_summary"] = json_value(intake.get("classification_summary"), [])
     return intake
 
 

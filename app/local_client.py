@@ -547,7 +547,10 @@ class AutoDevConsole:
         lines = [
             f"任务编号      {detail.get('id', '—')}",
             f"TFS 编号     #{detail.get('work_item_id', '—')}",
-            f"项目          {detail.get('project_name', '—')}",
+            f"项目          {detail.get('project_name', '—')}" + (
+                f"（联合 {detail.get('joint_project_index')}/{detail.get('joint_project_count')}）"
+                if int(detail.get("joint_project_count") or 1) > 1 else ""
+            ),
             f"发起人        {detail.get('requester_name', '—')}",
             f"状态          {STATUS.get(detail.get('status'), detail.get('status', '—'))}",
             f"分支          {detail.get('branch_name') or '—'}",
@@ -633,7 +636,11 @@ class AutoDevConsole:
         for item in self.task_tree.get_children():
             self.task_tree.delete(item)
         for task in tasks:
-            work = f"#{task.get('work_item_id')}  {task.get('title') or '正在读取需求…'}\n{task.get('project_name') or ''}"
+            joint = (
+                f" · 联合 {task.get('joint_project_index')}/{task.get('joint_project_count')}"
+                if int(task.get("joint_project_count") or 1) > 1 else ""
+            )
+            work = f"#{task.get('work_item_id')}  {task.get('title') or '正在读取需求…'}\n{task.get('project_name') or ''}{joint}"
             status = STATUS.get(task.get("status"), task.get("status", ""))
             self.task_tree.insert(
                 "", "end", iid=task["id"],

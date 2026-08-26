@@ -32,6 +32,7 @@ from app.orchestrator import Worker, worker  # noqa: E402
 from app.project_catalog import (  # noqa: E402
     load_project_presets,
     resolve_project_for_work_item,
+    resolve_projects_for_work_item,
     update_project_routing_aliases,
 )
 from app.services.codex_runner import CodexRunner  # noqa: E402
@@ -1634,7 +1635,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.6"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.7"), 1)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
@@ -1849,7 +1850,7 @@ else:
         self.assertNotIn("<span>自主</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.6"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.7"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
@@ -1946,6 +1947,131 @@ else:
         self.assertEqual(project["project_key"], "bazhong")
         self.assertEqual(item["id"], 910009)
         get_work_item.assert_called_once_with(910009)
+
+    @patch("app.project_catalog.TfsClient.get_work_item")
+    def test_requirement_content_is_classified_into_multiple_projects(self, get_work_item) -> None:
+        get_work_item.return_value = {
+            "id": 910109,
+            "title": "【网络发令APP】【四川省调网络发令】联合现场功能",
+            "area_path": "XiNanArea-New\\四川省区团队",
+            "description": (
+                "<p>网络发令APP新增移动端待办入口。</p>"
+                "<p>四川省调网络发令新增对应的后端状态接口。</p>"
+                "<p>两端字段定义和状态值必须保持一致。</p>"
+            ),
+            "acceptance_criteria": "APP 与省调服务联调通过。",
+        }
+        common = {
+            "enabled": True,
+            "simulation_mode": False,
+            "tfs_collection_url": "http://dev.tellhowsoft.com/DefaultCollection",
+            "tfs_area_path": "XiNanArea-New\\四川省区团队",
+        }
+        projects = [
+            {
+                **common,
+                "project_key": "network-command-app",
+                "name": "网络发令APP",
+                "routing_title_keywords": ["网络发令APP"],
+            },
+            {
+                **common,
+                "project_key": "sichuan-dispatch-network-command",
+                "name": "四川省调网络发令",
+                "routing_title_keywords": ["四川省调网络发令", "省调网络发令"],
+            },
+        ]
+        matched, _, classification = resolve_projects_for_work_item(910109, projects)
+        self.assertEqual(
+            [item["project_key"] for item in matched],
+            ["network-command-app", "sichuan-dispatch-network-command"],
+        )
+        self.assertIn("移动端待办入口", classification[0]["scoped_sections"][0])
+        self.assertTrue(any("字段定义" in item for item in classification[0]["shared_sections"]))
+        self.assertIn("后端状态接口", classification[1]["scoped_sections"][0])
+
+    @patch("app.main.TfsClient.complete_delivery")
+    def test_joint_intake_creates_children_and_finalizes_once(self, complete_delivery) -> None:
+        first_project_id = self.create_project("joint-app", "local_package")
+        second_project_id = self.create_project("joint-service", "product_manual_review")
+        project_rows = self.client.get("/api/projects").json()["projects"]
+        project_keys = [
+            next(item["project_key"] for item in project_rows if item["id"] == first_project_id),
+            next(item["project_key"] for item in project_rows if item["id"] == second_project_id),
+        ]
+        created = self.client.post("/api/requests", json={"work_item_id": 910110})
+        self.assertEqual(created.status_code, 200, created.text)
+        intake_id = created.json()["id"]
+        headers = {"Authorization": "Bearer test-runner-token"}
+        claimed = self.client.post(
+            "/api/runner/intakes/claim", headers=headers, json={"runner_id": "yangtao-pc"}
+        )
+        self.assertEqual(claimed.json()["intake"]["id"], intake_id)
+        routed = self.client.post(
+            f"/api/runner/intakes/{intake_id}/route",
+            headers=headers,
+            json={
+                "runner_id": "yangtao-pc",
+                "project_keys": project_keys,
+                "work_item_title": "【联合应用】【联合服务】联合研发",
+                "classification": [
+                    {"project_key": project_keys[0], "matched_terms": ["联合应用"]},
+                    {"project_key": project_keys[1], "matched_terms": ["联合服务"]},
+                ],
+            },
+        )
+        self.assertEqual(routed.status_code, 200, routed.text)
+        request_ids = routed.json()["request_ids"]
+        self.assertEqual(len(request_ids), 2)
+        first = self.client.get(f"/api/requests/{request_ids[0]}").json()["request"]
+        self.assertEqual(first["joint_project_count"], 2)
+        self.assertEqual(len(first["joint_children"]), 2)
+        self.assertEqual(first["policy_snapshot"]["joint_classification"]["matched_terms"], ["联合应用"])
+
+        update_request(
+            request_ids[1],
+            status="waiting_merge",
+            repository_states=[
+                {
+                    "name": "joint-service",
+                    "repository_short_name": "service",
+                    "pr_id": 80110,
+                    "pr_url": "http://dev.example/pr/80110",
+                }
+            ],
+        )
+        with patch.object(Mailer, "configured", return_value=False):
+            review_notice = self.client.post(
+                f"/api/runner/requests/{request_ids[1]}/joint-review-notify", headers=headers
+            )
+        self.assertTrue(review_notice.json()["sent"])
+        intake = self.client.get(f"/api/intakes/{intake_id}").json()["intake"]
+        self.assertTrue(intake["review_email_sent_at"])
+
+        update_request(request_ids[0], status="delivered", completed_at="2026-08-26T01:00:00+00:00")
+        waiting = self.client.post(
+            f"/api/runner/requests/{request_ids[0]}/joint-finalize", headers=headers
+        )
+        self.assertFalse(waiting.json()["finalized"])
+        complete_delivery.assert_not_called()
+
+        update_request(request_ids[1], status="delivered", completed_at="2026-08-26T01:01:00+00:00")
+        complete_delivery.return_value = {"state": "已解决"}
+        with patch.object(Mailer, "configured", return_value=False):
+            completed = self.client.post(
+                f"/api/runner/requests/{request_ids[1]}/joint-finalize", headers=headers
+            )
+        self.assertEqual(completed.json()["status"], "delivered")
+        complete_delivery.assert_called_once()
+        intake = self.client.get(f"/api/intakes/{intake_id}").json()["intake"]
+        self.assertEqual(intake["status"], "delivered")
+        self.assertTrue(intake["joint"])
+        self.assertEqual(len(intake["children"]), 2)
+
+        page = self.client.get("/").text
+        self.assertIn("多项目标题示例", page)
+        script = self.client.get("/static/app.js").text
+        self.assertIn("joint-delivery-panel", script)
 
     @patch("app.project_catalog.TfsClient.get_work_item")
     def test_local_catalog_routes_same_area_by_title_keyword(self, get_work_item) -> None:

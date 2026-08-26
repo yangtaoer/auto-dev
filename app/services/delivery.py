@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 
 from ..config import settings
 from ..db import add_artifact, request_detail
-from ..domain import DELIVERY_MODE_LABELS, DeliveryMode, RunStatus, visible_delivery_artifacts
+from ..domain import DELIVERY_MODE_LABELS, STATUS_LABELS, DeliveryMode, RunStatus, visible_delivery_artifacts
 from .process_env import sanitized_process_env
 
 
@@ -196,10 +196,14 @@ class ArtifactService:
             "release_artifact": "自动发版产物",
         }
         lines: list[str] = []
-        items = visible_delivery_artifacts(
-            str(detail.get("delivery_mode") or ""),
-            detail.get("artifacts", []),
-            detail.get("delivery_options"),
+        items = (
+            list(detail.get("artifacts", []))
+            if detail.get("joint_children")
+            else visible_delivery_artifacts(
+                str(detail.get("delivery_mode") or ""),
+                detail.get("artifacts", []),
+                detail.get("delivery_options"),
+            )
         )
         for item in items:
             safe_name = html.escape(str(item.get("name") or "交付产物"))
@@ -463,7 +467,11 @@ class Mailer:
         action_required: bool = False,
         terminal_status: str | None = None,
     ) -> str:
-        mode = DELIVERY_MODE_LABELS[DeliveryMode(detail["delivery_mode"])]
+        mode = (
+            f"多项目联合交付（{len(detail.get('joint_children') or [])} 个项目）"
+            if detail.get("joint_children")
+            else DELIVERY_MODE_LABELS[DeliveryMode(detail["delivery_mode"])]
+        )
         started_at = detail.get("started_at") or detail["created_at"]
         end_at = detail.get("completed_at") or datetime.now(UTC).isoformat()
         terminal_labels = {"failed": "研发执行失败", "cancelled": "研发任务已取消", "rejected": "需求准入驳回"}
@@ -528,10 +536,14 @@ class Mailer:
             "release_artifact": "自动发版产物",
         }
         artifact_lines = []
-        deliverable_items = visible_delivery_artifacts(
-            str(detail.get("delivery_mode") or ""),
-            detail.get("artifacts", []),
-            detail.get("delivery_options"),
+        deliverable_items = (
+            list(detail.get("artifacts", []))
+            if detail.get("joint_children")
+            else visible_delivery_artifacts(
+                str(detail.get("delivery_mode") or ""),
+                detail.get("artifacts", []),
+                detail.get("delivery_options"),
+            )
         )
         for item in deliverable_items:
             artifact_url = item.get("external_url") or f"{settings.public_base_url}/api/artifacts/{item['id']}"
@@ -636,7 +648,15 @@ class Mailer:
         )
         code_section = ""
         if not action_required:
-            code_section = f"""<div style="margin-bottom:5px;color:#6b7280;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">代码信息 / CODE DELIVERY</div>
+            if detail.get("joint_children"):
+                child_rows = "".join(
+                    f"""<tr><td style="padding:8px 10px;border-bottom:1px solid #dde2ec;color:#22283b;font-size:11px;font-weight:700">{safe_text(child.get('project_name'))}</td><td style="padding:8px 10px;border-bottom:1px solid #dde2ec;color:#59627a;font-size:11px">{safe_text(STATUS_LABELS.get(RunStatus(child.get('status')), child.get('status')))}</td><td style="padding:8px 10px;border-bottom:1px solid #dde2ec;color:#59627a;font-size:11px">{len([state for state in child.get('repository_states', []) if state.get('pr_id')])} 个 PR</td></tr>"""
+                    for child in detail["joint_children"]
+                )
+                code_section = f"""<div style="margin-bottom:5px;color:#6b7280;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">联合项目 / JOINT DELIVERY</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;border:1px solid #dde2ec;background:#f8f9fc">{child_rows}</table>"""
+            else:
+                code_section = f"""<div style="margin-bottom:5px;color:#6b7280;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">代码信息 / CODE DELIVERY</div>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;border:1px solid #dde2ec;background:#f8f9fc">
         <tr>
           <td width="38%" valign="top" style="padding:9px 11px;border-right:1px solid #dde2ec"><div style="color:#747b8d;font-size:9px">分支</div><div style="margin-top:3px;color:#22283b;font:11px Consolas,'Courier New',monospace;word-break:break-all">{safe_text(detail.get('branch_name'))}</div></td>

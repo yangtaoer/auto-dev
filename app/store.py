@@ -167,8 +167,11 @@ class RemoteStore:
         intake_id: str,
         *,
         project_key: str | None = None,
+        project_keys: list[str] | None = None,
+        classification: list[dict[str, Any]] | None = None,
+        work_item_title: str = "",
         error_message: str = "",
-    ) -> str | None:
+    ) -> list[str]:
         data = self._json(
             self._request(
                 "POST",
@@ -176,11 +179,24 @@ class RemoteStore:
                 json={
                     "runner_id": self.runner_id,
                     "project_key": project_key,
+                    "project_keys": project_keys or ([project_key] if project_key else []),
+                    "classification": classification or [],
+                    "work_item_title": work_item_title,
                     "error_message": error_message,
                 },
             )
         )
-        return data.get("request_id")
+        return list(data.get("request_ids") or ([data["request_id"]] if data.get("request_id") else []))
+
+    def finalize_joint(self, request_id: str) -> dict[str, Any]:
+        return self._json(
+            self._request("POST", f"/api/runner/requests/{request_id}/joint-finalize", json={})
+        )
+
+    def notify_joint_review(self, request_id: str) -> dict[str, Any]:
+        return self._json(
+            self._request("POST", f"/api/runner/requests/{request_id}/joint-review-notify", json={})
+        )
 
     def next_queued(self) -> str | None:
         data = self._json(self._request("POST", "/api/runner/claim", json={"runner_id": self.runner_id}))

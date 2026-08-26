@@ -95,6 +95,26 @@ class CodexRunner:
                 + "\n不要重复询问已明确回答的内容。"
             )
 
+        joint_context = ""
+        joint_classification = project.get("joint_classification") or {}
+        if joint_classification:
+            scoped_sections = [str(value) for value in joint_classification.get("scoped_sections", []) if str(value).strip()]
+            shared_sections = [str(value) for value in joint_classification.get("shared_sections", []) if str(value).strip()]
+            matched_terms = "、".join(str(value) for value in joint_classification.get("matched_terms", [])) or project.get("name", "当前项目")
+            scoped_text = "\n".join(f"- {value}" for value in scoped_sections) or "- 需求未拆出独立条目，请结合当前项目仓库判断相关改动。"
+            shared_text = "\n".join(f"- {value}" for value in shared_sections) or "- 无"
+            joint_context = f"""
+这是一个多项目联合研发需求中的独立子任务。
+当前负责项目：{project.get('name', project.get('project_key', '当前项目'))}
+同组项目：{'、'.join(project.get('joint_project_keys') or [])}
+归类依据：{matched_terms}
+当前项目专属需求：
+{scoped_text}
+跨项目共同要求：
+{shared_text}
+只实现属于当前项目仓库的内容；不得把其他子项目的专属功能重复实现到本项目。共同要求中与当前项目相关的部分仍需落实。
+""".strip()
+
         dm7_instructions = (
             "DM7 数据库插件已可用。涉及数据库时，应主动使用 DM7 工具检查本机开发库的连接、元数据、表结构和必要样例数据，"
             "不要仅因仓库内缺少表结构说明而停止。这里是本机开发环境：允许为保证需求完整性自主执行必要的受控数据库操作；"
@@ -113,6 +133,7 @@ class CodexRunner:
 验收标准：{work_item.get('acceptance_criteria', '')}
 区域：{work_item.get('area_path', '')}
 仓库范围：{repository_scope}
+{joint_context}
 {supplement_context}
 
 约束：
