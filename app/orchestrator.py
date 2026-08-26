@@ -474,6 +474,8 @@ class Worker:
             tfs = TfsClient(project["tfs_collection_url"])
             completed: list[tuple[dict, dict]] = []
             pending: list[int] = []
+            pending_without_auto_complete: list[int] = []
+            auto_complete_waiting: list[int] = []
             for state in repository_states:
                 pr = tfs.get_pull_request(state["repository_path"], int(state["pr_id"]))
                 if pr["status"] == "abandoned":
@@ -484,15 +486,48 @@ class Worker:
                     completed.append((state, pr))
                 else:
                     state["status"] = "waiting_merge"
-                    pending.append(int(state["pr_id"]))
+                    pr_id = int(state["pr_id"])
+                    auto_complete_enabled = bool(pr.get("auto_complete_enabled"))
+                    state["auto_complete_enabled"] = auto_complete_enabled
+                    state["merge_status"] = pr.get("merge_status") or ""
+                    pending.append(pr_id)
+                    if auto_complete_enabled:
+                        auto_complete_waiting.append(pr_id)
+                    else:
+                        pending_without_auto_complete.append(pr_id)
             if pending:
                 self.store.update_request(request_id, repository_states=repository_states)
-                self._fallback_auto_review_to_product_review(
-                    request_id,
-                    detail,
-                    repository_states,
-                    pending,
-                )
+                if pending_without_auto_complete:
+                    self._fallback_auto_review_to_product_review(
+                        request_id,
+                        detail,
+                        repository_states,
+                        pending_without_auto_complete,
+                    )
+                if auto_complete_waiting:
+                    waiting_numbers = "、".join(f"#{pr_id}" for pr_id in auto_complete_waiting)
+                    self.store.update_step(
+                        request_id,
+                        "deliver",
+                        "running",
+                        f"PR {waiting_numbers} 已启用自动完成，正在等待代码扫描与合并策略通过",
+                    )
+                    if any(
+                        int(state.get("pr_id") or 0) in auto_complete_waiting
+                        and not state.get("auto_complete_waiting_notified_at")
+                        for state in repository_states
+                    ):
+                        notified_at = utc_now()
+                        for state in repository_states:
+                            if int(state.get("pr_id") or 0) in auto_complete_waiting:
+                                state["auto_complete_waiting_notified_at"] = notified_at
+                        self.store.update_request(request_id, repository_states=repository_states)
+                        self.store.add_event(
+                            request_id,
+                            "pr.auto_complete_waiting",
+                            f"PR {waiting_numbers} 已设置自动完成；代码扫描通过后将自动合并，不转入产品审核",
+                            metadata={"pending_pr_ids": auto_complete_waiting},
+                        )
                 self.store.add_event(
                     request_id,
                     "pr.polled",
@@ -1189,6 +1224,22 @@ class Worker:
                 metadata=plan,
             )
             result = service.run(str(project.get("name") or detail.get("project_name") or ""))
+            if result.get("retryCount"):
+                failed_builds = [
+                    f"#{item.get('buildId')}"
+                    for item in result.get("retryHistory", [])
+                    if item.get("buildId")
+                ]
+                self.store.add_event(
+                    request_id,
+                    "release.retried",
+                    (
+                        f"检测到构建机 Maven 缓存解析瞬时故障，已自动重试 {result['retryCount']} 次"
+                        + (f"（原失败 Build {'、'.join(failed_builds)}）" if failed_builds else "")
+                    ),
+                    level="warning",
+                    metadata={"retry_history": result.get("retryHistory", [])},
+                )
         self.store.add_artifact(
             request_id,
             "release_artifact",

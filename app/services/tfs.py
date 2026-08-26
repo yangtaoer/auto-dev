@@ -401,6 +401,7 @@ class TfsClient:
         repo = self.repository_info(repo_path)
         url = f"{self.base_url}/{quote(repo.project, safe='')}/_apis/git/repositories/{repo.id}/pullRequests/{pr_id}?api-version=2.0"
         data = self._request("GET", url)
+        auto_complete_set_by = data.get("autoCompleteSetBy") or {}
         return {
             "id": data.get("pullRequestId"),
             "status": data.get("status"),
@@ -410,6 +411,12 @@ class TfsClient:
             "creation_date": data.get("creationDate"),
             "closed_date": data.get("closedDate"),
             "merge_commit": (data.get("lastMergeCommit") or {}).get("commitId"),
+            "merge_status": data.get("mergeStatus") or "",
+            "auto_complete_enabled": bool(
+                auto_complete_set_by.get("id")
+                or auto_complete_set_by.get("uniqueName")
+                or auto_complete_set_by.get("displayName")
+            ),
             "source_branch": data.get("sourceRefName", "").removeprefix("refs/heads/"),
             "target_branch": data.get("targetRefName", "").removeprefix("refs/heads/"),
         }

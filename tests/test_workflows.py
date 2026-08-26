@@ -975,6 +975,81 @@ class WorkflowTests(unittest.TestCase):
         )
         self.assertIn("已转产品审核", store.steps[0][2])
 
+    def test_sichuan_review_keeps_waiting_when_auto_complete_is_blocked_by_scan(self) -> None:
+        detail = {
+            "id": "sichuan-scan-wait-request",
+            "status": "waiting_merge",
+            "delivery_mode": "sichuan_auto_review",
+            "policy_snapshot": {
+                "simulation_mode": False,
+                "tfs_collection_url": "https://tfs.test/DefaultCollection",
+            },
+            "repository_states": [
+                {
+                    "name": "dcsd-notice-srv-sichuan",
+                    "repository_path": "C:/work/notice",
+                    "pr_id": 766451,
+                    "pr_url": "https://tfs.test/pr/766451",
+                    "status": "waiting_merge",
+                }
+            ],
+        }
+
+        class RecordingStore:
+            remote = False
+
+            def __init__(self) -> None:
+                self.value = detail
+                self.events: list[tuple[str, str]] = []
+                self.steps: list[tuple[str, str, str]] = []
+
+            def detail(self, _request_id: str) -> dict:
+                return self.value
+
+            def update_request(self, _request_id: str, **fields) -> None:
+                self.value.update(fields)
+
+            def update_step(self, _request_id: str, step: str, status: str, message: str = "") -> None:
+                self.steps.append((step, status, message))
+
+            def add_event(self, _request_id: str, event_type: str, message: str, **_kwargs) -> None:
+                self.events.append((event_type, message))
+
+            def get_status(self, _request_id: str) -> str:
+                return self.value["status"]
+
+            @staticmethod
+            def add_artifact(*_args, **_kwargs) -> int:
+                return 1
+
+        store = RecordingStore()
+        scan_worker = Worker(store=store)
+        pr = {
+            "id": 766451,
+            "status": "active",
+            "merge_commit": "",
+            "merge_status": "queued",
+            "auto_complete_enabled": True,
+        }
+        with patch("app.orchestrator.TfsClient") as tfs_client, patch.object(
+            scan_worker, "_send_status_email"
+        ) as send_email:
+            tfs_client.return_value.get_pull_request.return_value = pr
+            scan_worker.poll_merge(detail["id"])
+            scan_worker.poll_merge(detail["id"])
+
+        send_email.assert_not_called()
+        state = store.value["repository_states"][0]
+        self.assertTrue(state["auto_complete_enabled"])
+        self.assertEqual(state["merge_status"], "queued")
+        self.assertFalse(state.get("manual_review_fallback_at"))
+        self.assertEqual(
+            len([event for event in store.events if event[0] == "pr.auto_complete_waiting"]),
+            1,
+        )
+        self.assertFalse(any(event[0] == "pr.auto_complete_fallback" for event in store.events))
+        self.assertIn("等待代码扫描", store.steps[-1][2])
+
     def test_product_review_emails_before_and_after_merge(self) -> None:
         project_id = self.create_project("test-product", "product_manual_review")
         detail = self.submit_and_process(
@@ -1066,6 +1141,87 @@ else:
         self.assertEqual(result["result"], "succeeded")
         self.assertTrue(result["expectedArtifactFound"])
         self.assertIn("buildId=1170472", result["artifactsUrl"])
+
+    def test_pipeline_release_normalizes_workflow_result_and_retries_malformed_maven_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            script_path = Path(directory) / "fake_pipeline_skill.py"
+            script_path.write_text(
+                """import json
+import os
+import sys
+from pathlib import Path
+
+counter_path = Path(__file__).with_suffix(".count")
+attempt = int(counter_path.read_text() if counter_path.exists() else "0") + 1
+counter_path.write_text(str(attempt))
+base = {
+    "standardName": "四川省调网络发令",
+    "pipelineName": "标准版springboot-四川省调",
+    "definitionId": 1974,
+    "tfsProject": "DCS",
+    "sourceBranch": "refs/heads/dev",
+}
+if "--confirm-run" not in sys.argv:
+    print(json.dumps({**base, "definitionUrl": "http://dev.test/DCS/_build?definitionId=1974"}))
+elif attempt == 1:
+    failed = {
+        **base,
+        "buildId": 1178410,
+        "result": "failed",
+        "resultsUrl": "http://dev.test/DefaultCollection/DCS/_build/results?buildId=1178410&view=results",
+    }
+    print(json.dumps({"result": "failed", "deliveries": [failed]}))
+    print("Malformed " + chr(92) + "uxxxx encoding.", file=sys.stderr)
+    raise SystemExit(3)
+else:
+    succeeded = {
+        **base,
+        "buildId": 1178440,
+        "buildNumber": "20260826.2",
+        "result": "succeeded",
+        "expectedArtifactFound": True,
+        "artifacts": ["drop"],
+        "artifactsUrl": "http://dev.test/DefaultCollection/DCS/_build/results?buildId=1178440&view=artifacts",
+    }
+    print(json.dumps({"action": "workflow-run", "result": "succeeded", "deliveries": [succeeded]}))
+""",
+                encoding="utf-8",
+            )
+            fake_settings = SimpleNamespace(
+                tfs_pat="test-pipeline-pat",
+                tfs_pipeline_timeout_seconds=30,
+            )
+            with patch("app.services.pipeline_release.settings", fake_settings):
+                result = TfsPipelineReleaseService(script_path=script_path).run("四川省调网络发令")
+
+        self.assertEqual(result["buildId"], 1178440)
+        self.assertEqual(result["retryCount"], 1)
+        self.assertEqual(result["retryHistory"][0]["buildId"], 1178410)
+        self.assertIn("Malformed", result["retryHistory"][0]["reason"])
+
+    def test_tfs_pull_request_exposes_auto_complete_and_merge_status(self) -> None:
+        client = TfsClient("https://tfs.test/DefaultCollection", pat="test-pat")
+        with patch.object(
+            client,
+            "repository_info",
+            return_value=SimpleNamespace(project="DCS", name="repo", id="repo-id"),
+        ), patch.object(
+            client,
+            "_request",
+            return_value={
+                "pullRequestId": 766451,
+                "status": "active",
+                "mergeStatus": "queued",
+                "autoCompleteSetBy": {"id": "reviewer-id", "displayName": "杨涛"},
+                "repository": {"name": "repo"},
+                "sourceRefName": "refs/heads/feature/1663309-yangtao",
+                "targetRefName": "refs/heads/dev",
+            },
+        ):
+            result = client.get_pull_request("C:/work/repo", 766451)
+
+        self.assertTrue(result["auto_complete_enabled"])
+        self.assertEqual(result["merge_status"], "queued")
 
     def test_real_pr_screenshot_uses_repository_short_name_and_is_idempotent(self) -> None:
         self.assertEqual(repository_short_name("dcsd-notice-srv-sichuancd-dm"), "notice-srv")
@@ -1397,7 +1553,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.3"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.4"), 1)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
@@ -1612,7 +1768,7 @@ else:
         self.assertNotIn("自助项目", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.3"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.4"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
