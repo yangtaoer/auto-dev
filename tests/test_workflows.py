@@ -1634,7 +1634,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.5"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.6"), 1)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
@@ -1849,7 +1849,7 @@ else:
         self.assertNotIn("<span>自主</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.5"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.6"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
