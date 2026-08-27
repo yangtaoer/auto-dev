@@ -30,11 +30,16 @@ PANEL_2 = "#ded8cc"
 LINE = "#a9a295"
 PAPER = "#171813"
 ON_DARK = "#f7f3ea"
-MUTED = "#746e62"
+ON_DARK_MUTED = "#bcb6aa"
+MUTED = "#625c52"
 ACID = "#e9572b"
+ACCENT_INK = "#a3381f"
 VIOLET = "#246b5a"
 AMBER = "#d99518"
 RED = "#c63f32"
+RED_INK = "#8f2821"
+RED_ON_DARK = "#ff8e86"
+GREEN_ON_DARK = "#72b39e"
 MONO = "Consolas"
 
 STATUS = {
@@ -106,7 +111,7 @@ class AutoDevConsole:
         style.configure(
             "Auto.Treeview.Heading",
             background=DEEP,
-            foreground=MUTED,
+            foreground=ON_DARK,
             bordercolor=LINE,
             font=(MONO, 9, "bold"),
         )
@@ -148,7 +153,7 @@ class AutoDevConsole:
         tk.Label(copy, text="AutoDev · LOCAL RUNNER", bg=DEEP, fg=ACID, font=(MONO, 9, "bold")).pack(anchor="w")
         tk.Label(copy, text="执行器控制台", bg=DEEP, fg=ON_DARK, font=("Microsoft YaHei UI", 19, "bold")).pack(anchor="w")
 
-        self.quota_label = tk.Label(header, text="DEVCORE 额度读取中", bg=DEEP, fg=MUTED, font=(MONO, 10))
+        self.quota_label = tk.Label(header, text="DEVCORE 额度读取中", bg=DEEP, fg=ON_DARK_MUTED, font=(MONO, 10))
         self.quota_label.pack(side="right", padx=(12, 28))
         self.status_label = tk.Label(header, text="● 连接中", bg=DEEP, fg=AMBER, font=("Microsoft YaHei UI", 10, "bold"))
         self.status_label.pack(side="right", padx=12)
@@ -162,11 +167,11 @@ class AutoDevConsole:
         self.controls = tk.Frame(self.root, bg=DEEP, height=62, highlightbackground=LINE, highlightthickness=1)
         self.controls.pack(side="bottom", fill="x")
         self.controls.pack_propagate(False)
-        tk.Label(self.controls, text="执行器控制 / RUNNER CONTROL", bg=DEEP, fg=MUTED, font=(MONO, 9, "bold")).pack(side="left", padx=25)
+        tk.Label(self.controls, text="执行器控制 / RUNNER CONTROL", bg=DEEP, fg=ON_DARK_MUTED, font=(MONO, 9, "bold")).pack(side="left", padx=25)
         self._control_button(self.controls, "启动执行器", "restart.ps1", ACID).pack(side="left", padx=5, pady=12)
         self._control_button(self.controls, "停止执行器", "stop.ps1", RED).pack(side="left", padx=5, pady=12)
         self._control_button(self.controls, "重启执行器", "restart.ps1", AMBER).pack(side="left", padx=5, pady=12)
-        self.footer = tk.Label(self.controls, text="本机接口 127.0.0.1:28766 · 详细会话不落盘", bg=DEEP, fg=MUTED, font=(MONO, 9))
+        self.footer = tk.Label(self.controls, text="本机接口 127.0.0.1:28766 · 详细会话不落盘", bg=DEEP, fg=ON_DARK_MUTED, font=(MONO, 9))
         self.footer.pack(side="right", padx=25)
 
         body = tk.PanedWindow(self.root, orient="horizontal", bg=INK, bd=0, sashwidth=7, sashrelief="flat")
@@ -206,7 +211,7 @@ class AutoDevConsole:
         header = tk.Frame(window, bg=DEEP, height=92, highlightbackground=LINE, highlightthickness=1)
         header.pack(fill="x")
         header.pack_propagate(False)
-        tk.Label(header, text="PROJECT ROUTING / 项目路由", bg=DEEP, fg=VIOLET, font=(MONO, 9, "bold")).pack(
+        tk.Label(header, text="PROJECT ROUTING / 项目路由", bg=DEEP, fg=GREEN_ON_DARK, font=(MONO, 9, "bold")).pack(
             anchor="w", padx=26, pady=(18, 3)
         )
         tk.Label(header, text="项目别名", bg=DEEP, fg=ON_DARK, font=("Microsoft YaHei UI", 20, "bold")).pack(
@@ -244,7 +249,7 @@ class AutoDevConsole:
         )
         self.alias_save_status.pack(fill="x", padx=20, pady=(8, 0))
         tk.Label(
-            editor_panel, text="项目别名 / 需求标题识别关键词", bg=PANEL, fg=ACID,
+            editor_panel, text="项目别名 / 需求标题识别关键词", bg=PANEL, fg=ACCENT_INK,
             font=("Microsoft YaHei UI", 10, "bold"), anchor="w",
         ).pack(fill="x", padx=20, pady=(22, 7))
         self.alias_editor = tk.Text(
@@ -363,7 +368,7 @@ class AutoDevConsole:
         self.alias_editor.edit_modified(False)
         self.alias_dirty = False
         count = len(updated.get("routing_title_keywords") or [])
-        self.alias_save_status.configure(text=f"✓ 保存成功 · 当前 {count} 个别名", fg=ACID)
+        self.alias_save_status.configure(text=f"✓ 保存成功 · 当前 {count} 个别名", fg=ACCENT_INK)
         self.footer.configure(text=f"{updated.get('name')} 项目别名已保存 · 将自动同步")
         if notify:
             messagebox.showinfo(
@@ -394,12 +399,12 @@ class AutoDevConsole:
     def _build_task_list(self, parent: tk.Frame) -> None:
         top = tk.Frame(parent, bg=PANEL)
         top.pack(fill="x", padx=18, pady=(18, 12))
-        tk.Label(top, text="当前 / 最近 · CURRENT / RECENT", bg=PANEL, fg=ACID, font=(MONO, 9, "bold")).pack(anchor="w")
+        tk.Label(top, text="当前 / 最近 · CURRENT / RECENT", bg=PANEL, fg=ACCENT_INK, font=(MONO, 9, "bold")).pack(anchor="w")
         row = tk.Frame(top, bg=PANEL)
         row.pack(fill="x", pady=(5, 0))
         tk.Label(row, text="执行任务", bg=PANEL, fg=PAPER, font=("Microsoft YaHei UI", 17, "bold")).pack(side="left")
         tk.Button(
-            row, text="刷新", command=lambda: self._tick_tasks(force=True), bg=PANEL_2, fg=ACID,
+            row, text="刷新", command=lambda: self._tick_tasks(force=True), bg=PANEL_2, fg=ACCENT_INK,
             activebackground="#f4d8cc", activeforeground=PAPER, relief="flat", padx=12, pady=5,
         ).pack(side="right")
         tree_frame = tk.Frame(parent, bg=PANEL)
@@ -428,7 +433,7 @@ class AutoDevConsole:
         head = tk.Frame(parent, bg=PANEL, height=106)
         head.pack(fill="x", padx=22, pady=(18, 0))
         head.pack_propagate(False)
-        self.detail_code = tk.Label(head, text="SELECT A TASK", bg=PANEL, fg=ACID, font=(MONO, 9, "bold"))
+        self.detail_code = tk.Label(head, text="SELECT A TASK", bg=PANEL, fg=ACCENT_INK, font=(MONO, 9, "bold"))
         self.detail_code.pack(anchor="w")
         self.detail_title = tk.Label(
             head, text="选择左侧任务查看研发过程", bg=PANEL, fg=PAPER,
@@ -443,7 +448,7 @@ class AutoDevConsole:
         self.tab_buttons: dict[str, tk.Button] = {}
         for key, label in (("session", "研发会话"), ("detail", "任务详情"), ("logs", "执行器日志")):
             button = tk.Button(
-                tabs, text=label, command=lambda value=key: self._switch_tab(value), bg=DEEP, fg=MUTED,
+                tabs, text=label, command=lambda value=key: self._switch_tab(value), bg=DEEP, fg=ON_DARK_MUTED,
                 activebackground=PANEL_2, activeforeground=PAPER, relief="flat", padx=22, pady=11,
             )
             button.pack(side="left")
@@ -464,18 +469,18 @@ class AutoDevConsole:
                 panel, orient="vertical", style="Auto.Vertical.TScrollbar", command=text.yview
             )
             text.configure(yscrollcommand=scrollbar.set)
-            text.tag_configure("label", foreground=ACID, font=(MONO, 9, "bold"), spacing1=12)
+            text.tag_configure("label", foreground=ACCENT_INK, font=(MONO, 9, "bold"), spacing1=12)
             text.tag_configure("assistant", foreground=PAPER)
             text.tag_configure(
-                "assistant_heading", foreground=ACID,
+                "assistant_heading", foreground=ACCENT_INK,
                 font=("Microsoft YaHei UI", 12, "bold"), spacing1=12, spacing3=4,
             )
             text.tag_configure("assistant_bullet", foreground=PAPER, lmargin1=18, lmargin2=34)
-            text.tag_configure("reasoning", foreground="#afd2c0")
-            text.tag_configure("command", foreground="#b9d8ff", font=(MONO, 9))
-            text.tag_configure("file", foreground=AMBER, font=(MONO, 9))
+            text.tag_configure("reasoning", foreground="#245f51")
+            text.tag_configure("command", foreground="#28547e", font=(MONO, 9))
+            text.tag_configure("file", foreground="#79510b", font=(MONO, 9))
             text.tag_configure("status", foreground=MUTED, font=(MONO, 9))
-            text.tag_configure("error", foreground=RED)
+            text.tag_configure("error", foreground=RED_INK)
             text.configure(state="disabled")
             self.texts[key] = text
             self.text_panels[key] = panel
@@ -487,7 +492,8 @@ class AutoDevConsole:
 
     def _control_button(self, parent: tk.Frame, label: str, script: str, color: str) -> tk.Button:
         button = tk.Button(
-            parent, text=label, command=lambda: self._run_control(script, label), bg=PANEL_2, fg=color,
+            parent, text=label, command=lambda: self._run_control(script, label), bg=PANEL_2,
+            fg={ACID: ACCENT_INK, RED: RED_INK, AMBER: "#76510a"}.get(color, PAPER),
             activebackground="#f4d8cc", activeforeground=PAPER, relief="flat", padx=14, pady=7,
         )
         self.control_buttons.append(button)
@@ -501,7 +507,10 @@ class AutoDevConsole:
             else:
                 panel.pack_forget()
         for key, button in self.tab_buttons.items():
-            button.configure(fg=ACID if key == name else MUTED, bg=PANEL_2 if key == name else DEEP)
+            button.configure(
+                fg=ACCENT_INK if key == name else ON_DARK_MUTED,
+                bg=PANEL_2 if key == name else DEEP,
+            )
 
     def _select_task(self, _event: object = None) -> None:
         selected = self.task_tree.selection()
@@ -613,7 +622,7 @@ class AutoDevConsole:
             self.quota_label.configure(text="DEVCORE 额度暂不可用")
 
     def _health_error(self, _exc: Exception) -> None:
-        self.status_label.configure(text="● 执行器离线", fg=RED)
+        self.status_label.configure(text="● 执行器离线", fg=RED_ON_DARK)
         self.quota_label.configure(text="本机接口未连接")
 
     def _tick_tasks(self, force: bool = False) -> None:
@@ -772,7 +781,7 @@ class AutoDevConsole:
         self.footer.configure(text=final_line[:180])
         self.status_label.configure(
             text="● 执行器已停止" if "停止" in label else "● 执行器在线",
-            fg=RED if "停止" in label else ACID,
+            fg=RED_ON_DARK if "停止" in label else ACID,
         )
         if "停止" not in label and self.selected_id and not self.watcher_id:
             self._stop_watch()
@@ -782,7 +791,7 @@ class AutoDevConsole:
 
     def _control_failed(self, label: str, exc: Exception) -> None:
         self._finish_control()
-        self.status_label.configure(text=f"● {label}失败", fg=RED)
+        self.status_label.configure(text=f"● {label}失败", fg=RED_ON_DARK)
         self.footer.configure(text=f"{label}失败 · {str(exc)[:150]}")
         messagebox.showerror(f"{label}失败", str(exc), parent=self.root)
 
