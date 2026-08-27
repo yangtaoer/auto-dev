@@ -1688,7 +1688,8 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.8"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.9"), 1)
+        self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
         self.assertNotIn("DELIVERY LOOP", page.text)
@@ -1732,6 +1733,14 @@ else:
         self.assertIn("width: 255px", brand_styles)
         self.assertIn(".project-guide-panel", brand_styles)
         self.assertIn(".project-guide:hover .project-guide-panel", brand_styles)
+        editorial_styles = Path("app/static/editorial-ui.css").read_text(encoding="utf-8")
+        self.assertIn("--editorial-orange: #e9572b", editorial_styles)
+        self.assertIn("--editorial-white: #f3f0e8", editorial_styles)
+        self.assertIn(".control-strip .metrics.admin-metrics", editorial_styles)
+        self.assertIn("@media (max-width: 900px)", editorial_styles)
+        local_client = Path("app/local_client.py").read_text(encoding="utf-8")
+        self.assertIn('ACID = "#e9572b"', local_client)
+        self.assertIn('PANEL = "#fbf8f0"', local_client)
 
         claimed = self.client.post(
             "/api/runner/intakes/claim", headers=headers, json={"runner_id": "yangtao-pc"}
@@ -1903,7 +1912,7 @@ else:
         self.assertNotIn("<span>自主</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.8"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.9"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")

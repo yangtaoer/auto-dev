@@ -23,17 +23,18 @@ from .config import ROOT, settings
 from .project_catalog import load_project_presets, update_project_routing_aliases
 
 
-INK = "#070b1c"
-DEEP = "#0c1224"
-PANEL = "#111a30"
-PANEL_2 = "#17223c"
-LINE = "#293b61"
-PAPER = "#f2f5ff"
-MUTED = "#91a2c5"
-ACID = "#29a7ff"
-VIOLET = "#9b7fe3"
-AMBER = "#ffc857"
-RED = "#ff746d"
+INK = "#e9e4d9"
+DEEP = "#171813"
+PANEL = "#fbf8f0"
+PANEL_2 = "#ded8cc"
+LINE = "#a9a295"
+PAPER = "#171813"
+ON_DARK = "#f7f3ea"
+MUTED = "#746e62"
+ACID = "#e9572b"
+VIOLET = "#246b5a"
+AMBER = "#d99518"
+RED = "#c63f32"
 MONO = "Consolas"
 
 STATUS = {
@@ -109,10 +110,10 @@ class AutoDevConsole:
             bordercolor=LINE,
             font=(MONO, 9, "bold"),
         )
-        style.map("Auto.Treeview", background=[("selected", "#214632")], foreground=[("selected", PAPER)])
+        style.map("Auto.Treeview", background=[("selected", "#f4d8cc")], foreground=[("selected", PAPER)])
         style.configure(
             "Auto.Vertical.TScrollbar",
-            background="#355a47",
+            background=ACID,
             troughcolor=INK,
             bordercolor=INK,
             arrowcolor=ACID,
@@ -145,7 +146,7 @@ class AutoDevConsole:
         copy = tk.Frame(brand, bg=DEEP)
         copy.pack(side="left")
         tk.Label(copy, text="AutoDev · LOCAL RUNNER", bg=DEEP, fg=ACID, font=(MONO, 9, "bold")).pack(anchor="w")
-        tk.Label(copy, text="执行器控制台", bg=DEEP, fg=PAPER, font=("Microsoft YaHei UI", 19, "bold")).pack(anchor="w")
+        tk.Label(copy, text="执行器控制台", bg=DEEP, fg=ON_DARK, font=("Microsoft YaHei UI", 19, "bold")).pack(anchor="w")
 
         self.quota_label = tk.Label(header, text="DEVCORE 额度读取中", bg=DEEP, fg=MUTED, font=(MONO, 10))
         self.quota_label.pack(side="right", padx=(12, 28))
@@ -153,7 +154,7 @@ class AutoDevConsole:
         self.status_label.pack(side="right", padx=12)
         self.alias_button = tk.Button(
             header, text="编辑项目别名", command=self._open_project_aliases,
-            bg=PANEL_2, fg=VIOLET, activebackground="#27234b", activeforeground=PAPER,
+            bg=ACID, fg=DEEP, activebackground="#ff6b43", activeforeground=DEEP,
             relief="flat", padx=15, pady=8, font=("Microsoft YaHei UI", 10, "bold"),
         )
         self.alias_button.pack(side="right", padx=(12, 8))
@@ -208,7 +209,7 @@ class AutoDevConsole:
         tk.Label(header, text="PROJECT ROUTING / 项目路由", bg=DEEP, fg=VIOLET, font=(MONO, 9, "bold")).pack(
             anchor="w", padx=26, pady=(18, 3)
         )
-        tk.Label(header, text="项目别名", bg=DEEP, fg=PAPER, font=("Microsoft YaHei UI", 20, "bold")).pack(
+        tk.Label(header, text="项目别名", bg=DEEP, fg=ON_DARK, font=("Microsoft YaHei UI", 20, "bold")).pack(
             anchor="w", padx=26
         )
 
@@ -221,7 +222,7 @@ class AutoDevConsole:
             anchor="w", padx=16, pady=(16, 10)
         )
         self.alias_project_list = tk.Listbox(
-            project_panel, bg=PANEL, fg=PAPER, selectbackground="#28244b", selectforeground=PAPER,
+            project_panel, bg=PANEL, fg=PAPER, selectbackground="#f4d8cc", selectforeground=PAPER,
             relief="flat", borderwidth=0, highlightthickness=0, exportselection=False,
             font=("Microsoft YaHei UI", 11),
         )
@@ -262,13 +263,13 @@ class AutoDevConsole:
         actions.pack(fill="x", padx=20, pady=(0, 18))
         self.alias_save_button = tk.Button(
             actions, text="保存当前项目  Ctrl+S", command=self._save_project_aliases,
-            bg=ACID, fg=INK, activebackground="#78bfff", activeforeground=INK,
+            bg=ACID, fg=DEEP, activebackground="#ff6b43", activeforeground=DEEP,
             relief="flat", padx=18, pady=9, font=("Microsoft YaHei UI", 10, "bold"),
         )
         self.alias_save_button.pack(side="left")
         tk.Button(
             actions, text="关闭", command=self._close_project_aliases,
-            bg=PANEL_2, fg=MUTED, activebackground="#272f48", activeforeground=PAPER,
+            bg=PANEL_2, fg=MUTED, activebackground="#c9c2b5", activeforeground=PAPER,
             relief="flat", padx=18, pady=9,
         ).pack(side="right")
 
@@ -399,7 +400,7 @@ class AutoDevConsole:
         tk.Label(row, text="执行任务", bg=PANEL, fg=PAPER, font=("Microsoft YaHei UI", 17, "bold")).pack(side="left")
         tk.Button(
             row, text="刷新", command=lambda: self._tick_tasks(force=True), bg=PANEL_2, fg=ACID,
-            activebackground="#214632", activeforeground=PAPER, relief="flat", padx=12, pady=5,
+            activebackground="#f4d8cc", activeforeground=PAPER, relief="flat", padx=12, pady=5,
         ).pack(side="right")
         tree_frame = tk.Frame(parent, bg=PANEL)
         tree_frame.pack(fill="both", expand=True, padx=1, pady=(0, 1))
@@ -487,7 +488,7 @@ class AutoDevConsole:
     def _control_button(self, parent: tk.Frame, label: str, script: str, color: str) -> tk.Button:
         button = tk.Button(
             parent, text=label, command=lambda: self._run_control(script, label), bg=PANEL_2, fg=color,
-            activebackground="#214632", activeforeground=PAPER, relief="flat", padx=14, pady=7,
+            activebackground="#f4d8cc", activeforeground=PAPER, relief="flat", padx=14, pady=7,
         )
         self.control_buttons.append(button)
         return button
