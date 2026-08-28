@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import html
 import os
 import re
 import shutil
@@ -21,6 +22,7 @@ from .domain import (
     SICHUAN_APPROVAL_DELIVERY_MODES,
     DeliveryMode,
     RunStatus,
+    TaskType,
 )
 from .services.codex_runner import CodexRunner
 from .services.delivery import (
@@ -168,6 +170,8 @@ class Worker:
         if not detail:
             return
         project = detail["policy_snapshot"]
+        task_type = str(detail.get("task_type") or TaskType.DEVELOPMENT.value)
+        analysis_task = task_type == TaskType.ANALYSIS.value
         try:
             self.store.update_request(request_id, status=RunStatus.VALIDATING.value, started_at=utc_now(), progress=5)
             self.store.update_step(request_id, "validate", "running", "正在读取并校验 TFS 需求")
@@ -190,7 +194,12 @@ class Worker:
             self._check_cancelled(request_id)
 
             self.store.update_request(request_id, current_step="prepare", progress=22)
-            self.store.update_step(request_id, "prepare", "running", "正在创建隔离工作区")
+            self.store.update_step(
+                request_id,
+                "prepare",
+                "running",
+                "正在创建只读分析工作区" if analysis_task else "正在创建隔离工作区",
+            )
             repository_states: list[dict] = []
             if project.get("simulation_mode"):
                 worktree, base_commit, branch = None, "demo-base-commit", f"feature/{work_item['id']}-demo"
@@ -224,9 +233,18 @@ class Worker:
             self._check_cancelled(request_id)
 
             self.store.update_request(request_id, status=RunStatus.DEVELOPING.value, current_step="develop", progress=32)
-            self.store.update_step(request_id, "develop", "running", "DevCore 正在分析需求并修改代码")
+            self.store.update_step(
+                request_id,
+                "develop",
+                "running",
+                "DevCore 正在结合代码、TFS 与开发库定位问题" if analysis_task else "DevCore 正在分析需求并修改代码",
+            )
             if project.get("simulation_mode"):
-                result = self._simulate_development(request_id, work_item)
+                result = (
+                    self._simulate_analysis(request_id, work_item)
+                    if analysis_task
+                    else self._simulate_development(request_id, work_item)
+                )
                 codex_thread_id = "demo-thread"
             else:
                 live_publisher = LiveCodexPublisher(request_id, self.store)
@@ -240,6 +258,7 @@ class Worker:
                         resume_thread_id=detail.get("codex_thread_id") if detail.get("supplement_answers") else None,
                         supplement_requests=detail.get("supplement_requests") or [],
                         supplement_answers=detail.get("supplement_answers") or [],
+                        task_type=task_type,
                     )
                 finally:
                     live_publisher.close()
@@ -253,6 +272,16 @@ class Worker:
                     for relative in state["changed_files"]
                 ]
                 self.store.update_request(request_id, repository_states=repository_states)
+                if analysis_task and paths:
+                    self.store.update_request(
+                        request_id,
+                        codex_thread_id=codex_thread_id,
+                        result_summary=str(result.get("summary") or ""),
+                        analysis_result=result,
+                    )
+                    raise RuntimeError(
+                        "问题分析任务必须保持工作区零改动，但检测到文件变化：" + "、".join(paths[:20])
+                    )
                 blocked = protected_changes(paths, project.get("protected_patterns", []))
                 if blocked:
                     self.store.update_request(
@@ -267,6 +296,15 @@ class Worker:
                     self.store.add_event(request_id, "policy.protected_change", "检测到受保护路径变更，任务已暂停", level="warning", metadata={"paths": blocked})
                     return
             summary = result.get("summary", "")
+            if analysis_task:
+                self.store.update_request(
+                    request_id,
+                    result_summary=summary,
+                    analysis_result=result,
+                    codex_thread_id=codex_thread_id,
+                )
+                if result.get("changed_files"):
+                    raise RuntimeError("问题分析任务报告了代码文件变更，已拒绝生成分析交付")
             supplement_requests = self._normalize_supplement_requests(result.get("supplement_requests"))
             if result.get("decision") == "needs_input" or supplement_requests:
                 if not supplement_requests:
@@ -289,7 +327,12 @@ class Worker:
                     supplement_requested_at=requested_at,
                     error_message="",
                 )
-                self.store.update_step(request_id, "develop", "completed", summary or "需求分析完成，需要补充关键信息")
+                self.store.update_step(
+                    request_id,
+                    "develop",
+                    "completed",
+                    summary or ("问题分析需要补充关键信息" if analysis_task else "需求分析完成，需要补充关键信息"),
+                )
                 self.store.update_step(
                     request_id,
                     "clarify",
@@ -299,11 +342,22 @@ class Worker:
                 self.store.add_event(
                     request_id,
                     "development.input_required",
-                    f"DevCore 需要补充 {len(supplement_requests)} 项关键信息后继续研发",
+                    f"DevCore 需要补充 {len(supplement_requests)} 项关键信息后继续{'分析' if analysis_task else '研发'}",
                     level="warning",
                     metadata={"requests": supplement_requests},
                 )
                 self._send_status_email(request_id, action_required=True)
+                return
+            if analysis_task:
+                self.store.update_step(request_id, "develop", "completed", summary or "问题分析完成")
+                self.store.update_step(request_id, "clarify", "skipped", "本轮分析无需补充信息")
+                self.store.add_event(
+                    request_id,
+                    "analysis.completed",
+                    summary or "DevCore 问题分析完成",
+                    metadata=result,
+                )
+                self._complete_analysis(request_id, result)
                 return
             if not project.get("simulation_mode") and not paths:
                 raise RuntimeError("DevCore 执行完成，但没有产生代码变更")
@@ -1238,6 +1292,160 @@ class Worker:
             return
         self._complete_delivery(request_id)
 
+    def _complete_analysis(self, request_id: str, result: dict) -> None:
+        """Persist and deliver a read-only problem-analysis result without entering the code pipeline."""
+        detail = self.store.detail(request_id)
+        if not detail:
+            raise RuntimeError("问题分析任务不存在")
+        project = detail["policy_snapshot"]
+        self.store.update_request(
+            request_id,
+            status=RunStatus.DELIVERING.value,
+            current_step="deliver",
+            progress=92,
+            analysis_result=result,
+            result_summary=str(result.get("summary") or ""),
+            error_message="",
+        )
+        self.store.update_step(request_id, "submit", "skipped", "问题分析任务不提交代码")
+        self.store.update_step(request_id, "release", "skipped", "问题分析任务不构建、不审核、不发版")
+        self.store.update_step(request_id, "deliver", "running", "正在生成分析报告并同步 TFS")
+
+        report_name = f"TFS-{detail['work_item_id']}-问题分析报告.md"
+        report_path = self.artifacts.request_dir(request_id) / report_name
+        report_path.write_text(self._analysis_report_markdown(detail, result), encoding="utf-8")
+        self.store.add_artifact(request_id, "analysis_report", report_name, str(report_path))
+        self.store.add_event(
+            request_id,
+            "analysis.report_generated",
+            "结构化问题分析报告已生成",
+            metadata={
+                "confidence": result.get("confidence"),
+                "is_data_issue": bool(result.get("is_data_issue")),
+                "code_change_needed": bool(result.get("code_change_needed")),
+            },
+        )
+        detail = self.store.detail(request_id) or detail
+
+        if not project.get("simulation_mode"):
+            manifest = self._analysis_manifest_html(detail, result)
+            TfsClient(project["tfs_collection_url"]).update_delivery_artifacts(
+                int(detail["work_item_id"]), manifest
+            )
+            self.store.add_event(
+                request_id,
+                "tfs.analysis_updated",
+                "问题分析结论与报告获取路径已写入 TFS，需求状态保持不变",
+            )
+
+        completed_at = utc_now()
+        self.store.update_request(request_id, completed_at=completed_at)
+        if detail.get("joint_group_id") and self.store.remote:
+            self.store.update_request(
+                request_id,
+                status=RunStatus.DELIVERED.value,
+                current_step="deliver",
+                progress=100,
+            )
+            self.store.update_step(request_id, "deliver", "completed", "本项目问题分析完成，等待联合项目汇总")
+            result_state = self.store.finalize_joint(request_id)
+            if result_state.get("finalized"):
+                self.store.add_event(request_id, "joint.analysis_completed", "联合问题分析已完成并汇总交付")
+            return
+
+        self._send_status_email(request_id, action_required=False)
+        self.store.update_request(
+            request_id,
+            status=RunStatus.DELIVERED.value,
+            current_step="deliver",
+            progress=100,
+        )
+        self.store.update_step(request_id, "deliver", "completed", "分析报告已生成，TFS 与通知邮件已更新")
+        self.store.add_event(request_id, "analysis.delivered", "问题分析报告交付完成")
+
+    def _analysis_report_markdown(self, detail: dict, result: dict) -> str:
+        confidence = {"high": "高", "medium": "中", "low": "低"}.get(
+            str(result.get("confidence") or ""), "未标注"
+        )
+
+        def bullets(values: list | None, empty: str = "无") -> str:
+            items = [str(item).strip() for item in (values or []) if str(item).strip()]
+            return "\n".join(f"- {item}" for item in items) if items else f"- {empty}"
+
+        evidence_lines = []
+        for item in result.get("evidence") or []:
+            if not isinstance(item, dict):
+                continue
+            evidence_lines.append(
+                f"- **{item.get('kind') or 'evidence'}** · `{item.get('source') or '未标注来源'}`\n"
+                f"  {item.get('detail') or '—'}"
+            )
+        evidence = "\n".join(evidence_lines) or "- 暂无可复核证据"
+        return f"""# TFS #{detail['work_item_id']} 问题分析报告
+
+## 基本信息
+
+- 项目：{detail.get('project_name') or detail.get('policy_snapshot', {}).get('name') or '—'}
+- 问题：{detail.get('title') or '—'}
+- 分析人：AutoDev · DevCore
+- 结论可信度：{confidence}
+- 是否属于数据问题：{'是' if result.get('is_data_issue') else '否'}
+- 是否建议转为自主研发：{'是' if result.get('code_change_needed') else '否'}
+
+## 分析结论
+
+{result.get('summary') or '—'}
+
+## 根本原因
+
+{result.get('root_cause') or '尚未形成唯一根因'}
+
+## 证据链
+
+{evidence}
+
+## 影响范围
+
+{bullets(result.get('affected_scope'))}
+
+## 建议动作
+
+{bullets(result.get('recommended_actions'))}
+
+## 风险与限制
+
+{bullets(result.get('risks'))}
+
+## 数据库核验
+
+{bullets(result.get('database_operations'))}
+
+---
+
+本报告由 AutoDev 问题分析流程自动生成。本轮保持代码工作区零改动，未提交代码、未创建 PR、未构建或发版。
+"""
+
+    def _analysis_manifest_html(self, detail: dict, result: dict) -> str:
+        report = next(
+            (item for item in detail.get("artifacts", []) if item.get("kind") == "analysis_report"),
+            None,
+        )
+        report_url = self.artifacts.artifact_url(report) if report else settings.public_base_url
+        evidence = "".join(
+            f"<li><strong>{html.escape(str(item.get('source') or item.get('kind') or '证据'))}：</strong>"
+            f"{html.escape(str(item.get('detail') or '—'))}</li>"
+            for item in result.get("evidence") or []
+            if isinstance(item, dict)
+        ) or "<li>暂无可复核证据</li>"
+        return (
+            "<div><p><strong>AutoDev 问题分析完成</strong></p>"
+            f"<p><strong>分析结论：</strong>{html.escape(str(result.get('summary') or '—'))}</p>"
+            f"<p><strong>根本原因：</strong>{html.escape(str(result.get('root_cause') or '尚未形成唯一根因'))}</p>"
+            f"<p><strong>结论可信度：</strong>{html.escape(str(result.get('confidence') or '—'))}</p>"
+            f"<ul>{evidence}</ul>"
+            f'<p><a href="{html.escape(report_url, quote=True)}">下载完整问题分析报告</a></p></div>'
+        )
+
     def _complete_delivery(self, request_id: str) -> None:
         detail = self.store.detail(request_id)
         project = detail["policy_snapshot"]
@@ -1319,6 +1527,8 @@ class Worker:
         return {str(item) for item in configured}
 
     def _validate_delivery_plan(self, request_id: str, detail: dict, project: dict) -> None:
+        if detail.get("task_type") == TaskType.ANALYSIS.value:
+            return
         if detail["delivery_mode"] not in REVIEW_DELIVERY_MODES:
             return
         options = self._delivery_options(detail)
@@ -1549,6 +1759,36 @@ class Worker:
             "acceptance_mapping": ["自动研发入口可用", "交付产物可追踪"],
             "risks": [], "sql_changes": ["sql/upgrade.sql"], "config_changes": ["config/application-demo.yml"],
             "database_operations": [], "supplement_requests": [],
+        }
+
+    def _simulate_analysis(self, request_id: str, work_item: dict) -> dict:
+        self.store.add_event(request_id, "devcore.thread", "演示模式：DevCore 问题分析会话已启动")
+        self.store.add_event(request_id, "devcore.event", "演示模式：已完成代码、配置与开发库证据核验")
+        return {
+            "decision": "completed",
+            "summary": f"已完成“{work_item['title']}”的问题分析，工作区保持零改动。",
+            "root_cause": "演示数据中的调用条件未满足，导致前端请求参数为空。",
+            "confidence": "high",
+            "is_data_issue": True,
+            "code_change_needed": False,
+            "changed_files": [],
+            "evidence": [
+                {
+                    "kind": "code",
+                    "source": "src/demo/FeatureService.java:42",
+                    "detail": "条件过滤后未对空参数进行提示。",
+                },
+                {
+                    "kind": "database",
+                    "source": "本机 DM7 开发库只读查询",
+                    "detail": "演示业务记录与当前组织关系不匹配。",
+                },
+            ],
+            "affected_scope": ["当前演示账号与对应业务记录"],
+            "recommended_actions": ["核对业务数据的组织关系", "如需增加空参数提示，可转为自主研发任务"],
+            "risks": [],
+            "database_operations": ["只读核验演示表结构与样例数据，未执行写入"],
+            "supplement_requests": [],
         }
 
     def _create_demo_artifacts(self, request_id: str, *, include_package: bool) -> None:

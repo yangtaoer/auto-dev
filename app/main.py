@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import html
 import hmac
 import re
 import sqlite3
@@ -49,6 +50,9 @@ from .domain import (
     STATUS_LABELS,
     TERMINAL_STATUSES,
     RunStatus,
+    TaskType,
+    TASK_TYPE_LABELS,
+    status_label,
     visible_delivery_artifacts,
 )
 from .orchestrator import worker
@@ -71,7 +75,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.10",
+    version="1.0-Alpha.11",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -148,8 +152,9 @@ class DeliveryRequestInput(BaseModel):
     delivery_mode: DeliveryMode | None = None
     notification_emails: list[str] = Field(default_factory=list)
     delivery_options: list[Literal["merge_screenshot", "license_request", "auto_release"]] = Field(
-        default_factory=lambda: list(DEFAULT_DELIVERY_OPTIONS), min_length=1, max_length=3
+        default_factory=lambda: list(DEFAULT_DELIVERY_OPTIONS), max_length=3
     )
+    task_type: Literal["development", "analysis"] = TaskType.DEVELOPMENT.value
 
     @field_validator("delivery_options")
     @classmethod
@@ -325,7 +330,19 @@ def public_request_payload(detail: dict[str, Any]) -> dict[str, Any]:
         }
         for event in result.get("events", [])
     ]
+    if isinstance(result.get("analysis_result"), dict):
+        result["analysis_result"] = public_engine_text_tree(result["analysis_result"])
     return result
+
+
+def public_engine_text_tree(value: Any) -> Any:
+    if isinstance(value, str):
+        return public_engine_text(value)
+    if isinstance(value, list):
+        return [public_engine_text_tree(item) for item in value]
+    if isinstance(value, dict):
+        return {key: public_engine_text_tree(item) for key, item in value.items()}
+    return value
 
 
 def normalize_emails(emails: list[str], legacy_email: str | None = None) -> list[str]:
@@ -445,12 +462,14 @@ def joint_child_summary(child: dict[str, Any]) -> dict[str, Any]:
         "project_name": public["project_name"],
         "delivery_mode": public["delivery_mode"],
         "delivery_mode_label": DELIVERY_MODE_LABELS[DeliveryMode(public["delivery_mode"])],
+        "task_type": public.get("task_type", TaskType.DEVELOPMENT.value),
+        "task_type_label": TASK_TYPE_LABELS[TaskType(public.get("task_type", TaskType.DEVELOPMENT.value))],
         "status": public["status"],
         "display_status": display_status,
         "status_label": (
             "等待执行器上线"
             if display_status == "waiting_runner"
-            else STATUS_LABELS.get(RunStatus(public["status"]), public["status"])
+            else status_label(public.get("task_type", TaskType.DEVELOPMENT.value), public["status"])
         ),
         "current_step": public.get("current_step"),
         "current_activity": latest_event.get("message") or public.get("result_summary") or "等待执行",
@@ -524,6 +543,7 @@ def joint_request_detail(joint_group_id: str) -> dict[str, Any]:
             "result_summary": "\n".join(result_lines),
             "error_message": intake.get("error_message") or "",
             "policy_snapshot": policy_snapshot,
+            "task_type": intake.get("task_type") or detail.get("task_type") or TaskType.DEVELOPMENT.value,
         }
     )
     return detail
@@ -687,10 +707,14 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
                 "title": "正在读取 TFS 需求并识别项目…",
                 "project_name": "项目识别中",
                 "delivery_mode": "routing",
+                "task_type": intake.get("task_type", TaskType.DEVELOPMENT.value),
                 "status": display_status,
                 "runner_online": online,
                 "delivery_options": intake.get("delivery_options") or list(DEFAULT_DELIVERY_OPTIONS),
-                "current_activity": activity,
+                "current_activity": (
+                    activity.replace("任务", "分析任务", 1)
+                    if intake.get("task_type") == TaskType.ANALYSIS.value else activity
+                ),
                 "created_at": intake["created_at"],
                 "updated_at": intake["updated_at"],
                 "completed_at": None,
@@ -709,6 +733,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
             "title": "未能识别需求所属项目",
             "project_name": "项目识别失败",
             "delivery_mode": "routing",
+            "task_type": intake.get("task_type", TaskType.DEVELOPMENT.value),
             "status": "failed",
             "delivery_options": intake.get("delivery_options") or list(DEFAULT_DELIVERY_OPTIONS),
             "current_activity": public_engine_text(intake.get("error_message") or "项目识别失败，请查看详情"),
@@ -747,6 +772,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     for item in (*active_requests, *recent_requests):
         add_runner_display_state(item)
         item.pop("codex_thread_id", None)
+        item.pop("analysis_result", None)
         item["current_activity"] = public_engine_text(item.get("current_activity"))
         item["result_summary"] = public_engine_text(item.get("result_summary"))
         item["error_message"] = public_engine_text(item.get("error_message"))
@@ -874,6 +900,7 @@ def delivery_records(
     page: int = 1,
     page_size: int = 10,
     status: str = "",
+    task_type: str = "",
     project_key: str = "",
     requester_id: int | None = None,
     keyword: str = "",
@@ -884,11 +911,14 @@ def delivery_records(
     page = max(1, page)
     page_size = max(5, min(50, page_size))
     status = status.strip()
+    task_type = task_type.strip()
     project_key = project_key.strip()
     keyword = keyword.strip()[:120]
     allowed_statuses = {item.value for item in RunStatus}
     if status and status not in allowed_statuses:
         raise HTTPException(status_code=400, detail="交付状态筛选值无效")
+    if task_type and task_type not in {item.value for item in TaskType}:
+        raise HTTPException(status_code=400, detail="任务类型筛选值无效")
 
     conditions: list[str] = []
     params: list[Any] = []
@@ -901,6 +931,9 @@ def delivery_records(
     if status:
         conditions.append("r.status=?")
         params.append(status)
+    if task_type:
+        conditions.append("r.task_type=?")
+        params.append(task_type)
     if project_key:
         conditions.append("p.project_key=?")
         params.append(project_key)
@@ -961,6 +994,7 @@ def delivery_records(
     for item in items:
         add_runner_display_state(item)
         item.pop("codex_thread_id", None)
+        item.pop("analysis_result", None)
         item["current_activity"] = public_engine_text(item.get("current_activity"))
         item["result_summary"] = public_engine_text(item.get("result_summary"))
         item["error_message"] = public_engine_text(item.get("error_message"))
@@ -1283,7 +1317,9 @@ def submit_request(payload: DeliveryRequestInput, user: Annotated[dict, Depends(
         online = runner_is_online(runner_id)
         try:
             intake_id = create_request_intake(
-                user["id"], payload.work_item_id, runner_id, selected_emails, payload.delivery_options
+                user["id"], payload.work_item_id, runner_id, selected_emails,
+                payload.delivery_options if payload.task_type == TaskType.DEVELOPMENT.value else [],
+                payload.task_type,
             )
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=409, detail="该需求正在识别项目或等待执行") from exc
@@ -1293,7 +1329,7 @@ def submit_request(payload: DeliveryRequestInput, user: Annotated[dict, Depends(
             "routing": True,
             "runner_online": online,
             "message": (
-                "任务已提交，执行器正在识别项目"
+                ("分析任务已提交，执行器正在识别项目" if payload.task_type == TaskType.ANALYSIS.value else "任务已提交，执行器正在识别项目")
                 if online
                 else "执行器当前离线，任务已进入队列；执行器上线后将自动继续"
             ),
@@ -1309,7 +1345,9 @@ def submit_request(payload: DeliveryRequestInput, user: Annotated[dict, Depends(
         mode = payload.delivery_mode.value
     try:
         request_id = create_delivery_request(
-            project, user["id"], payload.work_item_id, mode, selected_emails, payload.delivery_options
+            project, user["id"], payload.work_item_id, mode, selected_emails,
+            payload.delivery_options if payload.task_type == TaskType.DEVELOPMENT.value else [],
+            task_type=payload.task_type,
         )
     except sqlite3.IntegrityError as exc:
         raise HTTPException(status_code=409, detail="该需求已有正在执行的研发任务") from exc
@@ -1319,7 +1357,7 @@ def submit_request(payload: DeliveryRequestInput, user: Annotated[dict, Depends(
         "status": RunStatus.QUEUED.value if online else "waiting_runner",
         "runner_online": online,
         "message": (
-            "研发任务已进入队列"
+            ("问题分析任务已进入队列" if payload.task_type == TaskType.ANALYSIS.value else "研发任务已进入队列")
             if online
             else "执行器当前离线，任务已进入队列；执行器上线后将自动继续"
         ),
@@ -1338,10 +1376,11 @@ def get_request_intake(intake_id: str, user: Annotated[dict, Depends(current_use
     intake["runner_online"] = online
     intake["joint"] = len(children) > 1
     intake["children"] = [joint_child_summary(child) for child in children]
+    analysis_task = intake.get("task_type") == TaskType.ANALYSIS.value
     if intake["status"] in {"queued", "claimed"}:
         intake["display_status"] = "routing" if online else "waiting_runner"
         intake["display_message"] = (
-            "执行器正在读取 TFS 内容并归类所属项目"
+            f"执行器正在读取 TFS 内容并归类所属{'分析' if analysis_task else '研发'}项目"
             if online
             else "执行器当前离线，任务已安全排队，待执行器上线后自动继续"
         )
@@ -1350,17 +1389,19 @@ def get_request_intake(intake_id: str, user: Annotated[dict, Depends(current_use
             children[0].get("display_status") if children else "queued"
         )
         intake["display_message"] = (
-            f"已识别 {len(children)} 个项目，正在并行完成研发、审核与交付"
+            f"已识别 {len(children)} 个项目，正在并行完成{'问题分析与报告汇总' if analysis_task else '研发、审核与交付'}"
             if len(children) > 1
-            else "项目已识别，研发任务正在执行"
+            else f"项目已识别，{'问题分析' if analysis_task else '研发'}任务正在执行"
         )
     elif intake["status"] == "finalizing":
         intake["display_status"] = "delivering"
-        intake["display_message"] = "全部项目已完成，正在统一更新 TFS 与发送汇总邮件"
+        intake["display_message"] = f"全部项目已完成，正在统一更新 TFS 与发送{'分析' if analysis_task else '交付'}汇总邮件"
     else:
         intake["display_status"] = intake["status"]
         intake["display_message"] = intake.get("error_message") or (
-            "多项目联合研发已全部交付" if intake["status"] == "delivered" else "联合研发任务已结束"
+            (
+                "多项目联合问题分析已完成" if analysis_task else "多项目联合研发已全部交付"
+            ) if intake["status"] == "delivered" else f"联合{'分析' if analysis_task else '研发'}任务已结束"
         )
     return {"intake": intake}
 
@@ -1372,8 +1413,9 @@ def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -
     detail["status_label"] = (
         "等待执行器上线"
         if display_status == "waiting_runner"
-        else STATUS_LABELS.get(RunStatus(detail["status"]), detail["status"])
+        else status_label(detail.get("task_type", TaskType.DEVELOPMENT.value), detail["status"])
     )
+    detail["task_type_label"] = TASK_TYPE_LABELS[TaskType(detail.get("task_type", TaskType.DEVELOPMENT.value))]
     detail["delivery_mode_label"] = DELIVERY_MODE_LABELS[DeliveryMode(detail["delivery_mode"])]
     joint_group_id = str(detail.get("joint_group_id") or "")
     if joint_group_id:
@@ -1395,7 +1437,8 @@ def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -
 def start_devcore_watch(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
     detail = can_access_request(user, request_id)
     if detail["status"] != RunStatus.DEVELOPING.value:
-        raise HTTPException(status_code=409, detail="DevCore 当前未处于研发执行阶段")
+        phase = "分析" if detail.get("task_type") == TaskType.ANALYSIS.value else "研发"
+        raise HTTPException(status_code=409, detail=f"DevCore 当前未处于{phase}执行阶段")
     watcher_id, cursor = live_codex_streams.start(request_id)
     return {
         "watcher_id": watcher_id,
@@ -1450,6 +1493,7 @@ def retry_request(request_id: str, user: Annotated[dict, Depends(current_user)])
             original["delivery_mode"],
             original.get("notification_emails") or [original["requester_email"]],
             original.get("delivery_options"),
+            task_type=original.get("task_type", TaskType.DEVELOPMENT.value),
         )
     except sqlite3.IntegrityError as exc:
         raise HTTPException(status_code=409, detail="该需求已有正在执行的研发任务") from exc
@@ -1669,6 +1713,7 @@ def runner_route_intake(intake_id: str, payload: RunnerIntakeRoute) -> dict:
                     project["delivery_mode"],
                     intake["notification_emails"],
                     intake.get("delivery_options"),
+                    task_type=intake.get("task_type", TaskType.DEVELOPMENT.value),
                 )
             ]
         else:
@@ -1680,6 +1725,7 @@ def runner_route_intake(intake_id: str, payload: RunnerIntakeRoute) -> dict:
                 intake.get("delivery_options"),
                 intake_id,
                 classification,
+                intake.get("task_type", TaskType.DEVELOPMENT.value),
             )
     except sqlite3.IntegrityError:
         message = "该需求已有正在执行的研发任务"
@@ -1759,7 +1805,7 @@ def runner_pollable(runner_id: str) -> dict:
 def runner_tasks(runner_id: str, limit: int = 80) -> dict:
     limit = max(1, min(120, limit))
     tasks = rows(
-        """SELECT r.id,r.work_item_id,r.title,r.status,r.current_step,r.delivery_mode,
+        """SELECT r.id,r.work_item_id,r.title,r.status,r.current_step,r.delivery_mode,r.task_type,
                   r.joint_group_id,r.joint_project_index,r.joint_project_count,
                   r.created_at,r.updated_at,r.started_at,r.completed_at,r.error_message,
                   p.name project_name,u.display_name requester_name,
@@ -1799,6 +1845,7 @@ RUNNER_MUTABLE_FIELDS = {
     "branch_name", "base_commit", "commit_hash", "pr_id", "pr_url", "merge_commit", "codex_thread_id",
     "result_summary", "error_message", "repository_states", "started_at", "completed_at", "next_poll_at", "email_sent_at",
     "supplement_requests", "supplement_answers", "supplement_requested_at", "supplemented_at",
+    "analysis_result",
 }
 
 
@@ -1987,10 +2034,30 @@ def runner_finalize_joint(request_id: str) -> dict:
 
     aggregate = joint_request_detail(joint_group_id)
     try:
-        manifest = ArtifactService().delivery_manifest_html(aggregate)
-        tfs_result = TfsClient(aggregate["policy_snapshot"]["tfs_collection_url"]).complete_delivery(
-            aggregate["work_item_id"], manifest, actual_version="V1.0"
-        )
+        if aggregate.get("task_type") == TaskType.ANALYSIS.value:
+            report_rows = []
+            for item in aggregate.get("joint_children") or []:
+                result = item.get("analysis_result") or {}
+                report = next(
+                    (artifact for artifact in item.get("artifacts", []) if artifact.get("kind") == "analysis_report"),
+                    None,
+                )
+                report_url = ArtifactService().artifact_url(report) if report else settings.public_base_url
+                report_rows.append(
+                    f"<li><strong>{html.escape(str(item.get('project_name') or '项目'))}：</strong>"
+                    f"{html.escape(str(result.get('summary') or item.get('result_summary') or '分析完成'))} "
+                    f'<a href="{html.escape(str(report_url), quote=True)}">下载报告</a></li>'
+                )
+            manifest = "<div><p><strong>AutoDev 联合问题分析完成</strong></p><ul>" + "".join(report_rows) + "</ul></div>"
+            TfsClient(aggregate["policy_snapshot"]["tfs_collection_url"]).update_delivery_artifacts(
+                aggregate["work_item_id"], manifest
+            )
+            tfs_result = {"state": "保持不变", "task_type": TaskType.ANALYSIS.value}
+        else:
+            manifest = ArtifactService().delivery_manifest_html(aggregate)
+            tfs_result = TfsClient(aggregate["policy_snapshot"]["tfs_collection_url"]).complete_delivery(
+                aggregate["work_item_id"], manifest, actual_version="V1.0"
+            )
     except Exception as exc:
         message = f"联合交付汇总写入 TFS 失败：{str(exc)[:2500]}"
         with transaction() as conn:
@@ -2016,7 +2083,11 @@ def runner_finalize_joint(request_id: str) -> dict:
         add_event(
             item["id"],
             "joint.delivery_completed",
-            "全部联合项目均已交付，TFS 状态和交付产物已统一更新",
+            (
+                "全部联合项目问题分析均已完成，分析报告已统一写入 TFS"
+                if aggregate.get("task_type") == TaskType.ANALYSIS.value
+                else "全部联合项目均已交付，TFS 状态和交付产物已统一更新"
+            ),
             metadata={"joint_group_id": joint_group_id, "tfs": tfs_result},
         )
     try:

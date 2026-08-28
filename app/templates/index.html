@@ -40,7 +40,7 @@
               <div class="project-guide-list" id="project-guide-list"><div class="project-guide-loading">正在读取项目目录…</div></div>
             </section>
           </div>
-          <span class="version-chip">SYSTEM V{{ app_version }}</span><span class="clock" id="clock"></span><button class="btn btn-primary" id="open-request">＋ 发起自动研发</button>
+          <span class="version-chip">SYSTEM V{{ app_version }}</span><span class="clock" id="clock"></span><button class="btn btn-secondary analysis-launch" id="open-analysis">◎ 问题分析</button><button class="btn btn-primary" id="open-request">＋ 发起自主研发</button>
         </div>
       </header>
 
@@ -61,6 +61,7 @@
         <div class="section-heading ledger-heading"><div><p class="eyebrow">交付台账 / DELIVERY LEDGER</p><h2>全部交付记录</h2></div><span class="catalog-source" id="record-total">共 0 条</span></div>
         <form class="record-filters" id="record-filters">
           <label class="record-search"><span>需求</span><input type="search" name="keyword" placeholder="TFS 编号或需求标题"></label>
+          <label><span>任务类型</span><select name="task_type"><option value="">全部类型</option><option value="development">自主研发</option><option value="analysis">问题分析</option></select></label>
           <label><span>项目</span><select name="project_key" id="record-project-filter"><option value="">全部项目</option></select></label>
           <label><span>状态</span><select name="status"><option value="">全部状态</option><option value="waiting_merge">等待 PR 合并</option><option value="waiting_input">待补充信息</option><option value="developing">研发中</option><option value="delivered">已交付</option><option value="failed">执行失败</option><option value="rejected">准入驳回</option><option value="cancelled">已取消</option></select></label>
           {% if user.role == 'admin' %}<label><span>提交人</span><select name="requester_id" id="record-requester-filter"><option value="">全部提交人</option></select></label>{% endif %}
@@ -99,11 +100,15 @@
   </div>
 
   <div class="modal-backdrop" id="request-modal" hidden>
-    <section class="modal request-modal"><button class="modal-close" data-close>×</button><p class="eyebrow">新研发任务 / NEW DEVELOPMENT RUN</p><h2>发起自动研发</h2><p class="muted">输入 TFS 用户情景编号，系统会结合标题、需求说明和验收标准自动识别一个或多个项目，并统一完成研发交付。</p><p class="joint-title-tip"><b>多项目标题示例</b><code>【网络发令APP】【四川省调网络发令】新增联合功能</code></p><p class="queue-note"><i></i>最多同时运行 5 个项目任务，执行器离线或并发已满时会自动排队。</p>
+    <section class="modal request-modal"><button class="modal-close" data-close>×</button><p class="eyebrow" id="request-modal-eyebrow">新任务 / NEW AUTONOMOUS RUN</p><h2 id="request-modal-title">发起自主研发</h2><p class="muted" id="request-modal-description">输入 TFS 用户情景编号，系统会自动识别一个或多个项目，并统一完成研发、审核与交付。</p><p class="joint-title-tip"><b>多项目标题示例</b><code>【网络发令APP】【四川省调网络发令】新增联合功能</code></p><p class="queue-note"><i></i>最多同时运行 5 个项目任务，执行器离线或并发已满时会自动排队。</p>
       <form id="request-form" class="form-grid">
+        <div class="span-2 task-type-selector" role="radiogroup" aria-label="任务类型">
+          <label class="task-type-choice development"><input type="radio" name="task_type" value="development" checked><span class="task-type-symbol">⌁</span><span><b>自主研发</b><small>修改代码并按项目策略完成提交、审核、构建与交付</small></span><i>01</i></label>
+          <label class="task-type-choice analysis"><input type="radio" name="task_type" value="analysis"><span class="task-type-symbol">◎</span><span><b>问题分析</b><small>结合代码、TFS 与开发库定位原因，保持工作区零改动</small></span><i>02</i></label>
+        </div>
         <label class="span-2"><span>TFS 用户情景编号</span><input type="number" name="work_item_id" min="1" placeholder="例如：1551572" required></label>
         <div class="span-2 field-block"><div class="field-label">通知邮箱 <small>可选择当前账号及所有启用项目经理的邮箱</small></div><div class="recipient-choice-list" id="request-email-options"></div></div>
-        <div class="span-2 field-block delivery-option-block">
+        <div class="span-2 field-block delivery-option-block" id="request-delivery-block">
           <div class="field-label">交付产物 <small>适用于 PR 审核类项目；本地打包项目仍按项目定义交付</small></div>
           <div class="delivery-choice-grid" id="request-delivery-options">
             <label class="delivery-choice"><input type="checkbox" name="delivery_options" value="merge_screenshot"><span class="choice-index">01</span><span><b>代码合并截图</b><small>每个仓库一张 PR 已合并页面原图</small></span><i>✓</i></label>
@@ -112,7 +117,8 @@
           </div>
         </div>
         <p class="form-error span-2" id="request-error" hidden></p>
-        <div class="modal-actions span-2"><button type="button" class="btn btn-ghost" data-close>取消</button><button type="submit" class="btn btn-primary">确认并进入队列 ↗</button></div>
+        <div class="span-2 analysis-mode-note" id="analysis-mode-note" hidden><i>READ ONLY</i><span><b>分析任务以报告作为成功产物</b>不会提交代码、创建 PR、构建、发版或申请 License；如果证据不足会进入待补充。</span></div>
+        <div class="modal-actions span-2"><button type="button" class="btn btn-ghost" data-close>取消</button><button type="submit" class="btn btn-primary" id="request-submit-button">确认并进入队列 ↗</button></div>
       </form>
     </section>
   </div>
@@ -120,7 +126,7 @@
   <div class="drawer-backdrop" id="detail-backdrop" hidden></div>
   <aside class="detail-drawer" id="detail-drawer" aria-hidden="true"><button class="modal-close" id="close-detail">×</button><div id="detail-content"></div></aside>
   <aside class="devcore-stream-panel" id="devcore-stream-panel" aria-hidden="true">
-    <header><div><p class="eyebrow">实时研发会话 / LIVE DEVCORE SESSION</p><h2 id="devcore-stream-title">研发过程</h2></div><button class="modal-close" id="close-devcore-stream">×</button></header>
+    <header><div><p class="eyebrow" id="devcore-stream-eyebrow">实时研发会话 / LIVE DEVCORE SESSION</p><h2 id="devcore-stream-title">研发过程</h2></div><button class="modal-close" id="close-devcore-stream">×</button></header>
     <div class="stream-notice"><i></i><span>仅传输打开后的输出；关闭即停止采集且不保存</span></div>
     <div class="devcore-chat" id="devcore-chat"></div>
   </aside>

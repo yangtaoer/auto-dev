@@ -3,6 +3,17 @@ from __future__ import annotations
 from enum import StrEnum
 
 
+class TaskType(StrEnum):
+    DEVELOPMENT = "development"
+    ANALYSIS = "analysis"
+
+
+TASK_TYPE_LABELS = {
+    TaskType.DEVELOPMENT: "自主研发",
+    TaskType.ANALYSIS: "问题分析",
+}
+
+
 class DeliveryMode(StrEnum):
     LOCAL_PACKAGE = "local_package"
     SICHUAN_AUTO_REVIEW = "sichuan_auto_review"
@@ -52,6 +63,7 @@ def visible_delivery_artifacts(
         if item.get("kind") not in {"report", "pull_request", "merge_evidence", "email_preview"}
         and not (item.get("kind") == "merge_screenshot" and "凭证" in str(item.get("name") or ""))
     ]
+    analysis_reports = [item for item in visible if item.get("kind") == "analysis_report"]
     if delivery_mode in REVIEW_DELIVERY_MODES:
         allowed = {"menu_link"}
         # None marks pre-option legacy rows and keeps their original screenshot/License behavior.
@@ -64,7 +76,9 @@ def visible_delivery_artifacts(
                 allowed.add("license_request")
             if DELIVERY_OPTION_AUTO_RELEASE in delivery_options:
                 allowed.add("release_artifact")
-        return [item for item in visible if item.get("kind") in allowed]
+        return analysis_reports + [
+            item for item in visible if item.get("kind") in allowed and item.get("kind") != "analysis_report"
+        ]
     return visible
 
 
@@ -113,6 +127,29 @@ STATUS_LABELS = {
 }
 
 
+ANALYSIS_STATUS_LABELS = {
+    RunStatus.QUEUED: "等待分析",
+    RunStatus.VALIDATING: "问题准入校验",
+    RunStatus.DEVELOPING: "DevCore 分析中",
+    RunStatus.DELIVERING: "发送分析报告",
+    RunStatus.DELIVERED: "分析完成",
+    RunStatus.WAITING_INPUT: "待补充分析信息",
+    RunStatus.WAITING_APPROVAL: "等待人工确认",
+    RunStatus.REJECTED: "准入驳回",
+    RunStatus.FAILED: "分析失败",
+    RunStatus.CANCELLED: "已取消",
+}
+
+
+def status_label(task_type: str, status: str) -> str:
+    try:
+        run_status = RunStatus(status)
+    except ValueError:
+        return status
+    labels = ANALYSIS_STATUS_LABELS if task_type == TaskType.ANALYSIS.value else STATUS_LABELS
+    return labels.get(run_status, status)
+
+
 PIPELINE_STEPS = [
     ("validate", "需求准入校验"),
     ("prepare", "准备隔离工作区"),
@@ -122,3 +159,13 @@ PIPELINE_STEPS = [
     ("release", "自动发版"),
     ("deliver", "生成与发送交付物"),
 ]
+
+
+ANALYSIS_PIPELINE_STEP_CODES = {"validate", "prepare", "develop", "clarify", "deliver"}
+ANALYSIS_PIPELINE_NAMES = {
+    "validate": "问题准入校验",
+    "prepare": "准备只读分析工作区",
+    "develop": "DevCore 问题分析",
+    "clarify": "补充分析信息",
+    "deliver": "生成与发送分析报告",
+}

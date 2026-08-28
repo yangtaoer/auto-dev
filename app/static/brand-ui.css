@@ -1021,7 +1021,7 @@ textarea:focus { border-color: #8274c8; box-shadow: 0 0 0 2px rgba(139, 105, 213
 .dense-heading { margin-top: 20px; }
 .record-filters {
   display: grid;
-  grid-template-columns: minmax(190px,1.5fr) repeat(5,minmax(125px,.8fr)) auto;
+  grid-template-columns: minmax(190px,1.5fr) repeat(6,minmax(115px,.75fr)) auto;
   gap: 9px;
   align-items: end;
   margin-bottom: 13px;

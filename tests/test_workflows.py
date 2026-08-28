@@ -85,6 +85,8 @@ class WorkflowTests(unittest.TestCase):
             "    joint_group_id TEXT,\n",
             "    joint_project_index INTEGER NOT NULL DEFAULT 0,\n",
             "    joint_project_count INTEGER NOT NULL DEFAULT 1,\n",
+            "    task_type TEXT NOT NULL DEFAULT 'development',\n",
+            "    analysis_result TEXT NOT NULL DEFAULT '{}',\n",
         )
         legacy_intake_definitions = (
             "    result_request_ids TEXT NOT NULL DEFAULT '[]',\n",
@@ -94,6 +96,7 @@ class WorkflowTests(unittest.TestCase):
             "    completed_at TEXT,\n",
             "    review_email_sent_at TEXT,\n",
             "    email_sent_at TEXT,\n",
+            "    task_type TEXT NOT NULL DEFAULT 'development',\n",
         )
         legacy_schema = SCHEMA
         for definition in legacy_request_definitions:
@@ -125,8 +128,8 @@ class WorkflowTests(unittest.TestCase):
                     indexes = {row[1] for row in conn.execute("PRAGMA index_list(delivery_requests)")}
                 finally:
                     conn.close()
-                self.assertTrue({"joint_group_id", "joint_project_index", "joint_project_count"} <= request_columns)
-                self.assertTrue({"result_request_ids", "matched_project_keys", "classification_summary"} <= intake_columns)
+                self.assertTrue({"joint_group_id", "joint_project_index", "joint_project_count", "task_type", "analysis_result"} <= request_columns)
+                self.assertTrue({"result_request_ids", "matched_project_keys", "classification_summary", "task_type"} <= intake_columns)
                 self.assertIn("ix_delivery_requests_joint_group", indexes)
             finally:
                 object.__setattr__(settings, "data_dir", original_data_dir)
@@ -180,6 +183,84 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue({"package", "sql", "config"}.issubset(kinds))
         self.assertNotIn("report", kinds)
         self.assertTrue(any(event["event_type"] == "delivery.policy_enforced" for event in detail["events"]))
+
+    def test_problem_analysis_completes_without_code_changes_and_delivers_report(self) -> None:
+        project_id = self.create_project("test-analysis", "product_manual_review")
+        created = self.client.post(
+            "/api/requests",
+            json={
+                "project_id": project_id,
+                "work_item_id": 910120,
+                "task_type": "analysis",
+                "delivery_options": [],
+            },
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        request_id = created.json()["id"]
+        worker.process_once()
+
+        detail = self.client.get(f"/api/requests/{request_id}").json()["request"]
+        self.assertEqual(detail["task_type"], "analysis")
+        self.assertEqual(detail["task_type_label"], "问题分析")
+        self.assertEqual(detail["status"], "delivered")
+        self.assertEqual(detail["status_label"], "分析完成")
+        self.assertEqual(detail["delivery_options"], [])
+        self.assertEqual(detail["analysis_result"]["decision"], "completed")
+        self.assertEqual(detail["analysis_result"]["changed_files"], [])
+        self.assertEqual(detail["analysis_result"]["confidence"], "high")
+        self.assertIn("调用条件未满足", detail["analysis_result"]["root_cause"])
+        kinds = {artifact["kind"] for artifact in detail["artifacts"]}
+        self.assertIn("analysis_report", kinds)
+        self.assertNotIn("package", kinds)
+        self.assertNotIn("release_artifact", kinds)
+        report = next(item for item in detail["artifacts"] if item["kind"] == "analysis_report")
+        report_text = Path(report["local_path"]).read_text(encoding="utf-8")
+        self.assertIn("问题分析报告", report_text)
+        self.assertIn("证据链", report_text)
+        self.assertIn("工作区零改动", report_text)
+        self.assertEqual(
+            [step["step_code"] for step in detail["steps"]],
+            ["validate", "prepare", "develop", "clarify", "deliver"],
+        )
+        self.assertEqual(next(step for step in detail["steps"] if step["step_code"] == "develop")["name"], "DevCore 问题分析")
+        self.assertTrue(any(event["event_type"] == "analysis.delivered" for event in detail["events"]))
+        page = self.client.get("/")
+        self.assertIn('id="open-analysis"', page.text)
+        self.assertIn('id="analysis-mode-note"', page.text)
+        self.assertIn('value="analysis"', page.text)
+
+    def test_problem_analysis_email_uses_analysis_semantics(self) -> None:
+        detail = {
+            "id": "analysis-mail",
+            "work_item_id": 910121,
+            "title": "页面空白问题分析",
+            "requirement_summary": "只分析原因，不修改代码。",
+            "project_name": "南充网络发令",
+            "requester_name": "项目经理",
+            "delivery_mode": "product_manual_review",
+            "task_type": "analysis",
+            "status": "delivered",
+            "result_summary": "已定位组织关系不匹配。",
+            "created_at": "2026-08-28T01:00:00+00:00",
+            "started_at": "2026-08-28T01:01:00+00:00",
+            "completed_at": "2026-08-28T01:08:00+00:00",
+            "branch_name": "feature/910121-yangtao",
+            "commit_hash": None,
+            "pr_url": None,
+            "artifacts": [{"id": 88, "kind": "analysis_report", "name": "问题分析报告.md", "external_url": "https://example.test/report.md"}],
+            "delivery_options": [],
+        }
+        mailer = Mailer()
+        self.assertEqual(
+            mailer.delivery_subject(detail),
+            "【AutoDev · 分析完成】TFS #910121｜页面空白问题分析",
+        )
+        rendered = mailer.delivery_html(detail)
+        self.assertIn("问题分析完成", rendered)
+        self.assertIn("分析耗时", rendered)
+        self.assertIn("分析报告 / ANALYSIS REPORT", rendered)
+        self.assertIn("下载报告", rendered)
+        self.assertNotIn("代码信息 / CODE DELIVERY", rendered)
 
     def test_missing_critical_information_waits_for_user_and_resumes_same_task(self) -> None:
         project_id = self.create_project("test-supplement", "local_package")
@@ -1582,6 +1663,31 @@ else:
         page = self.client.get("/")
         self.assertIn('id="record-filters"', page.text)
         self.assertIn('id="record-pagination"', page.text)
+        self.assertIn('name="task_type"', page.text)
+
+        analysis = self.client.post(
+            "/api/requests",
+            json={
+                "project_id": project_id,
+                "work_item_id": 931098,
+                "task_type": "analysis",
+                "delivery_options": [],
+            },
+        )
+        self.assertEqual(analysis.status_code, 200, analysis.text)
+        update_request(
+            analysis.json()["id"],
+            status="delivered",
+            title="交付台账中的问题分析",
+            completed_at="2026-08-26T04:02:00+00:00",
+        )
+        analysis_records = self.client.get(
+            "/api/delivery-records",
+            params={"project_key": "ledger-pagination-project", "task_type": "analysis"},
+        )
+        self.assertEqual(analysis_records.status_code, 200, analysis_records.text)
+        self.assertEqual(analysis_records.json()["pagination"]["total"], 1)
+        self.assertEqual(analysis_records.json()["items"][0]["task_type"], "analysis")
 
         created_user = self.client.post(
             "/api/users",
@@ -1688,7 +1794,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.10"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.11"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -1920,7 +2026,7 @@ else:
         self.assertNotIn("<span>自主</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.10"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.11"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
@@ -1997,6 +2103,37 @@ else:
         self.assertEqual(detail["project_key"], "test-auto-route")
         self.assertEqual(detail["delivery_mode"], "local_package")
         self.assertEqual(detail["status"], "delivered")
+
+    def test_number_only_analysis_preserves_task_type_through_local_routing(self) -> None:
+        self.create_project("test-analysis-route", "product_manual_review")
+        created = self.client.post(
+            "/api/requests",
+            json={"work_item_id": 910108, "task_type": "analysis", "delivery_options": []},
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        intake_id = created.json()["id"]
+        headers = {"Authorization": "Bearer test-runner-token"}
+        claimed = self.client.post(
+            "/api/runner/intakes/claim",
+            headers=headers,
+            json={"runner_id": "yangtao-pc"},
+        )
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        self.assertEqual(claimed.json()["intake"]["task_type"], "analysis")
+        routed = self.client.post(
+            f"/api/runner/intakes/{intake_id}/route",
+            headers=headers,
+            json={"runner_id": "yangtao-pc", "project_key": "test-analysis-route"},
+        )
+        self.assertEqual(routed.status_code, 200, routed.text)
+        request_id = routed.json()["request_id"]
+        worker.process_once()
+        detail = self.client.get(f"/api/requests/{request_id}").json()["request"]
+        self.assertEqual(detail["task_type"], "analysis")
+        self.assertEqual(detail["status"], "delivered")
+        self.assertEqual(detail["delivery_mode"], "product_manual_review")
+        self.assertEqual(detail["commit_hash"], None)
+        self.assertEqual(detail["pr_url"], None)
 
     @patch("app.project_catalog.TfsClient.get_work_item")
     def test_local_catalog_routes_to_most_specific_area_path(self, get_work_item) -> None:

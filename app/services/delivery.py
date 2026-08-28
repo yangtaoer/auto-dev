@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 
 from ..config import settings
 from ..db import add_artifact, request_detail
-from ..domain import DELIVERY_MODE_LABELS, STATUS_LABELS, DeliveryMode, RunStatus, visible_delivery_artifacts
+from ..domain import DELIVERY_MODE_LABELS, STATUS_LABELS, DeliveryMode, RunStatus, TaskType, visible_delivery_artifacts
 from .process_env import sanitized_process_env
 
 
@@ -194,6 +194,7 @@ class ArtifactService:
             "menu_link": "新增视图菜单链接",
             "license_request": "License 授权申请",
             "release_artifact": "自动发版产物",
+            "analysis_report": "问题分析报告",
         }
         lines: list[str] = []
         items = (
@@ -393,10 +394,17 @@ class Mailer:
         action_required: bool = False,
         terminal_status: str | None = None,
     ) -> str:
-        terminal_labels = {"failed": "执行失败", "cancelled": "任务已取消", "rejected": "准入驳回"}
+        analysis_task = detail.get("task_type") == TaskType.ANALYSIS.value
+        terminal_labels = {
+            "failed": "分析失败" if analysis_task else "执行失败",
+            "cancelled": "任务已取消",
+            "rejected": "准入驳回",
+        }
         waiting_input = action_required and detail.get("status") == RunStatus.WAITING_INPUT.value
         status = terminal_labels.get(terminal_status) or (
-            "待补充" if waiting_input else ("待审核" if action_required else "已交付")
+            "待补充" if waiting_input else (
+                "待审核" if action_required else ("分析完成" if analysis_task else "已交付")
+            )
         )
         title = str(detail.get("title") or "研发任务").strip()[:80]
         return f"【AutoDev · {status}】TFS #{detail['work_item_id']}｜{title}"
@@ -467,18 +475,29 @@ class Mailer:
         action_required: bool = False,
         terminal_status: str | None = None,
     ) -> str:
+        analysis_task = detail.get("task_type") == TaskType.ANALYSIS.value
         mode = (
+            "问题分析"
+            if analysis_task
+            else (
             f"多项目联合交付（{len(detail.get('joint_children') or [])} 个项目）"
             if detail.get("joint_children")
             else DELIVERY_MODE_LABELS[DeliveryMode(detail["delivery_mode"])]
+            )
         )
         started_at = detail.get("started_at") or detail["created_at"]
         end_at = detail.get("completed_at") or datetime.now(UTC).isoformat()
-        terminal_labels = {"failed": "研发执行失败", "cancelled": "研发任务已取消", "rejected": "需求准入驳回"}
+        terminal_labels = {
+            "failed": "问题分析失败" if analysis_task else "研发执行失败",
+            "cancelled": "分析任务已取消" if analysis_task else "研发任务已取消",
+            "rejected": "问题准入驳回" if analysis_task else "需求准入驳回",
+        }
         terminal_colors = {"failed": "#76618f", "cancelled": "#746ca4", "rejected": "#6178a8"}
         waiting_input = action_required and detail.get("status") == RunStatus.WAITING_INPUT.value
         status_label = terminal_labels.get(terminal_status) or (
-            "等待补充研发信息" if waiting_input else ("等待代码合并" if action_required else "研发交付完成")
+            ("等待补充分析信息" if analysis_task else "等待补充研发信息")
+            if waiting_input
+            else ("等待代码合并" if action_required else ("问题分析完成" if analysis_task else "研发交付完成"))
         )
         status_color = terminal_colors.get(terminal_status) or (
             "#8b74bd" if waiting_input else ("#7769ad" if action_required else "#4f7fae")
@@ -534,6 +553,7 @@ class Mailer:
             "menu_link": "新增视图菜单链接",
             "license_request": "License 授权申请",
             "release_artifact": "自动发版产物",
+            "analysis_report": "问题分析报告",
         }
         artifact_lines = []
         deliverable_items = (
@@ -554,7 +574,11 @@ class Mailer:
                 else (
                     "打开申请"
                     if item.get("kind") == "license_request"
-                    else ("查看发版产物" if item.get("kind") == "release_artifact" else "下载产物")
+                    else (
+                        "查看发版产物"
+                        if item.get("kind") == "release_artifact"
+                        else ("下载报告" if item.get("kind") == "analysis_report" else "下载产物")
+                    )
                 )
             )
             if item.get("kind") == "menu_link":
@@ -638,16 +662,21 @@ class Mailer:
 
         completed_text = format_datetime(detail.get("completed_at"), "进行中")
         signal_label = "TERMINAL SIGNAL" if terminal else ("INPUT SIGNAL" if waiting_input else "DELIVERY SIGNAL")
-        duration_label = "任务耗时" if terminal else ("当前耗时" if action_required else "开发耗时")
+        duration_label = "任务耗时" if terminal else (
+            "当前耗时" if action_required else ("分析耗时" if analysis_task else "开发耗时")
+        )
         notes_label = "执行摘要 / EXECUTION NOTES" if terminal else (
-            "当前研发结论 / CURRENT CONCLUSION" if waiting_input else "开发说明 / DEVELOPMENT NOTES"
+            ("当前分析结论 / CURRENT CONCLUSION" if analysis_task else "当前研发结论 / CURRENT CONCLUSION")
+            if waiting_input else ("分析结论 / ANALYSIS CONCLUSION" if analysis_task else "开发说明 / DEVELOPMENT NOTES")
         )
         notes_value = detail.get("result_summary") or ("任务在完成前终止，请查看上方终止原因及研发控制台中的执行记录。" if terminal else "—")
         artifact_heading = "已有产物 / AVAILABLE FILES" if terminal else (
-            "当前产物 / CURRENT FILES" if waiting_input else "交付产物 / DELIVERABLES"
+            "当前产物 / CURRENT FILES" if waiting_input else (
+                "分析报告 / ANALYSIS REPORT" if analysis_task else "交付产物 / DELIVERABLES"
+            )
         )
         code_section = ""
-        if not action_required:
+        if not action_required and not analysis_task:
             if detail.get("joint_children"):
                 child_rows = "".join(
                     f"""<tr><td style="padding:8px 10px;border-bottom:1px solid #dde2ec;color:#22283b;font-size:11px;font-weight:700">{safe_text(child.get('project_name'))}</td><td style="padding:8px 10px;border-bottom:1px solid #dde2ec;color:#59627a;font-size:11px">{safe_text(STATUS_LABELS.get(RunStatus(child.get('status')), child.get('status')))}</td><td style="padding:8px 10px;border-bottom:1px solid #dde2ec;color:#59627a;font-size:11px">{len([state for state in child.get('repository_states', []) if state.get('pr_id')])} 个 PR</td></tr>"""

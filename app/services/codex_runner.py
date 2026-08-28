@@ -46,6 +46,44 @@ RESULT_SCHEMA = {
 }
 
 
+ANALYSIS_RESULT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "decision": {"type": "string", "enum": ["completed", "needs_input"]},
+        "summary": {"type": "string"},
+        "root_cause": {"type": "string"},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "is_data_issue": {"type": "boolean"},
+        "code_change_needed": {"type": "boolean"},
+        "changed_files": {"type": "array", "items": {"type": "string"}},
+        "evidence": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["code", "database", "log", "tfs", "configuration", "inference"]},
+                    "source": {"type": "string"},
+                    "detail": {"type": "string"},
+                },
+                "required": ["kind", "source", "detail"],
+                "additionalProperties": False,
+            },
+        },
+        "affected_scope": {"type": "array", "items": {"type": "string"}},
+        "recommended_actions": {"type": "array", "items": {"type": "string"}},
+        "risks": {"type": "array", "items": {"type": "string"}},
+        "database_operations": {"type": "array", "items": {"type": "string"}},
+        "supplement_requests": RESULT_SCHEMA["properties"]["supplement_requests"],
+    },
+    "required": [
+        "decision", "summary", "root_cause", "confidence", "is_data_issue", "code_change_needed",
+        "changed_files", "evidence", "affected_scope", "recommended_actions", "risks",
+        "database_operations", "supplement_requests",
+    ],
+    "additionalProperties": False,
+}
+
+
 @dataclass(slots=True)
 class CodexRunResult:
     thread_id: str
@@ -64,6 +102,7 @@ class CodexRunner:
         resume_thread_id: str | None = None,
         supplement_requests: list[dict[str, Any]] | None = None,
         supplement_answers: list[dict[str, Any]] | None = None,
+        task_type: str = "development",
     ) -> CodexRunResult:
         from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox, SkillInput, TextInput
 
@@ -90,7 +129,7 @@ class CodexRunner:
                 question = str(request.get("question") or item.get("id") or "补充项")
                 answer_lines.append(f"- {question}\n  用户补充：{item.get('answer', '')}")
             supplement_context = (
-                "\n这是待补充任务的继续研发。以下内容由用户在平台补充，须作为本轮实施依据：\n"
+                "\n这是待补充任务的继续处理。以下内容由用户在平台补充，须作为本轮依据：\n"
                 + "\n".join(answer_lines)
                 + "\n不要重复询问已明确回答的内容。"
             )
@@ -123,8 +162,41 @@ class CodexRunner:
             if dm7.available
             else dm7.message
         )
+        analysis_dm7_instructions = (
+            "DM7 数据库插件已可用。应按问题需要主动执行只读查询、描述表结构并核验必要样例数据；"
+            "禁止 DDL、DML、事务写入和测试数据构造，不得向项目经理索要数据库密码。"
+            if dm7.available
+            else dm7.message
+        )
 
-        prompt = f"""
+        if task_type == "analysis":
+            tfs_relations = json.dumps(work_item.get("relations") or [], ensure_ascii=False)[:12000]
+            prompt = f"""
+你正在执行一个经过准入的 TFS 问题分析任务。用户要求结合代码、TFS 信息和本机开发环境定位原因，不进行代码改造。
+
+需求编号：#{work_item['id']}
+需求标题：{work_item['title']}
+问题描述：{work_item.get('description', '')}
+期望结果：{work_item.get('acceptance_criteria', '')}
+区域：{work_item.get('area_path', '')}
+TFS 附件与关联元数据：{tfs_relations or '无'}
+仓库范围：{repository_scope}
+{joint_context}
+{supplement_context}
+
+约束：
+1. 这是只读问题分析。不得修改、创建或删除任何仓库文件，不执行 git commit、git push、创建 PR、构建、发版或发送通知。
+2. {repository_rule.replace('只修改必要仓库；需求需要时允许跨仓修改', '只分析相关仓库；问题跨仓时允许交叉检索').replace('只在该仓库内完成需求', '只在该仓库内完成分析')}。
+3. 主动检索相关代码、配置、Git 历史和 TFS 上下文，用文件路径、行号、条件分支或调用链支撑结论。
+4. {analysis_dm7_instructions}
+5. 区分已验证事实与推断。evidence 中的 source 必须可复核；无法直接验证的内容使用 kind=inference，并在 detail 说明推断链路。
+6. 只有缺少的信息会阻止可靠定位，且无法从代码、TFS、配置、日志或本机 DM7 开发库查明时，才返回 decision=needs_input。
+7. 找到高可信或中可信原因时返回 decision=completed。没有代码变更是本任务的正常成功条件，changed_files 必须为空数组。
+8. code_change_needed 只表示后续是否建议转为自主研发任务；本轮无论其值如何都不得改代码。
+9. 所有面向用户的结论必须使用简体中文，明确给出根因、证据、影响范围、可信度和建议动作。
+""".strip()
+        else:
+            prompt = f"""
 你正在执行一个经过准入的 TFS 自动研发任务。
 
 需求编号：#{work_item['id']}
@@ -154,9 +226,15 @@ class CodexRunner:
 """.strip()
 
         developer_instructions = (
-            "你是全自主研发执行器。修改应最小、可审计、可回滚。"
+            "你是只读问题分析执行器。必须保持工作区零改动，以可复核证据定位根因。"
             "所有可展示给用户的分析摘要、计划与最终回复必须使用简体中文。"
-            "优先自主查明并解决问题；仅在关键事实无法获得且继续开发必然不可靠时进入待补充。"
+            "优先自主查明问题；仅在关键事实无法获得且无法形成可靠结论时进入待补充。"
+            if task_type == "analysis"
+            else (
+                "你是全自主研发执行器。修改应最小、可审计、可回滚。"
+                "所有可展示给用户的分析摘要、计划与最终回复必须使用简体中文。"
+                "优先自主查明并解决问题；仅在关键事实无法获得且继续开发必然不可靠时进入待补充。"
+            )
         )
         codex_config = CodexConfig(
             cwd=str(cwd),
@@ -170,16 +248,16 @@ class CodexRunner:
             thread_options = {
                 "cwd": str(cwd),
                 "model": settings.codex_model,
-                "sandbox": Sandbox.full_access,
+                "sandbox": Sandbox.read_only if task_type == "analysis" else Sandbox.full_access,
                 "approval_mode": ApprovalMode.deny_all,
                 "developer_instructions": developer_instructions,
             }
             if resume_thread_id:
                 thread = codex.thread_resume(resume_thread_id, **thread_options)
-                on_event("devcore.thread_resumed", "DevCore 已载入补充信息并继续原研发会话")
+                on_event("devcore.thread_resumed", f"DevCore 已载入补充信息并继续原{'分析' if task_type == 'analysis' else '研发'}会话")
             else:
                 thread = codex.thread_start(service_name="tellhow-autodev", **thread_options)
-                on_event("devcore.thread", "DevCore 研发会话已启动")
+                on_event("devcore.thread", f"DevCore {'问题分析' if task_type == 'analysis' else '研发'}会话已启动")
             on_event(
                 "dm7.capability_ready" if dm7.available else "dm7.capability_unavailable",
                 dm7.message,
@@ -187,12 +265,18 @@ class CodexRunner:
             run_input = [TextInput(prompt)]
             if dm7.available and dm7.skill_path:
                 run_input.insert(0, SkillInput(name="dm7-database:dm7-database", path=str(dm7.skill_path)))
-            handle = thread.turn(run_input, output_schema=RESULT_SCHEMA)
+            handle = thread.turn(
+                run_input,
+                output_schema=ANALYSIS_RESULT_SCHEMA if task_type == "analysis" else RESULT_SCHEMA,
+            )
             final_text: str | None = None
             for notification in handle.stream():
                 method = notification.method
                 if method in {"item/started", "item/completed", "turn/completed"}:
-                    on_event("devcore.event", self._event_summary(method, notification.payload))
+                    on_event(
+                        "devcore.event",
+                        self._event_summary(method, notification.payload, task_type=task_type),
+                    )
                 if on_live_event:
                     live_event = self._live_event(method, notification.payload)
                     if live_event:
@@ -283,7 +367,7 @@ class CodexRunner:
             return dict(payload.__dict__)
         return {}
 
-    def _event_summary(self, method: str, payload) -> str:
+    def _event_summary(self, method: str, payload, *, task_type: str = "development") -> str:
         data = self._dump(payload)
         item = data.get("item", {})
         item_type = item.get("type")
@@ -301,9 +385,11 @@ class CodexRunner:
         if item_type == "reasoning":
             return "DevCore 已完成一段分析"
         if item_type == "agentMessage":
+            if task_type == "analysis":
+                return "DevCore 正在整理分析结果" if method == "item/started" else "DevCore 已输出本轮问题分析结论"
             return "DevCore 正在整理研发结果" if method == "item/started" else "DevCore 已输出本轮研发结论"
         if item_type == "plan":
-            return "DevCore 已更新研发计划"
+            return f"DevCore 已更新{'分析' if task_type == 'analysis' else '研发'}计划"
         if item_type:
             return f"DevCore 正在处理：{item_type}" if method == "item/started" else f"DevCore 已完成：{item_type}"
         if method == "turn/completed":
@@ -388,6 +474,49 @@ class CodexRunner:
             return lines
 
         blocks: list[str] = []
+        if "root_cause" in result:
+            confidence_labels = {"high": "高", "medium": "中", "low": "低"}
+            blocks.extend(section("分析结论", result.get("summary"), empty="DevCore 已完成问题分析。"))
+            blocks.extend(["", "### 根本原因", "", str(result.get("root_cause") or "尚未形成唯一根因")])
+            blocks.extend([
+                "", "### 结论可信度", "",
+                confidence_labels.get(str(result.get("confidence")), str(result.get("confidence") or "—")),
+                "", "### 证据链", "",
+            ])
+            evidence = result.get("evidence") or []
+            for item in evidence:
+                if not isinstance(item, dict):
+                    continue
+                blocks.append(
+                    f"- [{item.get('kind') or 'evidence'}] {item.get('source') or '未标注来源'}：{item.get('detail') or '—'}"
+                )
+            if not evidence:
+                blocks.append("暂无可复核证据")
+            for title, field in (
+                ("影响范围", "affected_scope"),
+                ("建议动作", "recommended_actions"),
+                ("风险提示", "risks"),
+                ("数据库核验", "database_operations"),
+            ):
+                blocks.append("")
+                blocks.extend(section(title, result.get(field), empty="无"))
+            blocks.extend([
+                "", "### 后续判断", "",
+                f"- 是否属于数据问题：{'是' if result.get('is_data_issue') else '否'}",
+                f"- 是否建议转为自主研发：{'是' if result.get('code_change_needed') else '否'}",
+            ])
+            requests = result.get("supplement_requests") or []
+            if result.get("decision") == "needs_input" or requests:
+                blocks.extend(["", "### 待补充信息", ""])
+                for index, item in enumerate(requests, 1):
+                    if not isinstance(item, dict):
+                        continue
+                    blocks.append(f"- {index}. {item.get('question') or '请补充关键信息'}")
+                    if item.get("reason"):
+                        blocks.append(f"  原因：{item['reason']}")
+                    if item.get("suggested_answer"):
+                        blocks.append(f"  建议：{item['suggested_answer']}")
+            return "\n".join(blocks).strip()
         for title, field, empty in (
             ("研发结论", "summary", "DevCore 已完成本轮研发。"),
             ("变更文件", "changed_files", "无代码文件变更"),

@@ -60,6 +60,17 @@ STATUS = {
     "cancelled": "已取消",
 }
 
+ANALYSIS_STATUS = {
+    **STATUS,
+    "queued": "等待分析",
+    "validating": "问题准入校验",
+    "developing": "DevCore 分析中",
+    "delivering": "生成分析报告",
+    "delivered": "分析完成",
+    "waiting_input": "待补充分析信息",
+    "failed": "分析失败",
+}
+
 
 class AutoDevConsole:
     def __init__(self, root: tk.Tk) -> None:
@@ -526,9 +537,10 @@ class AutoDevConsole:
         self.detail_title.configure(text=task.get("title") or "正在读取需求…")
         self.detail_activity.configure(
             text=self._public_engine_text(
-                task.get("current_activity") or STATUS.get(task.get("status"), task.get("status", ""))
+                task.get("current_activity") or self._status_label(task)
             )
         )
+        self.tab_buttons["session"].configure(text="分析会话" if task.get("task_type") == "analysis" else "研发会话")
         self._set_text("session", "仅查看期间传输 · 正在连接 DevCore 实时会话…", "status")
         self.last_live_group = ""
         self.last_live_kind = ""
@@ -562,7 +574,8 @@ class AutoDevConsole:
                 if int(detail.get("joint_project_count") or 1) > 1 else ""
             ),
             f"发起人        {detail.get('requester_name', '—')}",
-            f"状态          {STATUS.get(detail.get('status'), detail.get('status', '—'))}",
+            f"任务类型      {'问题分析' if detail.get('task_type') == 'analysis' else '自主研发'}",
+            f"状态          {self._status_label(detail)}",
             f"分支          {detail.get('branch_name') or '—'}",
             f"PR            {detail.get('pr_url') or '—'}",
             f"DevCore 会话  {'已建立' if detail.get('codex_thread_id') else '执行中/尚未建立'}",
@@ -586,7 +599,25 @@ class AutoDevConsole:
                 f"      {step.get('message') or ''}",
             ))
         if detail.get("result_summary"):
-            lines.extend(("", "研发结论", str(detail["result_summary"])))
+            lines.extend(("", "分析结论" if detail.get("task_type") == "analysis" else "研发结论", str(detail["result_summary"])))
+        analysis = detail.get("analysis_result") or {}
+        if detail.get("task_type") == "analysis" and analysis:
+            lines.extend((
+                "",
+                "根本原因",
+                str(analysis.get("root_cause") or "尚未形成唯一根因"),
+                "",
+                f"可信度        {analysis.get('confidence') or '—'}",
+                f"数据问题      {'是' if analysis.get('is_data_issue') else '否'}",
+                f"建议转研发    {'是' if analysis.get('code_change_needed') else '否'}",
+                "",
+                "证据链",
+            ))
+            for index, item in enumerate(analysis.get("evidence") or [], 1):
+                lines.append(f"  {index}. [{item.get('kind') or 'evidence'}] {item.get('source') or '未标注来源'}")
+                lines.append(f"      {item.get('detail') or '—'}")
+            lines.extend(("", "建议动作"))
+            lines.extend(f"  - {item}" for item in analysis.get("recommended_actions") or ["无"])
         if detail.get("status") == "waiting_input":
             lines.extend(("", "待补充信息"))
             for index, item in enumerate(detail.get("supplement_requests") or [], 1):
@@ -651,7 +682,7 @@ class AutoDevConsole:
                 if int(task.get("joint_project_count") or 1) > 1 else ""
             )
             work = f"#{task.get('work_item_id')}  {task.get('title') or '正在读取需求…'}\n{task.get('project_name') or ''}{joint}"
-            status = STATUS.get(task.get("status"), task.get("status", ""))
+            status = self._status_label(task)
             self.task_tree.insert(
                 "", "end", iid=task["id"],
                 values=(work, task.get("requester_name") or "—", self._format_datetime(task.get("created_at")), status),
@@ -661,6 +692,11 @@ class AutoDevConsole:
         elif tasks:
             self.task_tree.selection_set(tasks[0]["id"])
             self.task_tree.event_generate("<<TreeviewSelect>>")
+
+    @staticmethod
+    def _status_label(task: dict[str, Any]) -> str:
+        labels = ANALYSIS_STATUS if task.get("task_type") == "analysis" else STATUS
+        return labels.get(task.get("status"), task.get("status", "—"))
 
     def _tick_watch(self) -> None:
         if self.closing:
@@ -686,13 +722,14 @@ class AutoDevConsole:
             group = event.get("group") or f"seq-{event.get('seq')}"
             delta = bool(event.get("delta"))
             if not delta or group != self.last_live_group or kind != self.last_live_kind:
+                analysis = self.tasks.get(self.selected_id or "", {}).get("task_type") == "analysis"
                 label = {
-                    "assistant": "DEVCORE 研发结论",
+                    "assistant": "DEVCORE 问题分析结论" if analysis else "DEVCORE 研发结论",
                     "reasoning": "分析摘要",
                     "command": "终端执行",
                     "file": "文件变更",
-                    "plan": "研发计划",
-                }.get(kind, "研发过程")
+                    "plan": "分析计划" if analysis else "研发计划",
+                }.get(kind, "分析过程" if analysis else "研发过程")
                 self._append_text("session", f"\n{label}  {self._format_time(event.get('at'))}\n", "label")
             content = str(event.get("content") or "")
             if event.get("format") == "markdown" and not delta:
