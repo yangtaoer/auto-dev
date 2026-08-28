@@ -492,7 +492,7 @@ class Mailer:
             "cancelled": "分析任务已取消" if analysis_task else "研发任务已取消",
             "rejected": "问题准入驳回" if analysis_task else "需求准入驳回",
         }
-        terminal_colors = {"failed": "#76618f", "cancelled": "#746ca4", "rejected": "#6178a8"}
+        terminal_colors = {"failed": "#c63f32", "cancelled": "#625c52", "rejected": "#d99518"}
         waiting_input = action_required and detail.get("status") == RunStatus.WAITING_INPUT.value
         status_label = terminal_labels.get(terminal_status) or (
             ("等待补充分析信息" if analysis_task else "等待补充研发信息")
@@ -500,7 +500,7 @@ class Mailer:
             else ("等待代码合并" if action_required else ("问题分析完成" if analysis_task else "研发交付完成"))
         )
         status_color = terminal_colors.get(terminal_status) or (
-            "#8b74bd" if waiting_input else ("#7769ad" if action_required else "#4f7fae")
+            "#d99518" if waiting_input else ("#246b5a" if action_required else "#e9572b")
         )
         terminal = terminal_status in terminal_labels
 
@@ -583,33 +583,33 @@ class Mailer:
             )
             if item.get("kind") == "menu_link":
                 artifact_lines.append(
-                    f"""<tr><td style="padding:0 0 7px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d9deea;background:#f7f8fb"><tr><td width="42" align="center" style="padding:10px 6px;color:#6559a1;font:700 16px Consolas,'Courier New',monospace">↗</td><td style="padding:9px 12px"><div style="font-size:13px;font-weight:700;color:#20263a;word-break:break-all">{safe_text(item.get('name'))}</div><div style="margin-top:2px;color:#737b8d;font-size:10px;letter-spacing:.04em">{safe_text(kind)}</div></td></tr></table></td></tr>"""
+                    f"""<tr><td style="padding:0 0 7px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d3ccbf;background:#fbf8f0"><tr><td width="42" align="center" style="padding:10px 6px;color:#d99518;font:700 16px Consolas,'Courier New',monospace">↗</td><td style="padding:9px 12px"><div style="font-size:13px;font-weight:700;color:#171813;word-break:break-all">{safe_text(item.get('name'))}</div><div style="margin-top:2px;color:#625c52;font-size:10px;letter-spacing:.04em">{safe_text(kind)}</div></td></tr></table></td></tr>"""
                 )
                 continue
             artifact_lines.append(
                 f"""<tr><td style="padding:0 0 7px 0">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d9deea;background:#f7f8fb">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d3ccbf;background:#fbf8f0">
                   <tr>
-                    <td width="42" align="center" style="padding:10px 6px;color:#4f7fae;font:700 16px Consolas,'Courier New',monospace">↘</td>
+                    <td width="42" align="center" style="padding:10px 6px;color:#246b5a;font:700 16px Consolas,'Courier New',monospace">↘</td>
                     <td style="padding:9px 7px">
-                      <div style="font-size:13px;font-weight:700;color:#20263a;word-break:break-all">{safe_text(item.get('name'))}</div>
-                      <div style="margin-top:2px;color:#737b8d;font-size:10px;letter-spacing:.04em">{safe_text(kind)}</div>
+                      <div style="font-size:13px;font-weight:700;color:#171813;word-break:break-all">{safe_text(item.get('name'))}</div>
+                      <div style="margin-top:2px;color:#625c52;font-size:10px;letter-spacing:.04em">{safe_text(kind)}</div>
                     </td>
                     <td width="94" align="right" style="padding:9px 12px 9px 7px">
-                      <a href="{html.escape(artifact_url, quote=True)}" style="display:inline-block;padding:7px 10px;background:#172136;color:#d7e8f7;text-decoration:none;font-size:11px;font-weight:700;white-space:nowrap">{action_label}</a>
+                      <a href="{html.escape(artifact_url, quote=True)}" style="display:inline-block;padding:7px 10px;background:#171813;color:#fffdf7;text-decoration:none;font-size:11px;font-weight:700;white-space:nowrap">{action_label}</a>
                     </td>
                   </tr>
                 </table></td></tr>"""
             )
-        artifacts = "".join(artifact_lines) or """<tr><td style="padding:11px;border:1px dashed #cfd5e2;color:#727b8e;text-align:center;font-size:12px">当前阶段暂无可下载产物</td></tr>"""
+        artifacts = "".join(artifact_lines) or """<tr><td style="padding:11px;border:1px dashed #bdb6a8;color:#625c52;text-align:center;font-size:12px">当前阶段暂无可下载产物</td></tr>"""
         expiry_note = (
-            f"<span style=\"color:#66598f;font-size:10px;font-weight:400;letter-spacing:0\">OSS 下载链接 {settings.oss_retention_days} 天内有效</span>"
+            f"<span style=\"color:#a3381f;font-size:10px;font-weight:400;letter-spacing:0\">OSS 下载链接 {settings.oss_retention_days} 天内有效</span>"
             if any(item.get("external_url") and "aliyuncs.com" in item["external_url"] for item in deliverable_items)
             else ""
         )
         pr_url = str(detail.get("pr_url") or "")
         pr_value = (
-            f"<a href=\"{html.escape(pr_url, quote=True)}\" style=\"color:#496f9b;text-decoration:underline;word-break:break-all\">{html.escape(pr_url)}</a>"
+            f"<a href=\"{html.escape(pr_url, quote=True)}\" style=\"color:#246b5a;text-decoration:underline;word-break:break-all\">{html.escape(pr_url)}</a>"
             if pr_url else "无需 PR"
         )
         console_url = html.escape(settings.public_base_url, quote=True)
@@ -623,17 +623,17 @@ class Mailer:
                 reason = safe_text(item.get("reason"), "继续可靠研发所需")
                 suggestion = safe_text(item.get("suggested_answer"), "请按实际业务口径说明")
                 request_rows.append(
-                    f"""<tr><td style="padding:10px 12px;border-bottom:1px solid #ddd8eb">
-                    <div style="color:#2a2540;font-size:13px;font-weight:700">{index}. {safe_text(item.get('question'))}</div>
-                    <div style="margin-top:4px;color:#6e6686;font-size:11px;line-height:1.55">原因：{reason}</div>
-                    <div style="margin-top:2px;color:#7766a2;font-size:11px;line-height:1.55">填写提示：{suggestion} · {required}</div>
+                    f"""<tr><td style="padding:10px 12px;border-bottom:1px solid #d6cbb8">
+                    <div style="color:#171813;font-size:13px;font-weight:700">{index}. {safe_text(item.get('question'))}</div>
+                    <div style="margin-top:4px;color:#625c52;font-size:11px;line-height:1.55">原因：{reason}</div>
+                    <div style="margin-top:2px;color:#8c5d16;font-size:11px;line-height:1.55">填写提示：{suggestion} · {required}</div>
                     </td></tr>"""
                 )
-            questions = "".join(request_rows) or """<tr><td style="padding:10px 12px;color:#6e6686;font-size:12px">请登录平台查看待补充事项。</td></tr>"""
-            action = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;background:#f4f1f9;border-left:4px solid #8b74bd">
-              <tr><td style="padding:12px 13px 7px;color:#554c70;font-size:12px;line-height:1.55"><b style="display:block;color:#28223d;font-size:14px">需要补充关键信息后继续研发</b>DevCore 已完成当前分析，任务已安全暂停，不计入本机并发占用。</td></tr>
-              <tr><td style="padding:0 13px 11px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #ddd8eb;background:#ffffff">{questions}</table></td></tr>
-              <tr><td style="padding:0 13px 13px"><a href="{console_url}" style="display:inline-block;padding:8px 12px;background:#65559a;color:#ffffff;text-decoration:none;font-size:12px;font-weight:700">登录 AutoDev 补充并继续 →</a></td></tr>
+            questions = "".join(request_rows) or """<tr><td style="padding:10px 12px;color:#625c52;font-size:12px">请登录平台查看待补充事项。</td></tr>"""
+            action = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;background:#fff4d8;border-left:4px solid #d99518">
+              <tr><td style="padding:12px 13px 7px;color:#625c52;font-size:12px;line-height:1.55"><b style="display:block;color:#171813;font-size:14px">需要补充关键信息后继续研发</b>DevCore 已完成当前分析，任务已安全暂停，不计入本机并发占用。</td></tr>
+              <tr><td style="padding:0 13px 11px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d6cbb8;background:#fffdf7">{questions}</table></td></tr>
+              <tr><td style="padding:0 13px 13px"><a href="{console_url}" style="display:inline-block;padding:8px 12px;background:#171813;color:#ffffff;text-decoration:none;font-size:12px;font-weight:700">登录 AutoDev 补充并继续 →</a></td></tr>
             </table>"""
         elif action_required:
             review_items = [
@@ -648,16 +648,16 @@ class Mailer:
             if not review_items and pr_url:
                 review_items = [{"repository": "主仓库", "pr_id": detail.get("pr_id"), "pr_url": pr_url}]
             review_links = "".join(
-                f"<a href=\"{html.escape(str(item['pr_url']), quote=True)}\" style=\"display:inline-block;margin:7px 7px 0 0;padding:7px 10px;background:#6f63a4;color:#ffffff;text-decoration:none;font-weight:700;font-size:11px;white-space:nowrap\">{safe_text(item['repository'])} · PR #{safe_text(item['pr_id'])} →</a>"
+                f"<a href=\"{html.escape(str(item['pr_url']), quote=True)}\" style=\"display:inline-block;margin:7px 7px 0 0;padding:7px 10px;background:#246b5a;color:#ffffff;text-decoration:none;font-weight:700;font-size:11px;white-space:nowrap\">{safe_text(item['repository'])} · PR #{safe_text(item['pr_id'])} →</a>"
                 for item in review_items
             )
-            action = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;background:#f1eef8;border-left:4px solid #7769ad">
-              <tr><td style="padding:11px 13px;color:#564e72;font-size:12px;line-height:1.55"><b style="display:block;color:#27223d;font-size:13px">需要项目经理协同处理：</b> 请逐个联系有权限的同事审核并合并以下 PR；AutoDev 将持续检测。<div>{review_links}</div></td></tr>
+            action = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;background:#e4efe9;border-left:4px solid #246b5a">
+              <tr><td style="padding:11px 13px;color:#31594f;font-size:12px;line-height:1.55"><b style="display:block;color:#171813;font-size:13px">需要项目经理协同处理：</b> 请逐个联系有权限的同事审核并合并以下 PR；AutoDev 将持续检测。<div>{review_links}</div></td></tr>
             </table>"""
         elif terminal:
             reason = safe_text(detail.get("error_message"), "任务已终止，暂无更多错误说明。", limit=3000)
-            action = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;background:#f2eef7;border-left:4px solid {status_color}">
-              <tr><td style="padding:11px 13px;color:#554a68;font-size:12px;line-height:1.65"><b style="display:block;margin-bottom:3px;color:#2c263b;font-size:13px">终止原因 / TERMINATION REASON</b>{reason}</td></tr>
+            action = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;background:#f4e3de;border-left:4px solid {status_color}">
+              <tr><td style="padding:11px 13px;color:#6c4339;font-size:12px;line-height:1.65"><b style="display:block;margin-bottom:3px;color:#171813;font-size:13px">终止原因 / TERMINATION REASON</b>{reason}</td></tr>
             </table>"""
 
         completed_text = format_datetime(detail.get("completed_at"), "进行中")
@@ -679,67 +679,67 @@ class Mailer:
         if not action_required and not analysis_task:
             if detail.get("joint_children"):
                 child_rows = "".join(
-                    f"""<tr><td style="padding:8px 10px;border-bottom:1px solid #dde2ec;color:#22283b;font-size:11px;font-weight:700">{safe_text(child.get('project_name'))}</td><td style="padding:8px 10px;border-bottom:1px solid #dde2ec;color:#59627a;font-size:11px">{safe_text(STATUS_LABELS.get(RunStatus(child.get('status')), child.get('status')))}</td><td style="padding:8px 10px;border-bottom:1px solid #dde2ec;color:#59627a;font-size:11px">{len([state for state in child.get('repository_states', []) if state.get('pr_id')])} 个 PR</td></tr>"""
+                    f"""<tr><td style="padding:8px 10px;border-bottom:1px solid #d3ccbf;color:#171813;font-size:11px;font-weight:700">{safe_text(child.get('project_name'))}</td><td style="padding:8px 10px;border-bottom:1px solid #d3ccbf;color:#625c52;font-size:11px">{safe_text(STATUS_LABELS.get(RunStatus(child.get('status')), child.get('status')))}</td><td style="padding:8px 10px;border-bottom:1px solid #d3ccbf;color:#625c52;font-size:11px">{len([state for state in child.get('repository_states', []) if state.get('pr_id')])} 个 PR</td></tr>"""
                     for child in detail["joint_children"]
                 )
-                code_section = f"""<div style="margin-bottom:5px;color:#6b7280;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">联合项目 / JOINT DELIVERY</div>
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;border:1px solid #dde2ec;background:#f8f9fc">{child_rows}</table>"""
+                code_section = f"""<div style="margin-bottom:5px;color:#625c52;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">联合项目 / JOINT DELIVERY</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;border:1px solid #d3ccbf;background:#fbf8f0">{child_rows}</table>"""
             else:
-                code_section = f"""<div style="margin-bottom:5px;color:#6b7280;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">代码信息 / CODE DELIVERY</div>
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;border:1px solid #dde2ec;background:#f8f9fc">
+                code_section = f"""<div style="margin-bottom:5px;color:#625c52;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">代码信息 / CODE DELIVERY</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;border:1px solid #d3ccbf;background:#fbf8f0">
         <tr>
-          <td width="38%" valign="top" style="padding:9px 11px;border-right:1px solid #dde2ec"><div style="color:#747b8d;font-size:9px">分支</div><div style="margin-top:3px;color:#22283b;font:11px Consolas,'Courier New',monospace;word-break:break-all">{safe_text(detail.get('branch_name'))}</div></td>
-          <td width="38%" valign="top" style="padding:9px 11px;border-right:1px solid #dde2ec"><div style="color:#747b8d;font-size:9px">提交</div><div style="margin-top:3px;color:#22283b;font:11px Consolas,'Courier New',monospace;word-break:break-all">{safe_text(detail.get('commit_hash'))}</div></td>
-          <td width="24%" valign="top" style="padding:9px 11px"><div style="color:#747b8d;font-size:9px">PR</div><div style="margin-top:3px;color:#22283b;font-size:11px;word-break:break-all">{pr_value}</div></td>
+          <td width="38%" valign="top" style="padding:9px 11px;border-right:1px solid #d3ccbf"><div style="color:#6c655a;font-size:9px">分支</div><div style="margin-top:3px;color:#171813;font:11px Consolas,'Courier New',monospace;word-break:break-all">{safe_text(detail.get('branch_name'))}</div></td>
+          <td width="38%" valign="top" style="padding:9px 11px;border-right:1px solid #d3ccbf"><div style="color:#6c655a;font-size:9px">提交</div><div style="margin-top:3px;color:#171813;font:11px Consolas,'Courier New',monospace;word-break:break-all">{safe_text(detail.get('commit_hash'))}</div></td>
+          <td width="24%" valign="top" style="padding:9px 11px"><div style="color:#6c655a;font-size:9px">PR</div><div style="margin-top:3px;color:#171813;font-size:11px;word-break:break-all">{pr_value}</div></td>
         </tr>
       </table>"""
         return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{safe_text(status_label)}</title></head>
-<body style="margin:0;padding:0;background:#eef1f7;color:#171b2e;font-family:'Microsoft YaHei UI','Microsoft YaHei',sans-serif">
+<body style="margin:0;padding:0;background:#e8e3d8;color:#171813;font-family:'Microsoft YaHei UI','Microsoft YaHei',sans-serif">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0">TFS #{detail['work_item_id']} · {safe_text(detail.get('title'))} · {status_label}</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f7"><tr><td align="center" style="padding:16px 10px">
-  <table role="presentation" width="860" cellpadding="0" cellspacing="0" style="width:100%;max-width:860px;background:#ffffff;border:1px solid #d9deea;box-shadow:0 10px 35px rgba(24,35,58,.09)">
-    <tr><td style="padding:18px 24px;background:#0b1020;border-bottom:4px solid {status_color}">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#e8e3d8"><tr><td align="center" style="padding:16px 10px">
+  <table role="presentation" width="860" cellpadding="0" cellspacing="0" style="width:100%;max-width:860px;background:#fffdf7;border:1px solid #bdb6a8;box-shadow:9px 9px 0 rgba(23,24,19,.12)">
+    <tr><td style="padding:16px 24px;background:#171813;border-bottom:4px solid {status_color}">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-        <td width="58" valign="top"><img src="cid:{BRAND_MARK_CID}" width="48" height="48" alt="AutoDev" style="display:block;width:48px;height:48px;border:0;object-fit:contain"></td>
-        <td valign="top"><div style="color:#7fb0df;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.16em">AutoDev · {signal_label}</div><div style="margin-top:5px;color:#f0f4ff;font-size:20px;font-weight:700">{status_label}</div></td>
+        <td width="180" valign="middle"><img src="cid:{BRAND_MARK_CID}" width="160" height="64" alt="AutoDev" style="display:block;width:160px;height:64px;border:0;object-fit:contain"></td>
+        <td valign="middle"><div style="color:#d99518;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.16em">AutoDev · {signal_label}</div><div style="margin-top:5px;color:#fffdf7;font-size:20px;font-weight:700">{status_label}</div></td>
         <td width="110" align="right" valign="top"><span style="display:inline-block;padding:6px 9px;border:1px solid {status_color};color:{status_color};font:700 10px Consolas,'Courier New',monospace">TFS #{detail['work_item_id']}</span></td>
       </tr></table>
     </td></tr>
     <tr><td style="padding:20px 26px 18px">
-      <div style="color:#6b7280;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.13em">需求 / REQUIREMENT</div>
-      <h1 style="margin:4px 0 14px;color:#171b2e;font-size:22px;line-height:1.35">{safe_text(detail.get('title'))}</h1>
+      <div style="color:#625c52;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.13em">需求 / REQUIREMENT</div>
+      <h1 style="margin:4px 0 14px;color:#171813;font-size:22px;line-height:1.35">{safe_text(detail.get('title'))}</h1>
       {action}
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;border:1px solid #dde2ec;background:#f6f7fa">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;border:1px solid #d3ccbf;background:#f3f0e8">
         <tr>
-          <td width="25%" style="padding:10px 12px;border-right:1px solid #dde2ec"><div style="color:#737b8d;font-size:9px">项目</div><div style="margin-top:3px;color:#22283b;font-size:12px;font-weight:700">{safe_text(detail.get('project_name'))}</div></td>
-          <td width="25%" style="padding:10px 12px;border-right:1px solid #dde2ec"><div style="color:#737b8d;font-size:9px">交付方式</div><div style="margin-top:3px;color:#22283b;font-size:12px;font-weight:700">{safe_text(mode)}</div></td>
-          <td width="25%" style="padding:10px 12px;border-right:1px solid #dde2ec"><div style="color:#737b8d;font-size:9px">提交人</div><div style="margin-top:3px;color:#22283b;font-size:12px;font-weight:700">{safe_text(detail.get('requester_name'))}</div></td>
-          <td width="25%" style="padding:10px 12px"><div style="color:#737b8d;font-size:9px">{duration_label}</div><div style="margin-top:3px;color:#4f7fae;font-size:12px;font-weight:700">{safe_text(duration_text)}</div></td>
+          <td width="25%" style="padding:10px 12px;border-right:1px solid #d3ccbf"><div style="color:#6c655a;font-size:9px">项目</div><div style="margin-top:3px;color:#171813;font-size:12px;font-weight:700">{safe_text(detail.get('project_name'))}</div></td>
+          <td width="25%" style="padding:10px 12px;border-right:1px solid #d3ccbf"><div style="color:#6c655a;font-size:9px">交付方式</div><div style="margin-top:3px;color:#171813;font-size:12px;font-weight:700">{safe_text(mode)}</div></td>
+          <td width="25%" style="padding:10px 12px;border-right:1px solid #d3ccbf"><div style="color:#6c655a;font-size:9px">提交人</div><div style="margin-top:3px;color:#171813;font-size:12px;font-weight:700">{safe_text(detail.get('requester_name'))}</div></td>
+          <td width="25%" style="padding:10px 12px"><div style="color:#6c655a;font-size:9px">{duration_label}</div><div style="margin-top:3px;color:#246b5a;font-size:12px;font-weight:700">{safe_text(duration_text)}</div></td>
         </tr>
       </table>
 
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px"><tr>
-        <td width="50%" valign="top" style="padding-right:6px"><div style="margin-bottom:5px;color:#6b7280;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">需求说明 / BRIEF</div><div style="padding:10px 12px;background:#f6f7fa;border-left:3px solid #547fa9;color:#34394b;font-size:12px;line-height:1.6">{safe_text(detail.get('requirement_summary'), limit=2000)}</div></td>
-        <td width="50%" valign="top" style="padding-left:6px"><div style="margin-bottom:5px;color:#6b7280;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">{notes_label}</div><div style="padding:10px 12px;background:#f6f7fa;border-left:3px solid {status_color};color:#34394b;font-size:12px;line-height:1.6">{safe_text(notes_value)}</div></td>
+        <td width="50%" valign="top" style="padding-right:6px"><div style="margin-bottom:5px;color:#625c52;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">需求说明 / BRIEF</div><div style="padding:10px 12px;background:#f3f0e8;border-left:3px solid #246b5a;color:#34342e;font-size:12px;line-height:1.6">{safe_text(detail.get('requirement_summary'), limit=2000)}</div></td>
+        <td width="50%" valign="top" style="padding-left:6px"><div style="margin-bottom:5px;color:#625c52;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">{notes_label}</div><div style="padding:10px 12px;background:#f3f0e8;border-left:3px solid {status_color};color:#34342e;font-size:12px;line-height:1.6">{safe_text(notes_value)}</div></td>
       </tr></table>
 
       {code_section}
 
-      <div style="margin-bottom:5px;color:#6b7280;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">时间记录 / TIMELINE</div>
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;background:#11182a;color:#e8ecf5">
+      <div style="margin-bottom:5px;color:#625c52;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">时间记录 / TIMELINE</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;background:#171813;color:#f3f0e8">
         <tr>
-          <td width="33.33%" style="padding:10px 12px;border-right:1px solid #2e3952"><div style="color:#8790a6;font-size:9px">提交时间</div><b style="display:block;margin-top:3px;font-size:11px;white-space:nowrap">{format_datetime(detail.get('created_at'))}</b></td>
-          <td width="33.33%" style="padding:10px 12px;border-right:1px solid #2e3952"><div style="color:#8790a6;font-size:9px">开始时间</div><b style="display:block;margin-top:3px;font-size:11px;white-space:nowrap">{format_datetime(started_at)}</b></td>
-          <td width="33.33%" style="padding:10px 12px"><div style="color:#8790a6;font-size:9px">完成时间</div><b style="display:block;margin-top:3px;font-size:11px;color:{status_color};white-space:nowrap">{completed_text}</b></td>
+          <td width="33.33%" style="padding:10px 12px;border-right:1px solid #4f5049"><div style="color:#bcb6aa;font-size:9px">提交时间</div><b style="display:block;margin-top:3px;font-size:11px;white-space:nowrap">{format_datetime(detail.get('created_at'))}</b></td>
+          <td width="33.33%" style="padding:10px 12px;border-right:1px solid #4f5049"><div style="color:#bcb6aa;font-size:9px">开始时间</div><b style="display:block;margin-top:3px;font-size:11px;white-space:nowrap">{format_datetime(started_at)}</b></td>
+          <td width="33.33%" style="padding:10px 12px"><div style="color:#bcb6aa;font-size:9px">完成时间</div><b style="display:block;margin-top:3px;font-size:11px;color:{status_color};white-space:nowrap">{completed_text}</b></td>
         </tr>
       </table>
 
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:5px"><tr><td style="color:#6b7280;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">{artifact_heading}</td><td align="right">{expiry_note}</td></tr></table>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:5px"><tr><td style="color:#625c52;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">{artifact_heading}</td><td align="right">{expiry_note}</td></tr></table>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">{artifacts}</table>
     </td></tr>
-    <tr><td style="padding:12px 26px;background:#f3f4f8;border-top:1px solid #dce1eb;color:#737b8c;font-size:10px;line-height:1.5">
-      此邮件由 <b style="color:#6559a1">AutoDev · 自主研发交付</b> 自动发送，研发与交付操作均保留审计记录。
-      <a href="{console_url}" style="margin-left:10px;color:#496f9b;text-decoration:none;white-space:nowrap">打开研发控制台 →</a>
+    <tr><td style="padding:12px 26px;background:#eee9df;border-top:1px solid #d3ccbf;color:#625c52;font-size:10px;line-height:1.5">
+      此邮件由 <b style="color:#e9572b">AutoDev · 自主研发交付</b> 自动发送，研发与交付操作均保留审计记录。
+      <a href="{console_url}" style="margin-left:10px;color:#246b5a;text-decoration:none;white-space:nowrap">打开研发控制台 →</a>
     </td></tr>
   </table>
 </td></tr></table></body></html>"""

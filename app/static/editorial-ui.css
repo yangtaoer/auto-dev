@@ -91,7 +91,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   justify-items: start;
   align-content: start;
   gap: 8px;
-  min-height: 114px;
+  min-height: 124px;
   margin: 0 0 24px;
   padding: 5px 8px 25px;
   border-bottom: 1px solid rgba(243, 240, 232, .28);
@@ -99,12 +99,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .logo::after { display: none; }
 .sidebar-brand-mark {
-  width: 126px;
-  height: 50px;
-  margin-left: -7px;
+  width: 158px;
+  height: 66px;
+  margin-left: -5px;
   object-fit: contain;
   object-position: left center;
-  filter: grayscale(1) brightness(4.7) contrast(1.5);
+  filter: none;
   animation: none;
 }
 
@@ -692,31 +692,34 @@ select { color-scheme: light; }
   letter-spacing: .14em;
 }
 .login-brand::after {
-  content: "A";
-  right: -18px;
-  bottom: -88px;
+  content: "∞";
+  right: -92px;
+  bottom: -112px;
   width: auto;
   height: auto;
   color: rgba(23, 24, 19, .08);
-  font: 900 430px/.8 Georgia, serif;
-  transform: none;
+  font: 400 520px/.8 "Segoe UI Symbol", Georgia, serif;
+  transform: rotate(-7deg);
 }
 .login-logo-lockup {
   display: grid;
-  grid-template-columns: 150px 1fr;
-  gap: 18px;
-  padding-bottom: 26px;
-  border-bottom: 2px solid var(--editorial-ink);
+  grid-template-columns: 292px 1fr;
+  align-items: center;
+  gap: 24px;
+  padding: 15px 20px;
+  border: 0;
+  background: var(--editorial-ink);
+  box-shadow: 8px 8px 0 rgba(23, 24, 19, .18);
 }
 .login-logo-lockup::after { display: none; }
-.login-logo-symbol { width: 150px; height: 68px; filter: grayscale(1) brightness(.18) contrast(2); }
+.login-logo-symbol { width: 292px; height: 128px; filter: none; }
 .login-logo-symbol img { width: 100%; height: 100%; object-fit: contain; }
 .login-logo-lockup strong {
-  color: var(--editorial-ink);
-  font: 900 clamp(42px, 4.2vw, 66px)/1 Georgia, serif;
+  color: var(--editorial-white);
+  font: 900 clamp(36px, 3.5vw, 55px)/1 Georgia, serif;
   letter-spacing: -.07em;
 }
-.login-logo-lockup strong span { color: var(--editorial-ink); }
+.login-logo-lockup strong span { color: var(--amber); }
 .login-edition {
   position: relative;
   z-index: 2;
@@ -775,6 +778,8 @@ select { color-scheme: light; }
 .demo-credential code { color: var(--editorial-orange-ink); background: #eee9df; }
 .mobile-brand strong { color: var(--editorial-ink); }
 .mobile-brand em { color: var(--editorial-orange); }
+.mobile-brand > span { filter: none; }
+.mobile-brand img { object-fit: contain; }
 
 @keyframes editorial-blink { 0%, 72% { opacity: 1; } 73%, 85% { opacity: .25; } 86%, 100% { opacity: 1; } }
 @keyframes editorial-scan { 0%, 100% { opacity: .2; transform: scaleX(.12); transform-origin: left; } 50% { opacity: 1; transform: scaleX(1); transform-origin: left; } }
@@ -811,6 +816,9 @@ select { color-scheme: light; }
   .login-body { padding: 15px; overflow: auto; }
   .login-shell { grid-template-columns: 1fr; min-height: auto; box-shadow: 7px 7px 0 var(--editorial-ink); }
   .login-brand { min-height: 500px; padding: 34px; }
+  .login-logo-lockup { grid-template-columns: 220px 1fr; gap: 18px; padding: 12px 16px; }
+  .login-logo-symbol { width: 220px; height: 96px; }
+  .login-logo-lockup strong { font-size: 44px; }
   .login-panel { border-left: 0; border-top: 2px solid var(--editorial-ink); padding: 50px 34px; }
   .login-brand h1 { font-size: 66px; }
   .detail-drawer { width: min(720px, 96vw); }
@@ -826,9 +834,9 @@ select { color-scheme: light; }
   .modal { padding: 25px 20px; }
   .modal::before { margin: -25px -20px 20px; }
   .login-brand { min-height: 430px; }
-  .login-logo-lockup { grid-template-columns: 100px 1fr; }
-  .login-logo-symbol { width: 100px; height: 52px; }
-  .login-logo-lockup strong { font-size: 42px; }
+  .login-logo-lockup { grid-template-columns: 145px 1fr; gap: 12px; padding: 10px 12px; }
+  .login-logo-symbol { width: 145px; height: 64px; }
+  .login-logo-lockup strong { font-size: 34px; }
   .login-brand h1 { font-size: 54px; }
   .delivery-loop { margin-top: 45px; }
 }

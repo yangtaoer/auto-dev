@@ -2,21 +2,17 @@
 
 ## 权威源图
 
-`autodev-logo-source.png` 是用户确认的最终 Logo，原文件已包含透明通道。生产资源由 `scripts/build-brand-assets.py` 直接从该源图裁切和缩放，确保图形、渐变、字形与大小写不发生变化。
+`autodev-logo-source.png` 是用户在 2026-08-28 确认的最终品牌标志：由左右代码括号与中央多边形拼接的无限环组成，主色为橙色，辅以琥珀金和深青色。
 
-## ImageGen 透明背景验证提示词
+源图自带纯色 `#151515` 背景。`scripts/build-brand-assets.py` 会以源图左上角为底色样本，执行可复现的去底色和预乘 Alpha 缩放，然后统一生成：
 
-```text
-Use case: background-extraction
-Asset type: master brand logo for web, desktop client, email, favicon derivation
-Primary request: Reproduce the supplied AutoDev logo exactly, changing only its background to a perfectly flat solid #00ff00 chroma-key background for later removal.
-Input images: Image 1 is the authoritative edit target and must be preserved exactly.
-Subject: the purple-to-blue infinity loop formed from code angle brackets, with the exact wordmark "AutoDev" below it.
-Style/medium: crisp polished digital logo, preserve the existing bevels, gradients, proportions, letterforms, and spacing.
-Composition/framing: centered, generous even padding, no cropping.
-Text (verbatim): "AutoDev"
-Constraints: change only the background; keep the logo symbol and exact AutoDev wordmark unchanged; background must be one uniform #00ff00 with no shadows, gradients, texture, reflections, floor plane, or lighting variation; no #00ff00 inside the logo; no cast shadow; no watermark; no extra text.
-Avoid: redesigning the mark, changing colors, changing typography, changing capitalization, adding any tagline or decorative element.
-```
+- 云端侧边栏与登录页标志；
+- 邮件内嵌标志；
+- 本机执行器控制台标志；
+- 浏览器 favicon、PWA 和 Apple Touch 图标。
 
-ImageGen 输出只用于验证透明化方案。检查后发现权威源图已经具有干净的透明通道，因此没有采用会造成字形或渐变漂移的重绘结果。
+浏览器和应用图标使用中央无限环，界面中的横向品牌位使用包含左右代码括号的完整标志。所有生产资源必须由该脚本生成，不手工维护多个版本。
+
+## ImageGen 尝试记录
+
+曾使用 `background-extraction` 两次要求 ImageGen 仅移除深色背景，但输出文件均把透明棋盘格烘焙为 RGB 像素，没有真实 Alpha 通道，因此未采用。生产资源以用户确认的原图为唯一图形来源，避免重新绘制造成多边形边界和颜色漂移。

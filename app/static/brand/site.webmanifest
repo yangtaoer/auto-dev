@@ -3,8 +3,8 @@
   "short_name": "AutoDev",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#08110e",
-  "theme_color": "#070b1c",
+  "background_color": "#171813",
+  "theme_color": "#171813",
   "icons": [
     {"src": "/static/brand/autodev-app-icon.png", "sizes": "512x512", "type": "image/png"},
     {"src": "/static/brand/apple-touch-icon.png", "sizes": "180x180", "type": "image/png"}

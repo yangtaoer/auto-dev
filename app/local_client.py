@@ -153,12 +153,12 @@ class AutoDevConsole:
             bg=DEEP,
             fg=ACID,
             font=("Microsoft YaHei UI", 20, "bold"),
-            width=58,
-            height=58,
+            width=160,
+            height=64,
             borderwidth=0,
             highlightthickness=0,
         )
-        self.brand_mark.pack(side="left", padx=(0, 13))
+        self.brand_mark.pack(side="left", padx=(0, 16))
         copy = tk.Frame(brand, bg=DEEP)
         copy.pack(side="left")
         tk.Label(copy, text="AutoDev · LOCAL RUNNER", bg=DEEP, fg=ACID, font=(MONO, 9, "bold")).pack(anchor="w")
