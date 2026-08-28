@@ -88,7 +88,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .logo {
-  justify-items: start;
+  justify-items: center;
   align-content: start;
   gap: 8px;
   min-height: 124px;
@@ -101,14 +101,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .sidebar-brand-mark {
   width: 158px;
   height: 66px;
-  margin-left: -5px;
+  margin-left: 0;
   object-fit: contain;
-  object-position: left center;
+  object-position: center;
   filter: none;
   animation: none;
 }
 
 .logo .sidebar-brand-name {
+  width: 158px;
+  text-align: center;
   color: var(--editorial-white);
   background: none;
   font: 900 25px/1 Georgia, "Times New Roman", serif;
@@ -703,21 +705,22 @@ select { color-scheme: light; }
 }
 .login-logo-lockup {
   display: grid;
-  grid-template-columns: 292px 1fr;
+  grid-template-columns: minmax(300px, 1.25fr) auto;
   align-items: center;
-  gap: 24px;
-  padding: 15px 20px;
+  gap: 18px;
+  padding: 18px 22px;
   border: 0;
   background: var(--editorial-ink);
   box-shadow: 8px 8px 0 rgba(23, 24, 19, .18);
 }
 .login-logo-lockup::after { display: none; }
-.login-logo-symbol { width: 292px; height: 128px; filter: none; }
+.login-logo-symbol { width: 100%; min-width: 300px; height: 122px; filter: none; }
 .login-logo-symbol img { width: 100%; height: 100%; object-fit: contain; }
 .login-logo-lockup strong {
   color: var(--editorial-white);
-  font: 900 clamp(36px, 3.5vw, 55px)/1 Georgia, serif;
+  font: 900 clamp(38px, 3.25vw, 52px)/1 Georgia, serif;
   letter-spacing: -.07em;
+  white-space: nowrap;
 }
 .login-logo-lockup strong span { color: var(--amber); }
 .login-edition {
@@ -798,10 +801,10 @@ select { color-scheme: light; }
 @media (max-width: 900px) {
   body { background-size: 22px 22px, 22px 22px, auto, auto; }
   .app-shell { display: block; }
-  .sidebar { position: relative; display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; width: 100%; height: auto; padding: 10px 12px; box-shadow: 0 5px 0 var(--editorial-orange); }
+  .sidebar { position: relative; display: grid; grid-template-columns: 180px minmax(0, 1fr); align-items: center; width: 100%; height: auto; padding: 10px 12px; box-shadow: 0 5px 0 var(--editorial-orange); }
   .logo { display: flex; min-height: 0; margin: 0; padding: 0; border: 0; }
   .sidebar-brand-mark { width: 90px; height: 36px; }
-  .logo .sidebar-brand-name { font-size: 20px; }
+  .logo .sidebar-brand-name { width: auto; text-align: left; font-size: 20px; }
   .sidebar nav { display: flex; min-width: 0; margin-left: 0; overflow-x: auto; }
   .sidebar .nav-item { display: block; min-width: 128px; padding: 12px 14px; text-align: center; white-space: nowrap; }
   .sidebar .nav-index { display: none; }
@@ -816,8 +819,8 @@ select { color-scheme: light; }
   .login-body { padding: 15px; overflow: auto; }
   .login-shell { grid-template-columns: 1fr; min-height: auto; box-shadow: 7px 7px 0 var(--editorial-ink); }
   .login-brand { min-height: 500px; padding: 34px; }
-  .login-logo-lockup { grid-template-columns: 220px 1fr; gap: 18px; padding: 12px 16px; }
-  .login-logo-symbol { width: 220px; height: 96px; }
+  .login-logo-lockup { grid-template-columns: minmax(260px, 1.2fr) auto; gap: 16px; padding: 13px 16px; }
+  .login-logo-symbol { min-width: 260px; height: 96px; }
   .login-logo-lockup strong { font-size: 44px; }
   .login-panel { border-left: 0; border-top: 2px solid var(--editorial-ink); padding: 50px 34px; }
   .login-brand h1 { font-size: 66px; }
@@ -834,11 +837,12 @@ select { color-scheme: light; }
   .modal { padding: 25px 20px; }
   .modal::before { margin: -25px -20px 20px; }
   .login-brand { min-height: 430px; }
-  .login-logo-lockup { grid-template-columns: 145px 1fr; gap: 12px; padding: 10px 12px; }
-  .login-logo-symbol { width: 145px; height: 64px; }
+  .login-logo-lockup { grid-template-columns: 1fr; justify-items: center; gap: 0; padding: 10px 12px 14px; }
+  .login-logo-symbol { width: min(240px, 100%); min-width: 0; height: 80px; }
   .login-logo-lockup strong { font-size: 34px; }
   .login-brand h1 { font-size: 54px; }
   .delivery-loop { margin-top: 45px; }
+  .sidebar { grid-template-columns: 90px minmax(0, 1fr); }
 }
 
 /* Problem analysis: a read-only evidence desk inside the operational system. */

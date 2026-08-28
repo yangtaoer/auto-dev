@@ -1794,7 +1794,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.12"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.13"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -1830,7 +1830,7 @@ else:
 
         login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
         self.assertIn("login-logo-lockup", login_template)
-        self.assertIn("autodev-mark.png", login_template)
+        self.assertIn("autodev-sidebar-mark.png", login_template)
         self.assertIn("Auto<span>Dev</span>", login_template)
         self.assertNotIn("brand-float", Path("app/static/brand-ui.css").read_text(encoding="utf-8"))
         self.assertNotIn("login-logo-plate", login_template)
@@ -2026,7 +2026,7 @@ else:
         self.assertNotIn("<span>自主</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.12"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.13"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
