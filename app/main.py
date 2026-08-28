@@ -75,7 +75,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.13",
+    version="1.0-Alpha.14",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -609,7 +609,11 @@ def health() -> dict:
 def login_page(request: Request):
     if get_session_user(request.cookies.get("autodev_session")):
         return RedirectResponse("/", status_code=303)
-    return templates.TemplateResponse(request, "login.html", {"demo_enabled": settings.seed_demo})
+    return templates.TemplateResponse(
+        request,
+        "login.html",
+        {"demo_enabled": settings.seed_demo, "app_version": settings.runner_version},
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
