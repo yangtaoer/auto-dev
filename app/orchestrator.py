@@ -37,7 +37,8 @@ from .services.delivery import (
 from .services.tfs import TfsClient
 from .services.pipeline_release import TfsPipelineReleaseService
 from .services.process_env import git_authenticated_env, sanitized_process_env
-from .project_catalog import resolve_projects_for_work_item
+from .project_catalog import load_project_presets, resolve_projects_for_work_item
+from .services.development_risks import development_risks
 from .live_stream import LiveCodexPublisher
 from .store import LocalStore
 
@@ -359,11 +360,12 @@ class Worker:
                 )
                 self._complete_analysis(request_id, result)
                 return
-            if not project.get("simulation_mode") and not paths:
-                raise RuntimeError("DevCore 执行完成，但没有产生代码变更")
             mode = DeliveryMode(detail["delivery_mode"])
-            if mode.value in SICHUAN_APPROVAL_DELIVERY_MODES and result.get("risks"):
-                risk_text = "；".join(str(item) for item in result["risks"])
+            warnings, blockers = development_risks(result, legacy_review=mode.value in SICHUAN_APPROVAL_DELIVERY_MODES)
+            if warnings:
+                self.store.add_event(request_id, "review.advisory", "研发风险提示：" + "；".join(warnings), level="warning")
+            if blockers:
+                risk_text = "；".join(blockers)
                 self.store.update_request(
                     request_id,
                     status=RunStatus.WAITING_APPROVAL.value,
@@ -371,11 +373,14 @@ class Worker:
                     progress=48,
                     codex_thread_id=codex_thread_id,
                     result_summary=summary,
-                    error_message="自动审核发现风险：" + risk_text,
+                    error_message="发现阻塞风险，需要人工确认：" + risk_text,
                 )
-                self.store.update_step(request_id, "develop", "failed", "自动审核发现风险，需要人工确认")
+                self.store.update_step(request_id, "develop", "failed", "发现阻塞风险，需要人工确认")
                 self.store.add_event(request_id, "review.risk_found", risk_text, level="warning")
+                self._send_status_email(request_id, action_required=True)
                 return
+            if not project.get("simulation_mode") and not paths:
+                raise RuntimeError("DevCore 执行完成，但没有产生代码变更")
             self.store.update_request(request_id, result_summary=summary, codex_thread_id=codex_thread_id, progress=55)
             self.store.update_step(request_id, "develop", "completed", summary or "代码修改完成")
             if not detail.get("supplement_answers"):
@@ -707,13 +712,19 @@ class Worker:
                 self._plain_text(item.get("acceptance_criteria", "")),
             )
         ).casefold()
-        if title_keywords and not any(keyword.casefold() in requirement_text for keyword in title_keywords):
+        normalized_requirement = re.sub(r"\s+", "", requirement_text)
+        if title_keywords and not any(re.sub(r"\s+", "", keyword.casefold()) in normalized_requirement for keyword in title_keywords):
             raise RuntimeError(
                 f"需求内容未命中项目“{project.get('name', project.get('project_key', ''))}”"
                 f"的识别关键字：{'、'.join(title_keywords)}"
             )
         if not item.get("description"):
             raise RuntimeError("需求描述为空，无法自动研发")
+        catalog = load_project_presets()
+        if any(entry.get("project_key") == project.get("project_key") for entry in catalog):
+            matched, _, _ = resolve_projects_for_work_item(item["id"], catalog, work_item=item)
+            if project.get("project_key") not in {entry["project_key"] for entry in matched}:
+                raise RuntimeError("任务项目快照与最新需求识别不一致，请重新发起；未创建工作区或修改代码")
         return item
 
     @staticmethod
@@ -734,6 +745,16 @@ class Worker:
             repositories.append(repo)
         if not repositories:
             raise RuntimeError("项目未配置可用的 Git 仓库")
+        expected = project.get("repository_expectations") or {}
+        by_name = {repo.name: repo for repo in repositories}
+        for name, remote_name in expected.items():
+            if name not in by_name:
+                raise RuntimeError(f"项目缺少必需仓库 {name}，未开始研发")
+            from urllib.parse import unquote
+            remote = git(by_name[name], "remote", "get-url", "origin").strip().rstrip("/")
+            actual = unquote(remote.rsplit("/", 1)[-1]).removesuffix(".git")
+            if actual.casefold() != remote_name.casefold():
+                raise RuntimeError(f"{name} 的 origin 仓库不符合项目约定，应为 {remote_name}；未开始研发")
         names = [repo.name.casefold() for repo in repositories]
         if len(names) != len(set(names)):
             raise RuntimeError("多仓项目存在同名仓库目录，无法创建隔离工作区")
@@ -1140,6 +1161,8 @@ class Worker:
             "AUTODEV_CHANGED_REPOSITORIES": json.dumps(changed_names, ensure_ascii=False),
             "AUTODEV_WORK_ITEM_ID": str(detail.get("work_item_id") or ""),
             "AUTODEV_REQUEST_ID": str(detail.get("id") or ""),
+            "AUTODEV_APP_FRONTEND_SOURCE": next((str(state.get("repository_path") or "") for state in repository_states
+                                                  if state.get("name") == "dcsd-app-ui"), ""),
         }
 
     def _deliver_reviewed_local_package(self, request_id: str, repository_states: list[dict]) -> None:

@@ -19,6 +19,7 @@ RESULT_SCHEMA = {
         "changed_files": {"type": "array", "items": {"type": "string"}},
         "acceptance_mapping": {"type": "array", "items": {"type": "string"}},
         "risks": {"type": "array", "items": {"type": "string"}},
+        "blocking_risks": {"type": "array", "items": {"type": "string"}},
         "sql_changes": {"type": "array", "items": {"type": "string"}},
         "config_changes": {"type": "array", "items": {"type": "string"}},
         "database_operations": {"type": "array", "items": {"type": "string"}},
@@ -40,7 +41,7 @@ RESULT_SCHEMA = {
     },
     "required": [
         "decision", "summary", "changed_files", "acceptance_mapping", "risks", "sql_changes",
-        "config_changes", "database_operations", "supplement_requests",
+        "config_changes", "database_operations", "supplement_requests", "blocking_risks",
     ],
     "additionalProperties": False,
 }
@@ -116,6 +117,9 @@ class CodexRunner:
             else "当前工作区是单仓库，只在该仓库内完成需求。"
         )
         dm7 = discover_dm7_plugin()
+        project_context = str(project.get("development_instructions") or "").strip()
+        if project_context:
+            project_context = "项目专属开发约定（以本次隔离仓库和已验证代码为准）：\n" + project_context
         supplement_context = ""
         if supplement_answers:
             request_by_id = {
@@ -181,6 +185,7 @@ class CodexRunner:
 区域：{work_item.get('area_path', '')}
 TFS 附件与关联元数据：{tfs_relations or '无'}
 仓库范围：{repository_scope}
+{project_context}
 {joint_context}
 {supplement_context}
 
@@ -205,6 +210,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
 验收标准：{work_item.get('acceptance_criteria', '')}
 区域：{work_item.get('area_path', '')}
 仓库范围：{repository_scope}
+{project_context}
 {joint_context}
 {supplement_context}
 
@@ -222,7 +228,8 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
 11. {dm7_instructions}
 12. 不要把一般性风险、可通过代码默认值处理的细节或可由仓库/数据库工具查明的信息升级为阻塞项。先检索代码、文档和数据库，再作判断。
 13. 只有缺少的信息会直接决定错误业务口径、越权或不可逆数据设计，且无法从代码、TFS、配置和 DM7 本机开发库查明时，才返回 decision=needs_input。此时不要提交半成品，supplement_requests 必须逐项给出明确问题、原因和建议答案。
-14. 可以可靠实现时必须返回 decision=completed 并完成代码、自检及必要 SQL/配置修改；普通风险写入 risks，但不得因此跳过研发。
+14. 可以可靠实现时必须返回 decision=completed 并完成代码、自检及必要 SQL/配置修改；普通提醒（如缺少截图中指定样例、已覆盖的测试限制）写入 risks，不得因此跳过研发。
+15. 风险必须分级：需要用户补充明确业务信息时返回 needs_input 与 supplement_requests；需要管理员授权的高风险改动或无法保证完整交付的技术阻塞写入 blocking_risks（无则 []）。缺少必要客户端/服务端仓库、只增加接口却没有页面接入、验收关键项未实现不能宣称 completed 且无阻塞，必须说明缺失范围。不得用普通 risks 掩盖未实现功能。
 """.strip()
 
         developer_instructions = (
@@ -522,6 +529,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
             ("变更文件", "changed_files", "无代码文件变更"),
             ("验收覆盖", "acceptance_mapping", "未提供验收映射"),
             ("风险提示", "risks", "无"),
+            ("阻塞风险（需确认）", "blocking_risks", "无"),
             ("SQL 变更", "sql_changes", "无"),
             ("配置变更", "config_changes", "无"),
             ("数据库操作", "database_operations", "无"),

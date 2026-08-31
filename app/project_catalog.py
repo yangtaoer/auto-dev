@@ -71,6 +71,56 @@ def _plain_requirement_text(value: Any) -> str:
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", str(value or "")))).strip()
 
 
+def _normalized_name(value: str) -> str:
+    return re.sub(r"\s+", "", value).casefold()
+
+
+def _project_terms(project: dict) -> list[str]:
+    return list(dict.fromkeys(str(value).strip() for value in (
+        project.get("name"), *(project.get("routing_title_keywords") or [])
+    ) if str(value or "").strip()))
+
+
+def matching_project_terms(text: str, catalog: list[dict], *, min_length: int = 1) -> dict[str, list[str]]:
+    """Match complete bracket names and suppress shorter names inside a longer alias.
+
+    Separate occurrences remain independent, so explicitly naming APP AND its PC
+    project still creates a joint task. Equal aliases across projects are ambiguous.
+    """
+    normalized = _normalized_name(text)
+    terms: dict[str, list[tuple[str, str, bool]]] = {}
+    for project in catalog:
+        key = str(project.get("project_key") or "")
+        for term in _project_terms(project):
+            token = _normalized_name(term)
+            if len(token) >= min_length:
+                terms.setdefault(token, []).append((key, term, token == _normalized_name(str(project.get("name") or ""))))
+    for bracket in re.findall(r"【([^】]+)】", normalized):
+        for token in re.split(r"[+＋、,，/&＆]", bracket):
+            if token and token not in terms and any(term in token for term in terms):
+                raise RuntimeError(f"项目标识【{token}】未完整匹配已配置的项目名称或别名，请确认项目简称后重新发起")
+    occurrences = []
+    for token, owners in terms.items():
+        for match in re.finditer(re.escape(token), normalized):
+            occurrences.append((match.start(), match.end(), owners))
+    occurrences.sort(key=lambda value: (-(value[1] - value[0]), value[0]))
+    accepted: list[tuple[int, int]] = []
+    result: dict[str, list[str]] = {}
+    for start, end, owners in occurrences:
+        if any(start >= left and end <= right for left, right in accepted):
+            continue
+        standard_owners = [owner for owner in owners if owner[2]]
+        winners = standard_owners or owners
+        keys = {owner[0] for owner in winners}
+        if len(keys) > 1:
+            raise RuntimeError(f"项目别名“{winners[0][1]}”存在歧义，匹配：{'、'.join(sorted(keys))}；请使用完整项目名称")
+        accepted.append((start, end))
+        key, term, _ = winners[0]
+        if term not in result.setdefault(key, []):
+            result[key].append(term)
+    return result
+
+
 def _requirement_sections(item: dict[str, Any]) -> list[str]:
     """Return compact requirement clauses that can be assigned to individual projects."""
     sections: list[str] = []
@@ -88,6 +138,7 @@ def _requirement_sections(item: dict[str, Any]) -> list[str]:
 def resolve_projects_for_work_item(
     work_item_id: int,
     projects: list[dict[str, Any]] | None = None,
+    *, work_item: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
     """Classify one TFS requirement into every strongly evidenced project."""
     catalog = projects if projects is not None else load_project_presets()
@@ -105,7 +156,7 @@ def resolve_projects_for_work_item(
             continue
         if collection not in fetched:
             try:
-                fetched[collection] = TfsClient(collection).get_work_item(work_item_id)
+                fetched[collection] = work_item if work_item is not None else TfsClient(collection).get_work_item(work_item_id)
             except Exception as exc:
                 fetch_errors.append(f"{collection}: {exc}")
                 continue
@@ -121,10 +172,10 @@ def resolve_projects_for_work_item(
                 continue
         area_matched = True
         title_value = str(item.get("title", ""))
-        title = title_value.casefold()
         bracket_values = [value.strip() for value in re.findall(r"【([^】]+)】", title_value) if value.strip()]
         standard_name = str(project.get("name") or "").strip()
-        explicit_values = [value for value in bracket_values if value.casefold() == standard_name.casefold()]
+        explicit_values = [value for bracket in bracket_values for value in re.split(r"[+＋、,，/&＆]", bracket)
+                           if _normalized_name(value) == _normalized_name(standard_name)]
         keywords = list(
             dict.fromkeys(
                 [
@@ -138,18 +189,22 @@ def resolve_projects_for_work_item(
             )
         )
         keywords = [value for value in keywords if value]
-        matched_title_keywords = [value for value in keywords if value and value.casefold() in title]
+        eligible_catalog = []
+        for candidate in catalog:
+            prefix = str(candidate.get("tfs_area_path") or candidate.get("tfs_project") or "").rstrip("\\").casefold()
+            area = area_path.casefold()
+            if (candidate.get("enabled", True) and not candidate.get("simulation_mode")
+                and str(candidate.get("tfs_collection_url", "")).rstrip("/") == collection
+                and (not prefix or area == prefix or area.startswith(prefix + "\\"))):
+                eligible_catalog.append(candidate)
+        matched_title_keywords = matching_project_terms(title_value, eligible_catalog).get(str(project.get("project_key") or ""), [])
         requirement_body = " ".join(
             (
                 _plain_requirement_text(item.get("description")),
                 _plain_requirement_text(item.get("acceptance_criteria")),
             )
         ).casefold()
-        matched_content_keywords = [
-            value
-            for value in keywords
-            if len(value) >= 4 and value.casefold() in requirement_body
-        ]
+        matched_content_keywords = matching_project_terms(requirement_body, eligible_catalog, min_length=4).get(str(project.get("project_key") or ""), [])
         if not standard_name and not keywords:
             area_fallbacks.append(
                 {
@@ -220,19 +275,12 @@ def resolve_projects_for_work_item(
     classification: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
     requirement_sections = _requirement_sections(candidates[0]["item"])
-    all_catalog_terms = {
-        str(value).strip().casefold()
-        for entry in candidates
-        for value in (
-            entry["project"].get("name"),
-            *(entry["project"].get("routing_title_keywords") or []),
-        )
-        if str(value or "").strip()
-    }
+    section_matches = {section: matching_project_terms(section, [entry["project"] for entry in candidates])
+                       for section in requirement_sections}
     shared_sections = [
         section
         for section in requirement_sections
-        if not any(term in section.casefold() for term in all_catalog_terms)
+        if not section_matches[section]
     ][:12]
     for candidate in candidates:
         project = candidate["project"]
@@ -250,14 +298,7 @@ def resolve_projects_for_work_item(
                 "scoped_sections": [
                     section
                     for section in requirement_sections
-                    if any(
-                        str(term).casefold() in section.casefold()
-                        for term in (
-                            project.get("name"),
-                            *(project.get("routing_title_keywords") or []),
-                        )
-                        if str(term or "").strip()
-                    )
+                    if project_key in section_matches[section]
                 ][:12],
                 "shared_sections": shared_sections,
             }

@@ -118,15 +118,11 @@ if ($BuildFrontend) {
     Assert-Contains (Join-Path $FrontendRoot "src\views\nanchong\mixin\login.js") "fetchYdztToken[\s\S]*manualLoginMode[\s\S]*login" "前端缺少移动中台免密登录与失败回退逻辑"
     Assert-Contains (Join-Path $FrontendRoot "src\plugins\http-client.js") "ydztConfig\.appKey[\s\S]*appaccess" "前端缺少移动中台 appKey 网关请求逻辑"
     Write-Host "构建 APP 前端：nanchongydzt / platform 7"
-    if (Test-Path -LiteralPath (Join-Path $FrontendRoot "package-lock.json") -PathType Leaf) {
-        Invoke-Checked -FilePath $Npm -Arguments @("ci", "--no-audit", "--no-fund", "--prefer-offline", "--legacy-peer-deps") -WorkingDirectory $FrontendRoot
+    if (-not $env:AUTODEV_APP_FRONTEND_SOURCE) {
+        throw "缺少 AUTODEV_APP_FRONTEND_SOURCE，无法取得已验证的移动中台离线依赖"
     }
-    else {
-        Invoke-Checked -FilePath $Npm -Arguments @("install", "--no-audit", "--no-fund", "--prefer-offline", "--legacy-peer-deps") -WorkingDirectory $FrontendRoot
-    }
-    # The base branch contains legacy utility files with style-only ESLint debt. Skip only the
-    # lint webpack plugin so compilation, resource bundling and the YDZT assertions above remain mandatory.
-    Invoke-Checked -FilePath $Npm -Arguments @("run", "nanchongydzt-build", "--", "--skip-plugins", "@vue/cli-plugin-eslint") -WorkingDirectory $FrontendRoot
+    # nanchongydzt-build uses the same verified local dependency as the APP conversation.
+    & (Join-Path $PSScriptRoot "app-frontend-build.ps1") -FrontendRoot $FrontendRoot -SourceRoot $env:AUTODEV_APP_FRONTEND_SOURCE -Npm $Npm
     if (-not (Test-Path -LiteralPath (Join-Path $FrontendRoot "dist") -PathType Container)) {
         throw "APP 前端 dist 未生成"
     }
@@ -149,6 +145,7 @@ if ($BuildBackend) {
 
 if ($ValidateOnly) {
     Write-Host "PR 前校验完成，仅验证本次变更端：$($ChangedRepositories -join '、')"
+    if ($BuildFrontend) { Write-Host "APP 构建依赖：$env:AUTODEV_APP_DEPENDENCY_HASHES" }
     return
 }
 
@@ -165,8 +162,8 @@ if ($BuildFrontend) {
     $PackageRoot = Join-Path $StagingRoot "ddyxzhyy"
     New-Item -ItemType Directory -Force -Path $PackageRoot | Out-Null
     Copy-Item -Path (Join-Path $FrontendRoot "dist\*") -Destination $PackageRoot -Recurse -Force
-    $FrontendZip = Join-Path $ReleaseRoot "network-command-app-$WorkItemId-frontend-$Timestamp.zip"
-    Compress-Archive -Path (Join-Path $StagingRoot "*") -DestinationPath $FrontendZip -CompressionLevel Optimal
+    $FrontendZip = Join-Path $ReleaseRoot "ddyxzhyy.zip"
+    Compress-Archive -Path (Join-Path $StagingRoot "*") -DestinationPath $FrontendZip -CompressionLevel Optimal -Force
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $Archive = [System.IO.Compression.ZipFile]::OpenRead($FrontendZip)
     try {
@@ -183,16 +180,10 @@ if ($BuildFrontend) {
 }
 
 if ($BuildBackend) {
-    $BackendStaging = [System.IO.Path]::GetFullPath((Join-Path $ReleaseRoot ".app-backend-$WorkItemId-$Timestamp"))
-    if (-not $BackendStaging.StartsWith($ReleaseRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "拒绝在 release 目录之外组装后端交付物"
-    }
-    New-Item -ItemType Directory -Force -Path $BackendStaging | Out-Null
-    Copy-Item -LiteralPath $BackendJar.FullName -Destination (Join-Path $BackendStaging "dcsd-app-starter.jar")
-    $BackendZip = Join-Path $ReleaseRoot "network-command-app-$WorkItemId-backend-$Timestamp.zip"
-    Compress-Archive -Path (Join-Path $BackendStaging "*") -DestinationPath $BackendZip -CompressionLevel Optimal
-    Remove-Item -LiteralPath $BackendStaging -Recurse -Force
-    Write-Output $BackendZip
+    $DeliveredJar = Join-Path $ReleaseRoot $BackendJar.Name
+    Copy-Item -LiteralPath $BackendJar.FullName -Destination $DeliveredJar -Force
+    Write-Output $DeliveredJar
 }
 
 Write-Host "APP 按变更端打包完成：$($ChangedRepositories -join '、')"
+if ($BuildFrontend) { Write-Host "APP 构建依赖：$env:AUTODEV_APP_DEPENDENCY_HASHES" }

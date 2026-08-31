@@ -95,6 +95,8 @@ CREATE TABLE IF NOT EXISTS projects (
     base_branch TEXT NOT NULL DEFAULT 'dev',
     repository_base_branches TEXT NOT NULL DEFAULT '{}',
     verification_command TEXT NOT NULL DEFAULT '',
+    development_instructions TEXT NOT NULL DEFAULT '',
+    repository_expectations TEXT NOT NULL DEFAULT '{}',
     build_command TEXT NOT NULL DEFAULT '',
     package_patterns TEXT NOT NULL DEFAULT '[]',
     sql_patterns TEXT NOT NULL DEFAULT '["**/*.sql"]',
@@ -278,6 +280,10 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE projects ADD COLUMN repository_base_branches TEXT NOT NULL DEFAULT '{}'")
     if "verification_command" not in project_columns:
         conn.execute("ALTER TABLE projects ADD COLUMN verification_command TEXT NOT NULL DEFAULT ''")
+    if "development_instructions" not in project_columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN development_instructions TEXT NOT NULL DEFAULT ''")
+    if "repository_expectations" not in project_columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN repository_expectations TEXT NOT NULL DEFAULT '{}'")
     request_columns = {item["name"] for item in conn.execute("PRAGMA table_info(delivery_requests)")}
     if "runner_id" not in request_columns:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN runner_id TEXT NOT NULL DEFAULT 'yangtao-pc'")
@@ -464,6 +470,7 @@ def project_for_api(project: dict[str, Any]) -> dict[str, Any]:
     ):
         result[key] = json_value(result[key], [])
     result["repository_base_branches"] = json_value(result.get("repository_base_branches"), {})
+    result["repository_expectations"] = json_value(result.get("repository_expectations"), {})
     result["enabled"] = bool(result["enabled"])
     result["simulation_mode"] = bool(result["simulation_mode"])
     result["allow_requirement_override"] = bool(result["allow_requirement_override"])

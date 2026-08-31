@@ -75,7 +75,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.14",
+    version="1.0-Alpha.15",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -130,6 +130,8 @@ class ProjectInput(BaseModel):
     base_branch: str = "dev"
     repository_base_branches: dict[str, str] = Field(default_factory=dict)
     verification_command: str = ""
+    development_instructions: str = Field(default="", max_length=12000)
+    repository_expectations: dict[str, str] = Field(default_factory=dict)
     build_command: str = ""
     package_patterns: list[str] = []
     sql_patterns: list[str] = ["**/*.sql"]

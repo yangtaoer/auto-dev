@@ -36,7 +36,9 @@ from app.project_catalog import (  # noqa: E402
     resolve_project_for_work_item,
     resolve_projects_for_work_item,
     update_project_routing_aliases,
+    matching_project_terms,
 )
+from app.services.development_risks import development_risks
 from app.services.codex_runner import CodexRunner  # noqa: E402
 from app.services.dm7_plugin import discover_dm7_plugin  # noqa: E402
 from app.services.delivery import (  # noqa: E402
@@ -437,6 +439,21 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("季度最终分以哪张表为准", input_mail)
         self.assertIn("登录 AutoDev 补充并继续", input_mail)
         self.assertNotIn("需要项目经理协同处理", input_mail)
+
+        blocked_detail = {
+            **detail,
+            "status": "waiting_approval",
+            "completed_at": None,
+            "error_message": "阻塞风险：缺少 APP 客户端仓库 <client>",
+            "artifacts": [],
+        }
+        blocked_mail = mailer.delivery_html(blocked_detail, action_required=True)
+        self.assertIn("AutoDev · 待确认", mailer.delivery_subject(blocked_detail, action_required=True))
+        self.assertIn("等待风险确认", blocked_mail)
+        self.assertIn("缺少 APP 客户端仓库 &lt;client&gt;", blocked_mail)
+        self.assertNotIn("无需 PR", blocked_mail)
+        self.assertNotIn("等待代码合并", blocked_mail)
+        self.assertNotIn("请逐个联系有权限的同事审核并合并", blocked_mail)
 
         failed_detail = {**detail, "status": "failed", "error_message": "Filename too long"}
         failed = mailer.delivery_html(failed_detail, terminal_status="failed")
@@ -1794,7 +1811,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.14"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.15"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -2021,15 +2038,15 @@ else:
         self.assertIn("<span>自主</span>", admin_page.text)
         self.client.post("/api/auth/logout")
         login_page = self.client.get("/login")
-        self.assertIn("editorial-ui.css?v=1.0-Alpha.14-login", login_page.text)
-        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.14", login_page.text)
+        self.assertIn("editorial-ui.css?v=1.0-Alpha.15-login", login_page.text)
+        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.15", login_page.text)
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("<span>自主</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.14"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.15"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
@@ -2437,7 +2454,9 @@ else:
             ["dcsd-app-ui", "dcsd-app-starter"],
         )
         self.assertIn("-ValidateOnly", project["verification_command"])
-        self.assertEqual(project["package_patterns"], ["release/network-command-app-*.zip"])
+        self.assertEqual(project["package_patterns"], ["release/ddyxzhyy.zip", "release/dcsd-app-starter*.jar"])
+        self.assertIn("_sccd", project["development_instructions"])
+        self.assertEqual(project["repository_expectations"]["dcsd-app-ui"], "dcsd-app-ui-sichuan")
         script = (
             Path(__file__).resolve().parents[1]
             / "local-runner"
@@ -2769,6 +2788,110 @@ else:
             "/api/auth/login", json={"username": username, "password": "password123"}
         )
         self.assertEqual(disabled_login.status_code, 401, disabled_login.text)
+
+
+    def test_app_titles_do_not_route_to_pc_project(self) -> None:
+        projects = load_project_presets()
+        for prefix in ("成都网络下令APP", "成都网络发令APP", "成都网络下令 app", "网络发令APP", "成都app"):
+            with self.subTest(prefix=prefix):
+                item = {"id": 1666884, "title": f"【{prefix}】测试需求", "area_path": "XiNanArea-New\\四川省区团队",
+                        "description": "成都网络发令APP修复厂站确认角标。"}
+                selected, _, _ = resolve_projects_for_work_item(1666884, projects, work_item=item)
+                self.assertEqual([p["project_key"] for p in selected], ["network-command-app"])
+
+    def test_app_and_pc_separate_occurrences_still_allow_joint_work(self) -> None:
+        projects = load_project_presets()
+        for title in ("【成都网络发令APP】【成都网络发令】联合需求", "【成都网络发令APP+成都网络发令】联合需求"):
+            item = {"id": 1, "title": title, "area_path": "XiNanArea-New\\四川省区团队",
+                    "description": "<p>成都网络发令APP修改页面。</p><p>成都网络发令修改PC服务。</p><p>两端字段保持一致。</p>"}
+            selected, _, classified = resolve_projects_for_work_item(1, projects, work_item=item)
+            self.assertEqual({p["project_key"] for p in selected}, {"network-command-app", "chengdu-network-command"})
+            pc = next(c for c in classified if c["project_key"] == "chengdu-network-command")
+            self.assertFalse(any("APP修改页面" in s for s in pc["scoped_sections"]))
+            self.assertIn("两端字段保持一致。", pc["shared_sections"])
+
+    def test_incomplete_bracket_and_ambiguous_alias_are_not_guessed(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "未完整匹配"):
+            matching_project_terms("【成都网络下令APP】需求", [{"project_key": "pc", "name": "成都网络下令"}])
+        with self.assertRaisesRegex(RuntimeError, "歧义"):
+            matching_project_terms("【成都app】需求", [
+                {"project_key": "one", "name": "甲项目", "routing_title_keywords": ["成都app"]},
+                {"project_key": "two", "name": "乙项目", "routing_title_keywords": ["成都app"]},
+            ])
+
+    def test_stale_pc_snapshot_is_rejected_before_app_workspace_preparation(self) -> None:
+        project = next(p for p in load_project_presets() if p["project_key"] == "chengdu-network-command")
+        item = {"id": 1666884, "title": "【成都网络下令APP】测试", "description": "只修改成都APP",
+                "state": "新建", "work_item_type": "用户情景", "area_path": "XiNanArea-New\\四川省区团队"}
+        with patch("app.orchestrator.TfsClient.get_work_item", return_value=item):
+            with self.assertRaisesRegex(RuntimeError, "快照"):
+                worker._validate({"work_item_id": item["id"]}, project)
+
+    def test_app_repository_contract_checks_missing_and_wrong_remote(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            repo = Path(root) / "dcsd-app-ui"
+            (repo / ".git").mkdir(parents=True)
+            project = {"repository_paths": [str(repo)], "repository_expectations": {"dcsd-app-starter": "dcsd-app-starter-sichuan"}}
+            with self.assertRaisesRegex(RuntimeError, "缺少必需仓库"):
+                worker._configured_repository_paths(project)
+            project["repository_expectations"] = {"dcsd-app-ui": "dcsd-app-ui-sichuan"}
+            with patch("app.orchestrator.git", return_value="http://tfs/DCS/_git/dcsd-app-ui"):
+                with self.assertRaisesRegex(RuntimeError, "origin 仓库"):
+                    worker._configured_repository_paths(project)
+            with patch("app.orchestrator.git", return_value="http://tfs/DCS/_git/dcsd-app-ui-sichuan"):
+                self.assertEqual(worker._configured_repository_paths(project), [repo])
+
+    def test_risk_levels_preserve_legacy_caution_and_explicit_blockers(self) -> None:
+        advisory = {"decision": "completed", "risks": ["无指定测试票，已用历史样例核验"], "blocking_risks": []}
+        self.assertEqual(development_risks(advisory, legacy_review=True)[1], [])
+        self.assertTrue(development_risks({"risks": ["未分级旧风险"]}, legacy_review=True)[1])
+        self.assertEqual(development_risks({"risks": [], "blocking_risks": ["客户端仓库缺失"]})[1], ["客户端仓库缺失"])
+        with self.assertRaisesRegex(RuntimeError, "格式无效"):
+            development_risks({"blocking_risks": "bad"})
+
+    def test_advisory_risk_continues_but_blocker_does_not_submit(self) -> None:
+        for number, blockers in enumerate(([], ["缺少客户端接入，验收不完整"])):
+            project_id = self.create_project(f"test-risk-level-{number}", "sichuan_auto_review")
+            created = self.client.post("/api/requests", json={"project_id": project_id, "work_item_id": 930201 + number})
+            request_id = created.json()["id"]
+            result = {"decision": "completed", "summary": "完成研发", "changed_files": ["demo.java"],
+                      "risks": ["缺少截图指定样例，使用等价样例"], "blocking_risks": blockers}
+            with patch.object(worker, "_simulate_development", return_value=result), patch.object(worker, "_send_status_email") as mail:
+                worker.process_once()
+            detail = self.client.get(f"/api/requests/{request_id}").json()["request"]
+            if blockers:
+                self.assertEqual(detail["status"], "waiting_approval")
+                self.assertIsNone(detail["pr_id"])
+                mail.assert_called_once_with(request_id, action_required=True)
+            else:
+                self.assertEqual(detail["status"], "waiting_merge")
+                self.assertTrue(detail["pr_id"])
+            # Do not leave this fixture ahead of other tests in the merge poll queue.
+            update_request(request_id, status="cancelled")
+
+    def test_blocker_without_code_changes_waits_for_confirmation(self) -> None:
+        project_id = self.create_project("test-empty-blocker", "sichuan_auto_review")
+        created = self.client.post("/api/requests", json={"project_id": project_id, "work_item_id": 930203})
+        request_id = created.json()["id"]
+        detail = self.client.get(f"/api/requests/{request_id}").json()["request"]
+        snapshot = {**detail["policy_snapshot"], "simulation_mode": False}
+        update_request(request_id, policy_snapshot=json.dumps(snapshot))
+        state = {"name": "demo", "base_commit": "baseline", "branch": "feature/test", "worktree_path": TEST_DATA.name}
+        result = {"decision": "completed", "summary": "缺少客户端，未修改代码", "risks": [],
+                  "blocking_risks": ["缺少客户端仓库"], "changed_files": []}
+        with patch.object(worker, "_validate", return_value={"id": 930203, "title": "APP 测试"}), \
+             patch.object(worker, "_validate_delivery_plan"), \
+             patch.object(worker, "_prepare_worktrees", return_value=(Path(TEST_DATA.name), [state], "feature/test")), \
+             patch("app.orchestrator.CodexRunner.run", return_value=SimpleNamespace(result=result, thread_id="test")), \
+             patch("app.orchestrator.changed_files", return_value=[]), \
+             patch.object(worker, "_send_status_email") as mail:
+            worker.run_request(request_id)
+        detail = self.client.get(f"/api/requests/{request_id}").json()["request"]
+        self.assertEqual(detail["status"], "waiting_approval")
+        self.assertIn("缺少客户端仓库", detail["error_message"])
+        self.assertIsNone(detail["pr_id"])
+        mail.assert_called_once_with(request_id, action_required=True)
+        update_request(request_id, status="cancelled")
 
 
 if __name__ == "__main__":

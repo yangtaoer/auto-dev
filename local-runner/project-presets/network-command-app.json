@@ -15,6 +15,9 @@
     "四川网络发令app",
     "成都网络发令APP",
     "成都网络发令app",
+    "网络下令APP",
+    "四川网络下令APP",
+    "成都网络下令APP",
     "成都app"
   ],
   "allowed_work_item_types": [
@@ -31,10 +34,16 @@
   ],
   "base_branch": "dev",
   "repository_base_branches": {},
+  "repository_expectations": {
+    "dcsd-app-ui": "dcsd-app-ui-sichuan",
+    "dcsd-app-starter": "dcsd-app-starter-sichuan"
+  },
+  "development_instructions": "这是四川共用网络发令 APP，不是普通网络发令 PC/TBP 系统。前端为 Vue2/Vant/Vue CLI4，仓库 dcsd-app-ui（远端 dcsd-app-ui-sichuan）；后端为 Java8/Spring Boot/Maven，仓库 dcsd-app-starter（远端 dcsd-app-starter-sichuan）；两者都基于 dev。成都页面实际复用 src/views/nanchong，不能因目录名为 nanchong 就判断缺少成都客户端。成都专属行为使用 siChuanAreaSuffix=_sccd；后端按现有 area=sccd、sichuanScope=1 等区域条件隔离，先核实当前接口约定，禁止默认开启给其他地市。首页、角标、列表必须使用一致的当前登录厂站/角色数据范围。沿真实 APP 路由、调用接口及源码完成端到端修改，不能在 PC 后端另建未被客户端使用的接口当成已交付。先检查最新 dev 中已合并的同需求/前置需求实现，避免重复开发；本机主工作区的未提交代码不得带入隔离工作区。前端交付固定 nanchongydzt-build、平台7、移动中台URL/appKey与免密登录，ZIP 根为 ddyxzhyy/；后端交付原始版本化 JAR。外层平台负责按修改端提交 PR、朱星舟审核、确认全部 PR 合并后从最新 dev 本地打包；不允许自行提交/合并，也不允许用未合并 PR 包代替正式交付。若客户端或所需服务仓库不在工作区，必须明确返回待补充或阻塞风险，不得只提供待接入字段宣称完整实现。",
   "verification_command": "pwsh.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\yangt\\Documents\\全自助需求研发交付\\local-runner\\project-scripts\\network-command-app-package.ps1\" -ValidateOnly",
   "build_command": "pwsh.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\yangt\\Documents\\全自助需求研发交付\\local-runner\\project-scripts\\network-command-app-package.ps1\"",
   "package_patterns": [
-    "release/network-command-app-*.zip"
+    "release/ddyxzhyy.zip",
+    "release/dcsd-app-starter*.jar"
   ],
   "sql_patterns": [
     "**/*.sql"

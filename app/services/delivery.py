@@ -401,9 +401,12 @@ class Mailer:
             "rejected": "准入驳回",
         }
         waiting_input = action_required and detail.get("status") == RunStatus.WAITING_INPUT.value
+        waiting_approval = action_required and detail.get("status") == RunStatus.WAITING_APPROVAL.value
         status = terminal_labels.get(terminal_status) or (
             "待补充" if waiting_input else (
-                "待审核" if action_required else ("分析完成" if analysis_task else "已交付")
+                "待确认" if waiting_approval else (
+                    "待审核" if action_required else ("分析完成" if analysis_task else "已交付")
+                )
             )
         )
         title = str(detail.get("title") or "研发任务").strip()[:80]
@@ -494,13 +497,16 @@ class Mailer:
         }
         terminal_colors = {"failed": "#c63f32", "cancelled": "#625c52", "rejected": "#d99518"}
         waiting_input = action_required and detail.get("status") == RunStatus.WAITING_INPUT.value
+        waiting_approval = action_required and detail.get("status") == RunStatus.WAITING_APPROVAL.value
         status_label = terminal_labels.get(terminal_status) or (
             ("等待补充分析信息" if analysis_task else "等待补充研发信息")
             if waiting_input
-            else ("等待代码合并" if action_required else ("问题分析完成" if analysis_task else "研发交付完成"))
+            else ("等待风险确认" if waiting_approval else (
+                "等待代码合并" if action_required else ("问题分析完成" if analysis_task else "研发交付完成")
+            ))
         )
         status_color = terminal_colors.get(terminal_status) or (
-            "#d99518" if waiting_input else ("#246b5a" if action_required else "#e9572b")
+            "#d99518" if waiting_input or waiting_approval else ("#246b5a" if action_required else "#e9572b")
         )
         terminal = terminal_status in terminal_labels
 
@@ -610,7 +616,7 @@ class Mailer:
         pr_url = str(detail.get("pr_url") or "")
         pr_value = (
             f"<a href=\"{html.escape(pr_url, quote=True)}\" style=\"color:#246b5a;text-decoration:underline;word-break:break-all\">{html.escape(pr_url)}</a>"
-            if pr_url else "无需 PR"
+            if pr_url else ("尚未提交 PR" if waiting_approval or waiting_input else "无需 PR")
         )
         console_url = html.escape(settings.public_base_url, quote=True)
         action = ""
@@ -634,6 +640,12 @@ class Mailer:
               <tr><td style="padding:12px 13px 7px;color:#625c52;font-size:12px;line-height:1.55"><b style="display:block;color:#171813;font-size:14px">需要补充关键信息后继续研发</b>DevCore 已完成当前分析，任务已安全暂停，不计入本机并发占用。</td></tr>
               <tr><td style="padding:0 13px 11px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #d6cbb8;background:#fffdf7">{questions}</table></td></tr>
               <tr><td style="padding:0 13px 13px"><a href="{console_url}" style="display:inline-block;padding:8px 12px;background:#171813;color:#ffffff;text-decoration:none;font-size:12px;font-weight:700">登录 AutoDev 补充并继续 →</a></td></tr>
+            </table>"""
+        elif waiting_approval:
+            reason = safe_text(detail.get("error_message"), "请登录平台查看需要确认的研发风险。", limit=3000)
+            action = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;background:#fff4d8;border-left:4px solid #d99518">
+              <tr><td style="padding:12px 13px;color:#625c52;font-size:12px;line-height:1.65"><b style="display:block;color:#171813;font-size:14px">研发已暂停，需要确认阻塞风险</b>{reason}<div style="margin-top:7px">这不是 PR 合并等待。请联系管理员核对研发结论和阻塞原因，处理后再继续任务。</div></td></tr>
+              <tr><td style="padding:0 13px 13px"><a href="{console_url}" style="display:inline-block;padding:8px 12px;background:#171813;color:#ffffff;text-decoration:none;font-size:12px;font-weight:700">登录 AutoDev 查看详情 →</a></td></tr>
             </table>"""
         elif action_required:
             review_items = [
@@ -661,7 +673,9 @@ class Mailer:
             </table>"""
 
         completed_text = format_datetime(detail.get("completed_at"), "进行中")
-        signal_label = "TERMINAL SIGNAL" if terminal else ("INPUT SIGNAL" if waiting_input else "DELIVERY SIGNAL")
+        signal_label = "TERMINAL SIGNAL" if terminal else (
+            "INPUT SIGNAL" if waiting_input else ("REVIEW SIGNAL" if waiting_approval else "DELIVERY SIGNAL")
+        )
         duration_label = "任务耗时" if terminal else (
             "当前耗时" if action_required else ("分析耗时" if analysis_task else "开发耗时")
         )
