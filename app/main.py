@@ -75,7 +75,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.15",
+    version="1.0-Alpha.16",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -1910,8 +1910,8 @@ async def runner_upload_artifact(
             with target.open("xb") as stream:
                 while chunk := await file.read(1024 * 1024):
                     size += len(chunk)
-                    if size > max_bytes:
-                        raise HTTPException(status_code=413, detail=f"单个产物不能超过 {settings.max_artifact_mb} MB")
+                    if size >= max_bytes:
+                        raise HTTPException(status_code=413, detail=f"单个产物必须小于 {settings.max_artifact_mb} MB")
                     stream.write(chunk)
         except Exception:
             target.unlink(missing_ok=True)

@@ -76,6 +76,8 @@ chmod +x *.sh
 
 OSS 参数配置在本机 `local-runner/.env.runner`，包括 AccessKey、Region、Endpoint、Bucket、对象前缀、链接有效期、保留天数和清理周期。OSS 凭据不会进入云端容器或一键部署 ZIP。
 
+单个交付文件默认允许小于 **1 GB（1024 MB，即 1,073,741,824 字节）**；达到或超过该大小会被拒绝。本机 `local-runner/.env.runner` 和云端 `deploy/backend/.env.backend` 的 `AUTODEV_MAX_ARTIFACT_MB` 应均设为 `1024`。旧安装的环境文件会被升级程序保留，如仍配置为 `200`，需调整该项并重启对应服务。Runner 将文件流直接上传 OSS，云端与邮件只保存下载链接，不经过 Caddy 传输安装包。
+
 ## 项目与账号配置
 
 项目策略不在云端编辑。通过 DevCore 对话新增或修改 `local-runner/project-presets/*.json` 后，本机执行器最迟在下一次 20 秒心跳时自动同步；管理员可在“自主”页面查看同步后的只读目录，项目经理不显示此管理菜单。项目经理发起需求时只输入 TFS 编号，本机执行器会综合 Area Path、标题、需求说明和验收标准，自动归类到一个或多个项目及其交付方式。

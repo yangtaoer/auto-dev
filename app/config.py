@@ -62,10 +62,11 @@ class Settings:
     ).resolve()
     runner_token: str = env_secret("AUTODEV_RUNNER_TOKEN")
     cloud_url: str = os.getenv("AUTODEV_CLOUD_URL", "").rstrip("/")
-    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "1.0-Alpha.15").strip() or "1.0-Alpha.15"
+    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "1.0-Alpha.16").strip() or "1.0-Alpha.16"
     runner_monitor_host: str = os.getenv("AUTODEV_RUNNER_MONITOR_HOST", "127.0.0.1").strip()
     runner_monitor_port: int = int(os.getenv("AUTODEV_RUNNER_MONITOR_PORT", "28766"))
-    max_artifact_mb: int = max(1, int(os.getenv("AUTODEV_MAX_ARTIFACT_MB", "200")))
+    # Exclusive single-file limit; MB uses 1024**2 bytes (1 GB = 1024 MB here).
+    max_artifact_mb: int = max(1, int(os.getenv("AUTODEV_MAX_ARTIFACT_MB", "1024")))
     aliyun_access_key_id: str = env_secret("ALIYUN_ACCESS_KEY_ID")
     aliyun_access_key_secret: str = env_secret("ALIYUN_ACCESS_KEY_SECRET")
     oss_region: str = os.getenv("ALIYUN_OSS_REGION", "cn-chengdu").strip()

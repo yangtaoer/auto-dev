@@ -271,8 +271,8 @@ class RemoteStore:
             if not path.is_file():
                 raise RuntimeError(f"待上传交付物不存在：{path}")
             max_bytes = settings.max_artifact_mb * 1024 * 1024
-            if path.stat().st_size > max_bytes:
-                raise RuntimeError(f"交付物 {path.name} 超过 {settings.max_artifact_mb} MB 上传限制")
+            if path.stat().st_size >= max_bytes:
+                raise RuntimeError(f"交付物 {path.name} 达到或超过上传限制，单个文件必须小于 {settings.max_artifact_mb} MB")
             if self.oss_storage:
                 _, oss_url = self.oss_storage.upload(request_id, kind, name, path)
                 data["external_url"] = oss_url

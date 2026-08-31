@@ -11,7 +11,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import PropertyMock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 import httpx
 from PIL import Image
@@ -1026,6 +1026,62 @@ class WorkflowTests(unittest.TestCase):
         finally:
             store.close()
 
+    def test_artifact_limit_defaults_to_one_gib_in_config_and_templates(self) -> None:
+        self.assertEqual(type(settings).__dataclass_fields__["max_artifact_mb"].default, 1024)
+        root = Path(__file__).resolve().parents[1]
+        for name in (".env.example", "local-runner/.env.runner.example",
+                     "deploy/backend/.env.backend.example", "deploy/cloud/.env.production.example"):
+            self.assertIn("AUTODEV_MAX_ARTIFACT_MB=1024", (root / name).read_text(encoding="utf-8"))
+
+    def test_oss_upload_accepts_over_200_mib_but_rejects_one_gib_and_above(self) -> None:
+        limit = 1024 * 1024 * 1024
+        store = RemoteStore("https://cloud.test", "runner-token", "runner-1")
+        response = httpx.Response(200, json={"artifact_id": 123}, request=httpx.Request("POST", "https://cloud.test"))
+        try:
+            for size in (200 * 1024 * 1024 + 1, limit - 1, limit, limit + 1):
+                with self.subTest(size=size):
+                    artifact = SimpleNamespace(name="app.jar", is_file=lambda: True,
+                                               stat=lambda: SimpleNamespace(st_size=size))
+                    store.oss_storage = Mock()
+                    store.oss_storage.upload.return_value = ("objects/app.jar", "https://oss.test/app.jar")
+                    with patch.object(type(settings), "max_artifact_mb", new_callable=PropertyMock, return_value=1024), \
+                         patch("app.store.Path", return_value=artifact), \
+                         patch.object(store, "_request", return_value=response) as register:
+                        if size < limit:
+                            self.assertEqual(store.add_artifact("upload-test", "package", "app.jar", "app.jar"), 123)
+                            store.oss_storage.upload.assert_called_once_with("upload-test", "package", "app.jar", artifact)
+                            self.assertEqual(register.call_args.kwargs["data"]["external_url"], "https://oss.test/app.jar")
+                            self.assertNotIn("files", register.call_args.kwargs)
+                        else:
+                            with self.assertRaisesRegex(RuntimeError, "必须小于 1024 MB"):
+                                store.add_artifact("upload-test", "package", "app.jar", "app.jar")
+                            store.oss_storage.upload.assert_not_called()
+                            register.assert_not_called()
+        finally:
+            store.close()
+
+    def test_cloud_upload_uses_exclusive_limit_and_removes_partial_files(self) -> None:
+        project_id = self.create_project("test-upload-boundary", "local_package")
+        created = self.client.post("/api/requests", json={"project_id": project_id, "work_item_id": 930210})
+        request_id = created.json()["id"]
+        headers = {"Authorization": "Bearer test-runner-token"}
+        # Use a 1 MiB configured threshold to exercise streaming boundaries without
+        # allocating GiB-sized request bodies. The default 1 GiB value is tested above.
+        with patch.object(type(settings), "max_artifact_mb", new_callable=PropertyMock, return_value=1):
+            for size in (1024 * 1024 - 1, 1024 * 1024, 1024 * 1024 + 1):
+                response = self.client.post(
+                    f"/api/runner/requests/{request_id}/artifacts", headers=headers,
+                    data={"kind": "package", "name": "app.jar"},
+                    files={"file": ("app.jar", b"x" * size, "application/octet-stream")},
+                )
+                self.assertEqual(response.status_code, 200 if size < 1024 * 1024 else 413, response.text)
+        detail = self.client.get(f"/api/requests/{request_id}").json()["request"]
+        self.assertEqual(len(detail["artifacts"]), 1)
+        saved = list((settings.delivery_dir / request_id / "uploads").iterdir())
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0].stat().st_size, 1024 * 1024 - 1)
+        update_request(request_id, status="cancelled")
+
     def test_sichuan_review_then_merge(self) -> None:
         project_id = self.create_project("test-sichuan", "sichuan_auto_review")
         detail = self.submit_and_process(
@@ -1811,7 +1867,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.15"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.16"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -2038,15 +2094,15 @@ else:
         self.assertIn("<span>自主</span>", admin_page.text)
         self.client.post("/api/auth/logout")
         login_page = self.client.get("/login")
-        self.assertIn("editorial-ui.css?v=1.0-Alpha.15-login", login_page.text)
-        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.15", login_page.text)
+        self.assertIn("editorial-ui.css?v=1.0-Alpha.16-login", login_page.text)
+        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.16", login_page.text)
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("<span>自主</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.15"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.16"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
