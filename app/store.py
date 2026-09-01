@@ -10,7 +10,10 @@ from typing import Any
 import httpx
 
 from .config import settings
-from .db import add_artifact, add_event, request_detail, row, transaction, update_request, update_step, utc_now
+from .db import (
+    add_artifact, add_event, prior_request_history, request_detail, row, transaction,
+    update_request, update_step, utc_now,
+)
 from .services.oss_storage import OssArtifactStorage, cleanup_local_deliveries
 
 
@@ -83,6 +86,10 @@ class LocalStore:
     def get_status(self, request_id: str) -> str | None:
         item = row("SELECT status FROM delivery_requests WHERE id=?", (request_id,))
         return item["status"] if item else None
+
+    @staticmethod
+    def prior_requests(project_key: str, work_item_id: int, request_id: str, limit: int = 8) -> list[dict[str, Any]]:
+        return prior_request_history(project_key, work_item_id, exclude_request_id=request_id, limit=limit)
 
     def notify(self, request_id: str, *, action_required: bool, terminal: bool = False) -> None:
         raise RuntimeError("本地存储不使用远程通知接口")
@@ -219,6 +226,21 @@ class RemoteStore:
             self._request("GET", "/api/runner/tasks", params={"runner_id": self.runner_id, "limit": limit})
         )
         return data.get("tasks", [])
+
+    def prior_requests(self, project_key: str, work_item_id: int, request_id: str, limit: int = 8) -> list[dict[str, Any]]:
+        data = self._json(
+            self._request(
+                "GET",
+                "/api/runner/request-history",
+                params={
+                    "project_key": project_key,
+                    "work_item_id": work_item_id,
+                    "request_id": request_id,
+                    "limit": limit,
+                },
+            )
+        )
+        return list(data.get("history") or [])
 
     def codex_watch_active(self, request_id: str) -> bool:
         data = self._json(self._request("GET", f"/api/runner/requests/{request_id}/codex-watch/active"))

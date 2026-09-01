@@ -940,3 +940,67 @@ select { color-scheme: light; }
   .root-cause-card { grid-template-columns: 1fr; gap: 7px; }
   .analysis-column + .analysis-column { border-left: 0; border-top: 1px solid #b9b2a6; }
 }
+
+/* Delivery assurance: an editorial audit folio embedded in each task. */
+.project-governance-strip { display:flex; flex-wrap:wrap; gap:5px; margin:15px 0 2px; padding:10px 0; border-top:1px solid #d4cdc0; border-bottom:1px solid #d4cdc0; }
+.project-governance-strip span { display:inline-flex; align-items:center; gap:5px; padding:4px 6px; border:1px solid #b9b1a3; background:#f2ede4; color:#615b51; font:800 8px/1 Consolas,monospace; letter-spacing:.04em; }
+.project-governance-strip i { width:5px; height:5px; background:#8b857b; }
+.project-governance-strip .on { border-color:#60897d; color:#1e6655; background:#e4eee9; }
+.project-governance-strip .on i { background:var(--editorial-green); }
+.governance-panel { position:relative; margin:28px 0; border:1px solid var(--editorial-ink); background:#f8f4eb; box-shadow:8px 8px 0 #c8c0b3; }
+.governance-panel::before { content:"AUDIT / 01"; position:absolute; right:17px; top:-9px; padding:3px 7px; background:var(--editorial-orange); color:var(--editorial-ink); font:900 8px Consolas,monospace; letter-spacing:.14em; }
+.governance-panel > header { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; padding:20px 22px 17px; border-bottom:2px solid var(--editorial-ink); background:repeating-linear-gradient(90deg,transparent 0 119px,rgba(23,24,19,.08) 119px 120px),#e8e2d7; }
+.governance-panel > header h3 { margin:2px 0 0; color:var(--editorial-ink); font:900 23px/1.05 "STZhongsong","SimSun",serif; letter-spacing:-.045em; }
+.governance-panel > header > span { padding:7px 9px; border:1px solid var(--editorial-ink); background:#fffaf1; color:var(--editorial-ink); font:900 9px Consolas,monospace; }
+.governance-panel > header > span[data-status="passed"] { background:#dbeae4; color:#185746; }
+.governance-panel > header > span[data-status="blocked"] { background:#f1cbc4; color:#8f2821; }
+.governance-panel > header > span[data-status="warning"] { background:#f3dfb1; color:#74500e; }
+.governance-block { padding:18px 21px 20px; border-bottom:1px solid #bdb5a7; }
+.governance-block:last-child { border-bottom:0; }
+.governance-block > h4 { display:flex; align-items:baseline; gap:8px; margin:0 0 13px; color:var(--editorial-ink); font:900 14px "Microsoft YaHei UI",sans-serif; }
+.governance-block > h4 small { color:var(--editorial-orange-ink); font:800 8px Consolas,monospace; letter-spacing:.12em; }
+.governance-history-grid,.acceptance-ledger-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+.governance-history { display:grid; grid-template-columns:29px minmax(0,1fr); gap:9px; min-width:0; padding:11px; border:1px solid #bdb5a7; background:#fffaf1; }
+.governance-history > span { color:var(--editorial-orange-ink); font:900 13px Georgia,serif; }
+.governance-history b,.governance-history p,.governance-history small { display:block; min-width:0; }
+.governance-history b { color:var(--editorial-ink); font-size:10px; }
+.governance-history p { margin:5px 0; color:#615a50; font-size:10px; line-height:1.45; }
+.governance-history small { overflow:hidden; color:#8a8276; font:8px Consolas,monospace; text-overflow:ellipsis; white-space:nowrap; }
+.acceptance-ledger-item { position:relative; padding:13px 13px 12px; border:1px solid #a9a193; border-left:5px solid #8b857b; background:#fffdf7; }
+.acceptance-ledger-item[data-status="completed"] { border-left-color:var(--editorial-green); }
+.acceptance-ledger-item[data-status="blocked"] { border-left-color:var(--red); background:#fae8e3; }
+.acceptance-ledger-item > header { display:flex; justify-content:space-between; color:var(--editorial-orange-ink); font:900 8px Consolas,monospace; }
+.acceptance-ledger-item h4 { margin:8px 0 6px; color:var(--editorial-ink); font-size:12px; line-height:1.4; }
+.acceptance-ledger-item p { margin:0 0 7px; overflow-wrap:anywhere; color:#5f594f; font:9px Consolas,monospace; }
+.acceptance-ledger-item small { color:#7b7469; font-size:9px; line-height:1.4; }
+.quality-check { display:grid; grid-template-columns:8px minmax(0,1fr) auto; gap:10px; align-items:start; padding:10px 0; border-top:1px solid #d2cabc; }
+.quality-check:first-of-type { border-top:0; }
+.quality-check > i { width:8px; height:8px; margin-top:3px; background:#8b857b; }
+.quality-check[data-status="passed"] > i { background:var(--editorial-green); }
+.quality-check[data-status="blocked"] > i { background:var(--red); }
+.quality-check[data-status="warning"] > i { background:var(--amber); }
+.quality-check b { color:var(--editorial-ink); font-size:11px; }
+.quality-check p { margin:3px 0 0; color:#686156; font-size:10px; }
+.quality-check > span { color:#5e574d; font:900 8px Consolas,monospace; text-transform:uppercase; }
+.invariant-row { display:grid; grid-template-columns:1fr auto; gap:4px 10px; padding:11px 0; border-top:1px solid #d2cabc; }
+.invariant-row:first-of-type { border-top:0; }
+.invariant-row b { color:var(--editorial-ink); font-size:11px; }
+.invariant-row > span { color:var(--editorial-orange-ink); font:900 8px Consolas,monospace; }
+.invariant-row p,.invariant-row small { grid-column:1/-1; margin:0; color:#686156; font-size:10px; }
+.analysis-environment { margin:17px 21px 0; padding:13px 15px; border:1px solid var(--editorial-ink); border-left:7px solid var(--editorial-green); background:#e4eee9; }
+.analysis-environment span,.analysis-environment b,.analysis-environment p,.analysis-environment small { display:block; }
+.analysis-environment span { color:#1e6655; font:900 8px Consolas,monospace; letter-spacing:.13em; }
+.analysis-environment b { margin-top:5px; color:var(--editorial-ink); font-size:13px; }
+.analysis-environment p { margin:4px 0; color:#4e5e57; font-size:10px; }
+.analysis-environment small { color:#6e7e76; font:8px Consolas,monospace; }
+.history-conflict { margin:8px 0; padding:11px 13px; border-left:5px solid var(--amber); background:#f4e5c1; }
+.history-conflict b { color:#604515; font-size:10px; }
+.history-conflict p { margin:5px 0; color:#6e5629; font-size:10px; }
+.history-conflict small { color:#826b3f; font-size:9px; }
+.governance-report-artifact { border-color:#7d6e52 !important; background:#eee4cc !important; }
+.governance-report-artifact > i { color:#75511a !important; }
+
+@media (max-width:760px) {
+  .governance-panel > header { align-items:flex-start; flex-direction:column; }
+  .governance-history-grid,.acceptance-ledger-grid { grid-template-columns:1fr; }
+}

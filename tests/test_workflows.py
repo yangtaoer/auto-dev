@@ -41,6 +41,7 @@ from app.project_catalog import (  # noqa: E402
     matching_project_terms,
 )
 from app.services.development_risks import development_risks  # noqa: E402
+from app.services.quality_gates import evaluate_development_quality  # noqa: E402
 from app.services.codex_runner import CodexRunner  # noqa: E402
 from app.services.dm7_plugin import discover_dm7_plugin  # noqa: E402
 from app.services.delivery import (  # noqa: E402
@@ -133,9 +134,12 @@ class WorkflowTests(unittest.TestCase):
                     indexes = {row[1] for row in conn.execute("PRAGMA index_list(delivery_requests)")}
                 finally:
                     conn.close()
-                self.assertTrue({"joint_group_id", "joint_project_index", "joint_project_count", "task_type", "analysis_result"} <= request_columns)
+                self.assertTrue({
+                    "joint_group_id", "joint_project_index", "joint_project_count", "task_type", "analysis_result",
+                    "history_context", "acceptance_ledger", "quality_gate_result",
+                } <= request_columns)
                 self.assertTrue({"result_request_ids", "matched_project_keys", "classification_summary", "task_type"} <= intake_columns)
-                self.assertIn("repository_tfs_paths", project_columns)
+                self.assertTrue({"repository_tfs_paths", "quality_profile", "artifact_policy"} <= project_columns)
                 self.assertIn("ix_delivery_requests_joint_group", indexes)
             finally:
                 object.__setattr__(settings, "data_dir", original_data_dir)
@@ -189,6 +193,49 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue({"package", "sql", "config"}.issubset(kinds))
         self.assertNotIn("report", kinds)
         self.assertTrue(any(event["event_type"] == "delivery.policy_enforced" for event in detail["events"]))
+
+    def test_existing_target_branch_implementation_is_verified_without_duplicate_pr(self) -> None:
+        project_id = self.create_project("test-existing-implementation", "product_manual_review")
+        created = self.client.post(
+            "/api/requests",
+            json={"project_id": project_id, "work_item_id": 910090, "delivery_options": []},
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        request_id = created.json()["id"]
+        result = {
+            "decision": "already_satisfied",
+            "summary": "最新 dev 已包含完整实现，本次仅复核证据。",
+            "changed_files": [],
+            "acceptance_mapping": ["最新分支实现已覆盖验收项"],
+            "acceptance_ledger": [{
+                "id": "AC-1", "criterion": "复用既有实现", "status": "completed",
+                "repositories": ["demo"], "files": [], "tests": ["目标分支回归通过"],
+                "evidence": ["提交 abc123 已进入 dev"],
+            }],
+            "business_invariants": [],
+            "database_validation": {},
+            "visual_validation": {},
+            "deployment_validation": {},
+            "menu_changes": [],
+            "existing_implementation": {
+                "verified": True,
+                "source_commits": ["abc123"],
+                "source_prs": ["#321"],
+                "evidence": ["dev:src/ExistingFeature.java"],
+            },
+            "risks": [], "blocking_risks": [], "sql_changes": [], "config_changes": [],
+            "database_operations": [], "supplement_requests": [],
+        }
+        with patch.object(worker, "_simulate_development", return_value=result), patch.object(
+            worker, "_send_status_email"
+        ) as send_mail:
+            worker.process_once()
+        detail = self.client.get(f"/api/requests/{request_id}").json()["request"]
+        self.assertEqual(detail["status"], "delivered")
+        self.assertIsNone(detail["pr_id"])
+        self.assertTrue(any(item["kind"] == "verification_report" for item in detail["artifacts"]))
+        self.assertTrue(any(item["event_type"] == "development.already_satisfied" for item in detail["events"]))
+        send_mail.assert_called_once_with(request_id, action_required=False)
 
     def test_problem_analysis_completes_without_code_changes_and_delivers_report(self) -> None:
         project_id = self.create_project("test-analysis", "product_manual_review")
@@ -1958,7 +2005,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.17"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.18"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -2194,15 +2241,15 @@ else:
         self.assertIn("<span>自主项目</span>", admin_page.text)
         self.client.post("/api/auth/logout")
         login_page = self.client.get("/login")
-        self.assertIn("editorial-ui.css?v=1.0-Alpha.17-login", login_page.text)
-        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.17", login_page.text)
+        self.assertIn("editorial-ui.css?v=1.0-Alpha.18-login", login_page.text)
+        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.18", login_page.text)
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("<span>自主项目</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.17"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.18"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
@@ -2723,7 +2770,10 @@ else:
         self.assertEqual(json.loads(environment["AUTODEV_CHANGED_REPOSITORIES"]), ["dcsd-app-ui"])
         self.assertEqual(build.call_args.args[1], workspace)
         collect.assert_called_once_with(
-            "reviewed-package-request", workspace, ["release/network-command-app-*.zip"]
+            "reviewed-package-request",
+            workspace,
+            ["release/network-command-app-*.zip"],
+            artifact_policy={},
         )
         complete.assert_called_once_with("reviewed-package-request")
         self.assertTrue(any("dcsd-app-ui" in message for _, _, message in store.steps))
@@ -3076,6 +3126,127 @@ else:
         self.assertIsNone(detail["pr_id"])
         mail.assert_called_once_with(request_id, action_required=True)
         update_request(request_id, status="cancelled")
+
+    def test_all_real_project_presets_publish_experience_and_machine_gates(self) -> None:
+        projects = load_project_presets()
+        self.assertGreaterEqual(len(projects), 11)
+        for project in projects:
+            with self.subTest(project=project["project_key"]):
+                self.assertTrue(project["development_instructions"])
+                self.assertTrue(project["verification_command"])
+                self.assertTrue(project["repository_expectations"])
+                self.assertTrue(project["quality_profile"]["history_reuse"])
+                self.assertTrue(project["quality_profile"]["require_acceptance_ledger"])
+                self.assertTrue(project["artifact_policy"]["allowed_user_facing_kinds"])
+        app_project = next(item for item in projects if item["project_key"] == "network-command-app")
+        self.assertFalse(app_project["artifact_policy"]["require_manifest"])
+        self.assertEqual(app_project["artifact_policy"]["allowed_user_facing_kinds"], ["package", "sql"])
+        self.assertEqual(app_project["artifact_policy"]["allowed_package_extensions"], [".zip", ".jar"])
+        self.assertIn(".xml", app_project["artifact_policy"]["forbidden_standalone_extensions"])
+
+    def test_runner_history_endpoint_returns_prior_evidence_for_same_requirement(self) -> None:
+        project_id = self.create_project("test-history-context", "local_package")
+        first = self.submit_and_process(project_id, 940001)
+        self.assertEqual(first["status"], "delivered")
+        response = self.client.get(
+            "/api/runner/request-history",
+            params={
+                "project_key": "test-history-context",
+                "work_item_id": 940001,
+                "request_id": "new-request",
+            },
+            headers={"Authorization": "Bearer test-runner-token"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        history = response.json()["history"]
+        self.assertEqual(history[0]["id"], first["id"])
+        self.assertEqual(history[0]["status"], "delivered")
+        self.assertIsInstance(history[0]["quality_gate_result"], dict)
+        for state in history[0]["repository_states"]:
+            self.assertNotIn("worktree_path", state)
+            self.assertNotIn("repository_path", state)
+
+    def test_quality_gate_blocks_duplicate_sql_version_and_unmapped_change(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            subprocess.run(["git", "init", "-q", "-b", "dev", str(repository)], check=True)
+            subprocess.run(["git", "-C", str(repository), "config", "user.name", "AutoDev Test"], check=True)
+            subprocess.run(["git", "-C", str(repository), "config", "user.email", "autodev@example.com"], check=True)
+            (repository / "sql").mkdir()
+            (repository / "sql" / "V2.0__baseline.sql").write_text("SELECT 1;\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(repository), "commit", "-q", "-m", "baseline"], check=True)
+            base = subprocess.run(
+                ["git", "-C", str(repository), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+            ).stdout.strip()
+            (repository / "sql" / "V2_0__feature.sql").write_text("SELECT 2;\n", encoding="utf-8")
+            (repository / "Feature.java").write_text("class Feature {}\n", encoding="utf-8")
+            state = {
+                "name": "demo", "worktree_path": str(repository), "base_commit": base,
+                "changed_files": ["sql/V2_0__feature.sql", "Feature.java"],
+            }
+            project = {
+                "quality_profile": {
+                    "require_acceptance_ledger": True,
+                    "business_invariants": {"required": False, "change_patterns": []},
+                    "sql": {"migration_version_guard": True},
+                    "visual": {"required_for_frontend": False},
+                    "menu": {"require_binding_manifest": False},
+                }
+            }
+            result = {
+                "decision": "completed",
+                "acceptance_ledger": [{
+                    "id": "AC-1", "criterion": "升级 SQL", "status": "completed",
+                    "repositories": ["demo"], "files": ["sql/V2_0__feature.sql"],
+                    "tests": ["SQL 静态检查"], "evidence": [],
+                }],
+                "business_invariants": [],
+            }
+            gate = evaluate_development_quality(project, [state], result)
+            self.assertEqual(gate["status"], "blocked")
+            joined = "；".join(gate["blockers"])
+            self.assertIn("迁移版本 V2.0 冲突", joined)
+            self.assertIn("Feature.java", joined)
+            self.assertEqual(gate["business_invariants"], [])
+
+    def test_artifact_policy_rejects_xml_as_standalone_app_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Mapper.xml").write_text("<mapper/>\n", encoding="utf-8")
+            service = ArtifactService(recorder=lambda *_args: 1)
+            with self.assertRaisesRegex(RuntimeError, "禁止把 .xml 文件作为独立交付物"):
+                service.collect_packages(
+                    "app-policy",
+                    root,
+                    ["*.xml"],
+                    artifact_policy={
+                        "require_packages": True,
+                        "forbidden_standalone_extensions": [".xml"],
+                    },
+                )
+        service = ArtifactService(
+            detail_loader=lambda _request_id: {
+                "delivery_mode": "sichuan_review_local_package",
+                "delivery_options": [],
+                "artifacts": [
+                    {"kind": "package", "name": "ddyxzhyy.zip"},
+                    {"kind": "sql", "name": "V3.1__app.sql"},
+                    {"kind": "delivery_manifest", "name": "delivery-validation-manifest.json"},
+                ],
+            }
+        )
+        blockers = service.validate_artifact_policy(
+            "app-policy",
+            {
+                "artifact_policy": {
+                    "require_packages": True,
+                    "allowed_user_facing_kinds": ["package", "sql"],
+                    "forbidden_standalone_extensions": [".xml"],
+                }
+            },
+        )
+        self.assertIn("delivery_manifest", "；".join(blockers))
 
 
 if __name__ == "__main__":

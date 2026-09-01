@@ -15,10 +15,101 @@ from .tfs import TfsClient
 RESULT_SCHEMA = {
     "type": "object",
     "properties": {
-        "decision": {"type": "string", "enum": ["completed", "needs_input"]},
+        "decision": {"type": "string", "enum": ["completed", "needs_input", "already_satisfied"]},
         "summary": {"type": "string"},
         "changed_files": {"type": "array", "items": {"type": "string"}},
         "acceptance_mapping": {"type": "array", "items": {"type": "string"}},
+        "acceptance_ledger": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "criterion": {"type": "string"},
+                    "status": {"type": "string", "enum": ["completed", "partial", "blocked", "not_applicable"]},
+                    "repositories": {"type": "array", "items": {"type": "string"}},
+                    "files": {"type": "array", "items": {"type": "string"}},
+                    "tests": {"type": "array", "items": {"type": "string"}},
+                    "evidence": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["id", "criterion", "status", "repositories", "files", "tests", "evidence"],
+                "additionalProperties": False,
+            },
+        },
+        "business_invariants": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "status": {"type": "string", "enum": ["verified", "unverified", "not_applicable"]},
+                    "source": {"type": "string"},
+                    "expected": {"type": "string"},
+                    "actual": {"type": "string"},
+                    "evidence": {"type": "string"},
+                },
+                "required": ["name", "status", "source", "expected", "actual", "evidence"],
+                "additionalProperties": False,
+            },
+        },
+        "database_validation": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["verified", "unavailable", "not_applicable"]},
+                "environment": {"type": "string"},
+                "connection_name": {"type": "string"},
+                "checks": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["status", "environment", "connection_name", "checks"],
+            "additionalProperties": False,
+        },
+        "visual_validation": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["passed", "blocked", "not_applicable"]},
+                "routes": {"type": "array", "items": {"type": "string"}},
+                "viewports": {"type": "array", "items": {"type": "string"}},
+                "screenshots": {"type": "array", "items": {"type": "string"}},
+                "notes": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["status", "routes", "viewports", "screenshots", "notes"],
+            "additionalProperties": False,
+        },
+        "deployment_validation": {
+            "type": "object",
+            "properties": {
+                "asset_manifest_checked": {"type": "boolean"},
+                "directory_layout_checked": {"type": "boolean"},
+                "cache_strategy_checked": {"type": "boolean"},
+                "notes": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["asset_manifest_checked", "directory_layout_checked", "cache_strategy_checked", "notes"],
+            "additionalProperties": False,
+        },
+        "menu_changes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "view_file": {"type": "string"},
+                    "menu_link": {"type": "string"},
+                    "permission_binding": {"type": "string"},
+                },
+                "required": ["view_file", "menu_link", "permission_binding"],
+                "additionalProperties": False,
+            },
+        },
+        "existing_implementation": {
+            "type": "object",
+            "properties": {
+                "verified": {"type": "boolean"},
+                "source_commits": {"type": "array", "items": {"type": "string"}},
+                "source_prs": {"type": "array", "items": {"type": "string"}},
+                "evidence": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["verified", "source_commits", "source_prs", "evidence"],
+            "additionalProperties": False,
+        },
         "risks": {"type": "array", "items": {"type": "string"}},
         "blocking_risks": {"type": "array", "items": {"type": "string"}},
         "sql_changes": {"type": "array", "items": {"type": "string"}},
@@ -41,7 +132,9 @@ RESULT_SCHEMA = {
         },
     },
     "required": [
-        "decision", "summary", "changed_files", "acceptance_mapping", "risks", "sql_changes",
+        "decision", "summary", "changed_files", "acceptance_mapping", "acceptance_ledger",
+        "business_invariants", "database_validation", "visual_validation", "deployment_validation", "menu_changes",
+        "existing_implementation", "risks", "sql_changes",
         "config_changes", "database_operations", "supplement_requests", "blocking_risks",
     ],
     "additionalProperties": False,
@@ -57,6 +150,34 @@ ANALYSIS_RESULT_SCHEMA = {
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
         "is_data_issue": {"type": "boolean"},
         "code_change_needed": {"type": "boolean"},
+        "issue_classification": {
+            "type": "string", "enum": ["code", "data", "environment", "mixed", "unknown"]
+        },
+        "environment": {
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "data_source": {"type": "string"},
+                "observed_at": {"type": "string"},
+                "verified": {"type": "boolean"},
+            },
+            "required": ["label", "data_source", "observed_at", "verified"],
+            "additionalProperties": False,
+        },
+        "historical_conflicts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "request_id": {"type": "string"},
+                    "conflict": {"type": "string"},
+                    "resolution": {"type": "string"},
+                    "evidence": {"type": "string"},
+                },
+                "required": ["request_id", "conflict", "resolution", "evidence"],
+                "additionalProperties": False,
+            },
+        },
         "changed_files": {"type": "array", "items": {"type": "string"}},
         "evidence": {
             "type": "array",
@@ -79,6 +200,7 @@ ANALYSIS_RESULT_SCHEMA = {
     },
     "required": [
         "decision", "summary", "root_cause", "confidence", "is_data_issue", "code_change_needed",
+        "issue_classification", "environment", "historical_conflicts",
         "changed_files", "evidence", "affected_scope", "recommended_actions", "risks",
         "database_operations", "supplement_requests",
     ],
@@ -99,6 +221,7 @@ class CodexRunner:
         cwd: Path,
         work_item: dict,
         project: dict,
+        history_context: list[dict[str, Any]] | None = None,
         on_event: Callable[[str, str], None],
         on_live_event: Callable[[dict[str, Any]], None] | None = None,
         resume_thread_id: str | None = None,
@@ -121,6 +244,18 @@ class CodexRunner:
         project_context = str(project.get("development_instructions") or "").strip()
         if project_context:
             project_context = "项目专属开发约定（以本次隔离仓库和已验证代码为准）：\n" + project_context
+        quality_profile = project.get("quality_profile") or {}
+        quality_context = (
+            "项目自动质量门禁（最终结果必须提供对应证据）：\n"
+            + json.dumps(quality_profile, ensure_ascii=False, indent=2)[:16000]
+            if quality_profile else ""
+        )
+        history = [item for item in (history_context or []) if isinstance(item, dict)][:8]
+        history_text = (
+            "同项目同一 TFS 需求的历史执行记录（仅作为线索，必须回到最新目标分支复核）：\n"
+            + json.dumps(history, ensure_ascii=False, indent=2)[:24000]
+            if history else "同项目同一 TFS 需求的历史执行记录：无"
+        )
         supplement_context = ""
         if supplement_answers:
             request_by_id = {
@@ -189,8 +324,10 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
 {requirement_image_context}
 仓库范围：{repository_scope}
 {project_context}
+{quality_context}
 {joint_context}
 {supplement_context}
+{history_text}
 
 约束：
 1. 这是只读问题分析。不得修改、创建或删除任何仓库文件，不执行 git commit、git push、创建 PR、构建、发版或发送通知。
@@ -202,6 +339,8 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
 7. 找到高可信或中可信原因时返回 decision=completed。没有代码变更是本任务的正常成功条件，changed_files 必须为空数组。
 8. code_change_needed 只表示后续是否建议转为自主研发任务；本轮无论其值如何都不得改代码。
 9. 所有面向用户的结论必须使用简体中文，明确给出根因、证据、影响范围、可信度和建议动作。
+10. 必须标注本次使用的代码、配置、数据库或现场数据属于哪个环境及观察时间；不得把开发库缺少数据表述为现场缺少数据。
+11. 必须把问题归类为代码、数据、环境、混合或未知；存在历史分析时逐项比较，结论不同必须在 historical_conflicts 中说明矛盾、取舍和证据。
 """.strip()
         else:
             prompt = f"""
@@ -215,8 +354,10 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
 {requirement_image_context}
 仓库范围：{repository_scope}
 {project_context}
+{quality_context}
 {joint_context}
 {supplement_context}
+{history_text}
 
 约束：
 1. 只修改当前工作区，不执行 git commit、git push、创建 PR 或发送通知。
@@ -234,6 +375,12 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
 13. 只有缺少的信息会直接决定错误业务口径、越权或不可逆数据设计，且无法从代码、TFS、配置和 DM7 本机开发库查明时，才返回 decision=needs_input。此时不要提交半成品，supplement_requests 必须逐项给出明确问题、原因和建议答案。
 14. 可以可靠实现时必须返回 decision=completed 并完成代码、自检及必要 SQL/配置修改；普通提醒（如缺少截图中指定样例、已覆盖的测试限制）写入 risks，不得因此跳过研发。
 15. 风险必须分级：需要用户补充明确业务信息时返回 needs_input 与 supplement_requests；需要管理员授权的高风险改动或无法保证完整交付的技术阻塞写入 blocking_risks（无则 []）。缺少必要客户端/服务端仓库、只增加接口却没有页面接入、验收关键项未实现不能宣称 completed 且无阻塞，必须说明缺失范围。不得用普通 risks 掩盖未实现功能。
+16. 开始修改前先检查历史任务、最新目标分支、相关 PR 与提交。若需求已完整进入最新目标分支，返回 decision=already_satisfied，保持工作区零改动，并在 existing_implementation 中列出提交、PR和代码证据；不得重复开发。
+17. 将每条验收标准编号为 AC-1、AC-2……写入 acceptance_ledger；每项必须映射仓库、文件、测试和证据。changed_files 中的每个实际变更都必须归属至少一个验收项，以支持按验收项精确回滚。
+18. 涉及统计、积分、状态、数据关联或保存查询链时，必须核验业务数据不变量，包括数据来源时点、计算公式、排序与显示字段、导出与页面列、提交字段与持久化/查询关联键的一致性，并写入 business_invariants。
+19. 涉及前端时按项目 quality_profile 完成真实路由、指定视口和截图验证；同时核对构建资源哈希、部署目录层级和缓存策略。无法完成时必须标为 blocked，不能用构建成功替代页面验收。
+20. 新增 view.xml 时必须输出 menu_changes，包含菜单链接和权限绑定方式；版本化 SQL 必须在最新目标分支上检查版本冲突、Schema 占位符、DM7 LOB 限制和 SQL 变更日志。
+21. database_validation 必须如实区分“插件可用”和“数据库连接已验证”；只有实际连通并执行元数据或样例查询后才能标为 verified，并注明环境和连接名称。
 """.strip()
 
         developer_instructions = (

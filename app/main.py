@@ -32,6 +32,7 @@ from .db import (
     init_db,
     json_value,
     project_for_api,
+    prior_request_history,
     public_user,
     replace_user_emails,
     request_detail,
@@ -74,7 +75,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.17",
+    version="1.0-Alpha.18",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -132,6 +133,8 @@ class ProjectInput(BaseModel):
     verification_command: str = ""
     development_instructions: str = Field(default="", max_length=12000)
     repository_expectations: dict[str, str] = Field(default_factory=dict)
+    quality_profile: dict[str, Any] = Field(default_factory=dict)
+    artifact_policy: dict[str, Any] = Field(default_factory=dict)
     build_command: str = ""
     package_patterns: list[str] = []
     sql_patterns: list[str] = ["**/*.sql"]
@@ -332,8 +335,22 @@ def public_request_payload(detail: dict[str, Any]) -> dict[str, Any]:
         }
         for event in result.get("events", [])
     ]
-    if isinstance(result.get("analysis_result"), dict):
-        result["analysis_result"] = public_engine_text_tree(result["analysis_result"])
+    if isinstance(result.get("history_context"), list):
+        result["history_context"] = [
+            {
+                key: item.get(key)
+                for key in (
+                    "id", "work_item_revision", "task_type", "status", "title",
+                    "result_summary", "pr_id", "pr_url", "created_at", "completed_at",
+                )
+                if item.get(key) not in (None, "")
+            }
+            for item in result["history_context"]
+            if isinstance(item, dict)
+        ]
+    for key in ("analysis_result", "history_context", "acceptance_ledger", "quality_gate_result"):
+        if isinstance(result.get(key), (dict, list)):
+            result[key] = public_engine_text_tree(result[key])
     return result
 
 
@@ -1825,6 +1842,25 @@ def runner_tasks(runner_id: str, limit: int = 80) -> dict:
     return {"tasks": tasks}
 
 
+@app.get("/api/runner/request-history", dependencies=[Depends(runner_auth)])
+def runner_request_history(
+    project_key: str,
+    work_item_id: int,
+    request_id: str = "",
+    limit: int = 8,
+) -> dict:
+    if not row("SELECT 1 FROM projects WHERE project_key=?", (project_key,)):
+        raise HTTPException(status_code=404, detail="项目不存在")
+    return {
+        "history": prior_request_history(
+            project_key,
+            work_item_id,
+            exclude_request_id=request_id,
+            limit=limit,
+        )
+    }
+
+
 @app.get("/api/runner/requests/{request_id}", dependencies=[Depends(runner_auth)])
 def runner_get_request(request_id: str) -> dict:
     return {"request": runner_request(request_id)}
@@ -1851,7 +1887,7 @@ RUNNER_MUTABLE_FIELDS = {
     "branch_name", "base_commit", "commit_hash", "pr_id", "pr_url", "merge_commit", "codex_thread_id",
     "result_summary", "error_message", "repository_states", "started_at", "completed_at", "next_poll_at", "email_sent_at",
     "supplement_requests", "supplement_answers", "supplement_requested_at", "supplemented_at",
-    "analysis_result",
+    "analysis_result", "history_context", "acceptance_ledger", "quality_gate_result",
 }
 
 

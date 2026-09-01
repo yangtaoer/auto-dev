@@ -39,6 +39,11 @@ from .services.pipeline_release import TfsPipelineReleaseService
 from .services.process_env import git_authenticated_env, sanitized_process_env
 from .project_catalog import load_project_presets, resolve_projects_for_work_item
 from .services.development_risks import development_risks
+from .services.quality_gates import (
+    evaluate_analysis_quality,
+    evaluate_development_quality,
+    normalize_acceptance_ledger,
+)
 from .live_stream import LiveCodexPublisher
 from .store import LocalStore
 
@@ -177,11 +182,17 @@ class Worker:
             self.store.update_request(request_id, status=RunStatus.VALIDATING.value, started_at=utc_now(), progress=5)
             self.store.update_step(request_id, "validate", "running", "正在读取并校验 TFS 需求")
             work_item = self._validate(detail, project)
+            history_context = self.store.prior_requests(
+                str(project.get("project_key") or detail.get("project_key") or ""),
+                int(work_item["id"]),
+                request_id,
+            )
             self.store.update_request(
                 request_id,
                 title=work_item["title"],
                 requirement_summary=self._plain_text(work_item.get("description", ""))[:4000],
                 work_item_revision=work_item.get("revision"),
+                history_context=history_context,
                 progress=15,
             )
             self.store.update_step(
@@ -191,6 +202,12 @@ class Worker:
                 f"需求准入通过：{work_item.get('work_item_type', '—')} / {work_item.get('state', '—')}，revision {work_item.get('revision', '—')}",
             )
             self.store.add_event(request_id, "tfs.validated", f"TFS #{work_item['id']} 准入校验通过")
+            self.store.add_event(
+                request_id,
+                "history.loaded",
+                f"已检索同项目同需求历史记录 {len(history_context)} 条",
+                metadata={"request_ids": [item.get("id") for item in history_context]},
+            )
             self._validate_delivery_plan(request_id, detail, project)
             self._check_cancelled(request_id)
 
@@ -240,6 +257,7 @@ class Worker:
                 "running",
                 "DevCore 正在结合代码、TFS 与开发库定位问题" if analysis_task else "DevCore 正在分析需求并修改代码",
             )
+            paths: list[str] = []
             if project.get("simulation_mode"):
                 result = (
                     self._simulate_analysis(request_id, work_item)
@@ -254,6 +272,7 @@ class Worker:
                         cwd=worktree,
                         work_item=work_item,
                         project=project,
+                        history_context=history_context,
                         on_event=lambda event_type, message: self.store.add_event(request_id, event_type, message),
                         on_live_event=live_publisher.emit,
                         resume_thread_id=detail.get("codex_thread_id") if detail.get("supplement_answers") else None,
@@ -297,13 +316,28 @@ class Worker:
                     self.store.add_event(request_id, "policy.protected_change", "检测到受保护路径变更，任务已暂停", level="warning", metadata={"paths": blocked})
                     return
             summary = result.get("summary", "")
+            acceptance_ledger = normalize_acceptance_ledger(result) if not analysis_task else []
+            if acceptance_ledger:
+                self.store.update_request(request_id, acceptance_ledger=acceptance_ledger)
             if analysis_task:
+                analysis_gate = evaluate_analysis_quality(project, result, history_context)
                 self.store.update_request(
                     request_id,
                     result_summary=summary,
                     analysis_result=result,
                     codex_thread_id=codex_thread_id,
+                    quality_gate_result=analysis_gate,
                 )
+                if analysis_gate["warnings"]:
+                    self.store.add_event(
+                        request_id,
+                        "quality.analysis_warning",
+                        "；".join(analysis_gate["warnings"]),
+                        level="warning",
+                        metadata=analysis_gate,
+                    )
+                if analysis_gate["blockers"] and result.get("decision") == "completed":
+                    raise RuntimeError("问题分析质量门禁未通过：" + "；".join(analysis_gate["blockers"]))
                 if result.get("changed_files"):
                     raise RuntimeError("问题分析任务报告了代码文件变更，已拒绝生成分析交付")
             supplement_requests = self._normalize_supplement_requests(result.get("supplement_requests"))
@@ -362,6 +396,23 @@ class Worker:
                 return
             mode = DeliveryMode(detail["delivery_mode"])
             warnings, blockers = development_risks(result, legacy_review=mode.value in SICHUAN_APPROVAL_DELIVERY_MODES)
+            quality_gate = evaluate_development_quality(project, repository_states, result)
+            self.store.update_request(
+                request_id,
+                acceptance_ledger=acceptance_ledger,
+                quality_gate_result=quality_gate,
+            )
+            if quality_gate["warnings"]:
+                warnings.extend(quality_gate["warnings"])
+            if quality_gate["blockers"]:
+                blockers.extend(quality_gate["blockers"])
+            self.store.add_event(
+                request_id,
+                "quality.gates_completed",
+                f"研发质量门禁：{quality_gate['status']}，检查 {len(quality_gate['checks'])} 项",
+                level="warning" if quality_gate["status"] != "passed" else "info",
+                metadata=quality_gate,
+            )
             if warnings:
                 self.store.add_event(request_id, "review.advisory", "研发风险提示：" + "；".join(warnings), level="warning")
             if blockers:
@@ -378,6 +429,19 @@ class Worker:
                 self.store.update_step(request_id, "develop", "failed", "发现阻塞风险，需要人工确认")
                 self.store.add_event(request_id, "review.risk_found", risk_text, level="warning")
                 self._send_status_email(request_id, action_required=True)
+                return
+            if result.get("decision") == "already_satisfied":
+                if paths:
+                    raise RuntimeError("需求声明已在目标分支实现，但工作区仍产生代码变更")
+                self.store.update_request(
+                    request_id,
+                    result_summary=summary,
+                    codex_thread_id=codex_thread_id,
+                    progress=88,
+                )
+                self.store.update_step(request_id, "develop", "completed", summary or "已验证目标分支现有实现")
+                self.store.update_step(request_id, "clarify", "skipped", "现有实现证据充分，无需补充")
+                self._complete_existing_implementation(request_id, result)
                 return
             if not project.get("simulation_mode") and not paths:
                 raise RuntimeError("DevCore 执行完成，但没有产生代码变更")
@@ -1147,7 +1211,12 @@ class Worker:
                 raise RuntimeError("本地打包交付方式必须配置 build_command")
             output = run_command(build_command, worktree)
             self.store.add_event(request_id, "build.completed", "本地构建命令执行成功", metadata={"output_tail": output[-1000:]})
-            self.artifacts.collect_packages(request_id, worktree, project.get("package_patterns", []))
+            self.artifacts.collect_packages(
+                request_id,
+                worktree,
+                project.get("package_patterns", []),
+                artifact_policy=project.get("artifact_policy") or {},
+            )
         self._complete_delivery(request_id)
 
     @staticmethod
@@ -1224,7 +1293,12 @@ class Worker:
             f"已按变更端完成本地打包：{changed_label}",
             metadata={"repositories": [state["name"] for state in changed_states], "output_tail": output[-1000:]},
         )
-        self.artifacts.collect_packages(request_id, workspace_root, project.get("package_patterns", []))
+        self.artifacts.collect_packages(
+            request_id,
+            workspace_root,
+            project.get("package_patterns", []),
+            artifact_policy=project.get("artifact_policy") or {},
+        )
         self.store.update_step(request_id, "release", "completed", f"已生成 {changed_label} 的本地交付包")
         self._complete_delivery(request_id)
 
@@ -1315,6 +1389,67 @@ class Worker:
             return
         self._complete_delivery(request_id)
 
+    def _complete_existing_implementation(self, request_id: str, result: dict) -> None:
+        """Close a duplicate run after latest-target-branch verification, without creating another PR."""
+        detail = self.store.detail(request_id)
+        if not detail:
+            raise RuntimeError("历史实现验证任务不存在")
+        project = detail["policy_snapshot"]
+        self.store.update_request(
+            request_id,
+            status=RunStatus.DELIVERING.value,
+            current_step="deliver",
+            progress=94,
+            error_message="",
+        )
+        self.store.update_step(request_id, "submit", "skipped", "最新目标分支已包含完整实现，不重复提交代码")
+        self.store.update_step(request_id, "release", "skipped", "本次为历史实现复核，不重复构建或发版")
+        self.store.update_step(request_id, "deliver", "running", "正在生成历史实现验证报告")
+        existing = result.get("existing_implementation") or {}
+        lines = [
+            f"# TFS #{detail['work_item_id']} 历史实现验证报告",
+            "",
+            str(result.get("summary") or "最新目标分支已包含需求实现。"),
+            "",
+            "## 提交与 PR",
+            "",
+        ]
+        lines.extend(f"- 提交：{value}" for value in existing.get("source_commits") or [])
+        lines.extend(f"- PR：{value}" for value in existing.get("source_prs") or [])
+        if not (existing.get("source_commits") or existing.get("source_prs")):
+            lines.append("- 未提供编号，详见代码证据")
+        lines.extend(["", "## 代码与验收证据", ""])
+        lines.extend(f"- {value}" for value in existing.get("evidence") or [])
+        for item in detail.get("acceptance_ledger") or []:
+            lines.append(f"- {item.get('id')} · {item.get('criterion')}：{item.get('status')}")
+        report_name = f"TFS-{detail['work_item_id']}-历史实现验证报告.md"
+        report_path = self.artifacts.request_dir(request_id) / report_name
+        report_path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+        self.store.add_artifact(request_id, "verification_report", report_name, str(report_path))
+        self.store.add_event(
+            request_id,
+            "development.already_satisfied",
+            "已确认最新目标分支包含完整实现，本次未重复创建提交或 PR",
+            metadata=existing,
+        )
+        detail = self.store.detail(request_id) or detail
+        if not project.get("simulation_mode"):
+            TfsClient(project["tfs_collection_url"]).update_delivery_artifacts(
+                int(detail["work_item_id"]), self.artifacts.delivery_manifest_html(detail)
+            )
+        completed_at = utc_now()
+        self.store.update_request(request_id, completed_at=completed_at)
+        self._send_status_email(request_id, action_required=False)
+        self.store.update_request(
+            request_id,
+            status=RunStatus.DELIVERED.value,
+            current_step="deliver",
+            progress=100,
+        )
+        self.store.update_step(request_id, "deliver", "completed", "历史实现验证报告已生成，未重复研发")
+        if detail.get("joint_group_id") and self.store.remote:
+            self.store.finalize_joint(request_id)
+
     def _complete_analysis(self, request_id: str, result: dict) -> None:
         """Persist and deliver a read-only problem-analysis result without entering the code pipeline."""
         detail = self.store.detail(request_id)
@@ -1404,6 +1539,14 @@ class Worker:
                 f"  {item.get('detail') or '—'}"
             )
         evidence = "\n".join(evidence_lines) or "- 暂无可复核证据"
+        environment = result.get("environment") or {}
+        conflicts = "\n".join(
+            f"- 历史任务 `{item.get('request_id') or '未知'}`：{item.get('conflict') or '结论不同'}；"
+            f"处理：{item.get('resolution') or '未说明'}；证据：{item.get('evidence') or '—'}"
+            for item in result.get("historical_conflicts") or []
+            if isinstance(item, dict)
+        ) or "- 未发现需要说明的历史结论差异"
+        quality = detail.get("quality_gate_result") or {}
         return f"""# TFS #{detail['work_item_id']} 问题分析报告
 
 ## 基本信息
@@ -1412,8 +1555,12 @@ class Worker:
 - 问题：{detail.get('title') or '—'}
 - 分析人：AutoDev · DevCore
 - 结论可信度：{confidence}
+- 问题分类：{result.get('issue_classification') or 'unknown'}
 - 是否属于数据问题：{'是' if result.get('is_data_issue') else '否'}
 - 是否建议转为自主研发：{'是' if result.get('code_change_needed') else '否'}
+- 核验环境：{environment.get('label') or '未标注'}
+- 数据来源：{environment.get('data_source') or '未标注'}
+- 观察时间：{environment.get('observed_at') or '未标注'}
 
 ## 分析结论
 
@@ -1442,6 +1589,15 @@ class Worker:
 ## 数据库核验
 
 {bullets(result.get('database_operations'))}
+
+## 历史分析对照
+
+{conflicts}
+
+## 分析质量门禁
+
+- 状态：{quality.get('status') or '未执行'}
+{bullets(quality.get('warnings'), empty='无提醒')}
 
 ---
 
@@ -1496,6 +1652,32 @@ class Worker:
             and DELIVERY_OPTION_LICENSE_REQUEST in options
         ):
             self._ensure_license_application(request_id, detail, project)
+            detail = self.store.detail(request_id)
+        artifact_policy = project.get("artifact_policy") or {}
+        artifact_blockers = self.artifacts.validate_artifact_policy(request_id, project)
+        if artifact_policy:
+            gate = dict(detail.get("quality_gate_result") or {})
+            checks = list(gate.get("checks") or [])
+            checks = [item for item in checks if item.get("id") != "artifact-contract"]
+            checks.append(
+                {
+                    "id": "artifact-contract",
+                    "name": "项目交付物契约",
+                    "status": "blocked" if artifact_blockers else "passed",
+                    "detail": "；".join(artifact_blockers) if artifact_blockers else "交付物类型、扩展名和必需包均符合项目白名单",
+                    "evidence": [str(item.get("name") or "") for item in detail.get("artifacts") or []],
+                }
+            )
+            gate["checks"] = checks
+            gate["blockers"] = list(dict.fromkeys([*(gate.get("blockers") or []), *artifact_blockers]))
+            gate["status"] = "blocked" if gate["blockers"] else (gate.get("status") or "passed")
+            self.store.update_request(request_id, quality_gate_result=gate)
+            detail = self.store.detail(request_id)
+        if artifact_blockers:
+            raise RuntimeError("交付物契约未通过：" + "；".join(artifact_blockers))
+        if artifact_policy.get("require_manifest"):
+            self.artifacts.create_delivery_validation_manifest(request_id, detail)
+            self.store.add_event(request_id, "artifact.manifest_created", "已生成交付文件 SHA256 与构建提交清单")
             detail = self.store.detail(request_id)
         if detail.get("joint_group_id") and self.store.remote:
             completed_at = utc_now()
@@ -1780,8 +1962,32 @@ class Worker:
             "summary": f"已完成“{work_item['title']}”的演示开发，并验证交付流程。",
             "changed_files": ["src/demo/FeatureService.java", "config/application-demo.yml", "sql/upgrade.sql"],
             "acceptance_mapping": ["自动研发入口可用", "交付产物可追踪"],
-            "risks": [], "sql_changes": ["sql/upgrade.sql"], "config_changes": ["config/application-demo.yml"],
-            "database_operations": [], "supplement_requests": [],
+            "acceptance_ledger": [
+                {
+                    "id": "AC-1", "criterion": "自动研发入口可用", "status": "completed",
+                    "repositories": ["demo"], "files": ["src/demo/FeatureService.java"],
+                    "tests": ["演示流程测试"], "evidence": ["任务进入研发流水线"],
+                },
+                {
+                    "id": "AC-2", "criterion": "交付产物可追踪", "status": "completed",
+                    "repositories": ["demo"], "files": ["config/application-demo.yml", "sql/upgrade.sql"],
+                    "tests": ["交付物归集测试"], "evidence": ["演示包、配置和 SQL 已归集"],
+                },
+            ],
+            "business_invariants": [],
+            "database_validation": {
+                "status": "not_applicable", "environment": "演示环境",
+                "connection_name": "", "checks": [],
+            },
+            "visual_validation": {"status": "not_applicable", "routes": [], "viewports": [], "screenshots": [], "notes": []},
+            "deployment_validation": {
+                "asset_manifest_checked": False, "directory_layout_checked": False,
+                "cache_strategy_checked": False, "notes": ["演示任务不涉及真实前端部署"],
+            },
+            "menu_changes": [],
+            "existing_implementation": {"verified": False, "source_commits": [], "source_prs": [], "evidence": []},
+            "risks": [], "blocking_risks": [], "sql_changes": ["sql/upgrade.sql"],
+            "config_changes": ["config/application-demo.yml"], "database_operations": [], "supplement_requests": [],
         }
 
     def _simulate_analysis(self, request_id: str, work_item: dict) -> dict:
@@ -1794,6 +2000,12 @@ class Worker:
             "confidence": "high",
             "is_data_issue": True,
             "code_change_needed": False,
+            "issue_classification": "data",
+            "environment": {
+                "label": "演示开发环境", "data_source": "本机演示 DM7 数据",
+                "observed_at": utc_now(), "verified": True,
+            },
+            "historical_conflicts": [],
             "changed_files": [],
             "evidence": [
                 {

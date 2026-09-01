@@ -63,7 +63,9 @@ def visible_delivery_artifacts(
         if item.get("kind") not in {"report", "pull_request", "merge_evidence", "email_preview"}
         and not (item.get("kind") == "merge_screenshot" and "凭证" in str(item.get("name") or ""))
     ]
-    analysis_reports = [item for item in visible if item.get("kind") == "analysis_report"]
+    analysis_reports = [
+        item for item in visible if item.get("kind") in {"analysis_report", "verification_report", "delivery_manifest"}
+    ]
     if delivery_mode in REVIEW_DELIVERY_MODES:
         allowed = {"menu_link"}
         # None marks pre-option legacy rows and keeps their original screenshot/License behavior.
@@ -77,7 +79,10 @@ def visible_delivery_artifacts(
             if DELIVERY_OPTION_AUTO_RELEASE in delivery_options:
                 allowed.add("release_artifact")
         return analysis_reports + [
-            item for item in visible if item.get("kind") in allowed and item.get("kind") != "analysis_report"
+            item
+            for item in visible
+            if item.get("kind") in allowed
+            and item.get("kind") not in {"analysis_report", "verification_report", "delivery_manifest"}
         ]
     return visible
 

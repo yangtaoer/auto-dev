@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import fnmatch
 import base64
+import hashlib
 import html
+import json
 import mimetypes
 import re
 import shutil
@@ -155,7 +157,11 @@ class ArtifactService:
             "sql": project.get("sql_patterns", []),
             "config": project.get("config_patterns", []),
         }
+        artifact_policy = project.get("artifact_policy") or {}
+        allowed_changed_kinds = set(artifact_policy.get("allowed_changed_asset_kinds") or groups)
         for kind, patterns in groups.items():
+            if kind not in allowed_changed_kinds:
+                continue
             for relative in paths:
                 source = worktree / relative
                 if source.is_file() and matches_any(relative, patterns):
@@ -195,6 +201,8 @@ class ArtifactService:
             "license_request": "License 授权申请",
             "release_artifact": "自动发版产物",
             "analysis_report": "问题分析报告",
+            "verification_report": "历史实现验证报告",
+            "delivery_manifest": "交付校验清单",
         }
         lines: list[str] = []
         items = (
@@ -224,23 +232,110 @@ class ArtifactService:
             + f'</ul><p><a href="{console_url}">打开 AutoDev 研发控制台</a></p></div>'
         )
 
-    def collect_packages(self, request_id: str, worktree: Path, patterns: list[str]) -> list[int]:
+    def collect_packages(
+        self,
+        request_id: str,
+        worktree: Path,
+        patterns: list[str],
+        *,
+        artifact_policy: dict[str, Any] | None = None,
+    ) -> list[int]:
         ids: list[int] = []
+        policy = artifact_policy or {}
+        allowed_extensions = {str(item).casefold() for item in policy.get("allowed_package_extensions") or []}
+        forbidden_extensions = {str(item).casefold() for item in policy.get("forbidden_standalone_extensions") or []}
         for pattern in patterns:
             for source in worktree.glob(pattern):
                 if not source.is_file():
                     continue
+                suffix = source.suffix.casefold()
+                if allowed_extensions and suffix not in allowed_extensions:
+                    raise RuntimeError(f"交付包 {source.name} 的扩展名不在项目白名单：{', '.join(sorted(allowed_extensions))}")
+                if suffix in forbidden_extensions:
+                    raise RuntimeError(f"项目禁止把 {suffix} 文件作为独立交付物：{source.name}")
                 relative = source.relative_to(worktree)
                 target = self.request_dir(request_id) / "package" / relative.name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
                 ids.append(self.record(request_id, "package", relative.name, str(target)))
         if not ids:
+            if policy.get("require_packages"):
+                raise RuntimeError("构建成功，但项目要求的 package_patterns 未匹配到任何正式交付包")
             marker = self.request_dir(request_id) / "package" / "README.txt"
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text("构建成功，但配置的 package_patterns 未匹配到文件。\n", encoding="utf-8")
             ids.append(self.record(request_id, "package_note", marker.name, str(marker)))
         return ids
+
+    def validate_artifact_policy(self, request_id: str, project: dict[str, Any]) -> list[str]:
+        policy = project.get("artifact_policy") or {}
+        if not policy:
+            return []
+        detail = self.detail_loader(request_id) or {}
+        visible = visible_delivery_artifacts(
+            str(detail.get("delivery_mode") or ""),
+            detail.get("artifacts", []),
+            detail.get("delivery_options"),
+        )
+        blockers: list[str] = []
+        allowed_kinds = set(policy.get("allowed_user_facing_kinds") or [])
+        if allowed_kinds:
+            unexpected = sorted({str(item.get("kind") or "") for item in visible if item.get("kind") not in allowed_kinds})
+            if unexpected:
+                blockers.append("存在项目交付物白名单之外的类型：" + "、".join(unexpected))
+        forbidden_extensions = {str(item).casefold() for item in policy.get("forbidden_standalone_extensions") or []}
+        forbidden = [
+            str(item.get("name") or "")
+            for item in visible
+            if Path(str(item.get("name") or "")).suffix.casefold() in forbidden_extensions
+        ]
+        if forbidden:
+            blockers.append("存在禁止独立交付的文件：" + "、".join(forbidden))
+        if policy.get("require_packages") and not any(item.get("kind") == "package" for item in visible):
+            blockers.append("项目要求正式前后端交付包，但当前没有 package 产物")
+        return blockers
+
+    def create_delivery_validation_manifest(self, request_id: str, detail: dict[str, Any]) -> int:
+        existing = next(
+            (item for item in detail.get("artifacts", []) if item.get("kind") == "delivery_manifest"),
+            None,
+        )
+        if existing:
+            return int(existing["id"])
+        request_dir = self.request_dir(request_id)
+        checksums = []
+        for path in sorted(request_dir.rglob("*")):
+            if not path.is_file() or path.name == "delivery-validation-manifest.json":
+                continue
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            checksums.append(
+                {
+                    "path": path.relative_to(request_dir).as_posix(),
+                    "size_bytes": path.stat().st_size,
+                    "sha256": digest,
+                }
+            )
+        manifest = {
+            "request_id": request_id,
+            "work_item_id": detail.get("work_item_id"),
+            "project": detail.get("project_name") or (detail.get("policy_snapshot") or {}).get("name"),
+            "generated_at": datetime.now(UTC).isoformat(),
+            "repositories": [
+                {
+                    "name": state.get("name"),
+                    "target_branch": state.get("base_branch"),
+                    "merge_commit": state.get("merge_commit"),
+                    "build_commit": state.get("build_commit") or state.get("commit_hash"),
+                }
+                for state in detail.get("repository_states") or []
+            ],
+            "artifact_policy": (detail.get("policy_snapshot") or {}).get("artifact_policy") or {},
+            "quality_gate": detail.get("quality_gate_result") or {},
+            "files": checksums,
+        }
+        target = request_dir / "delivery-validation-manifest.json"
+        target.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return self.record(request_id, "delivery_manifest", target.name, str(target))
 
     def create_merge_evidence(
         self,

@@ -12,6 +12,7 @@ from urllib.parse import urlsplit, urlunsplit
 from .config import settings
 from .services.process_env import sanitized_process_env
 from .services.tfs import TfsClient
+from .project_experience import apply_project_experience
 
 
 @lru_cache(maxsize=512)
@@ -76,6 +77,14 @@ def load_project_presets() -> list[dict[str, Any]]:
         if not isinstance(project, dict):
             raise RuntimeError(f"项目预设必须是 JSON 对象：{path.name}")
         project["repository_tfs_paths"] = repository_tfs_paths(project)
+        if not project.get("repository_expectations"):
+            project["repository_expectations"] = {
+                Path(value).name: str(project["repository_tfs_paths"].get(Path(value).name) or "").rstrip("/").rsplit("/", 1)[-1]
+                or Path(value).name
+                for value in (project.get("repository_paths") or [project.get("repository_path", "")])
+                if str(value or "").strip()
+            }
+        project = apply_project_experience(project)
         project["runner_id"] = settings.runner_id
         projects.append(project)
     return projects

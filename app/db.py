@@ -98,6 +98,8 @@ CREATE TABLE IF NOT EXISTS projects (
     verification_command TEXT NOT NULL DEFAULT '',
     development_instructions TEXT NOT NULL DEFAULT '',
     repository_expectations TEXT NOT NULL DEFAULT '{}',
+    quality_profile TEXT NOT NULL DEFAULT '{}',
+    artifact_policy TEXT NOT NULL DEFAULT '{}',
     build_command TEXT NOT NULL DEFAULT '',
     package_patterns TEXT NOT NULL DEFAULT '[]',
     sql_patterns TEXT NOT NULL DEFAULT '["**/*.sql"]',
@@ -147,6 +149,9 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
     joint_project_count INTEGER NOT NULL DEFAULT 1,
     task_type TEXT NOT NULL DEFAULT 'development',
     analysis_result TEXT NOT NULL DEFAULT '{}',
+    history_context TEXT NOT NULL DEFAULT '[]',
+    acceptance_ledger TEXT NOT NULL DEFAULT '[]',
+    quality_gate_result TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -287,6 +292,10 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE projects ADD COLUMN development_instructions TEXT NOT NULL DEFAULT ''")
     if "repository_expectations" not in project_columns:
         conn.execute("ALTER TABLE projects ADD COLUMN repository_expectations TEXT NOT NULL DEFAULT '{}'")
+    if "quality_profile" not in project_columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN quality_profile TEXT NOT NULL DEFAULT '{}'")
+    if "artifact_policy" not in project_columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN artifact_policy TEXT NOT NULL DEFAULT '{}'")
     request_columns = {item["name"] for item in conn.execute("PRAGMA table_info(delivery_requests)")}
     if "runner_id" not in request_columns:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN runner_id TEXT NOT NULL DEFAULT 'yangtao-pc'")
@@ -315,6 +324,12 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN task_type TEXT NOT NULL DEFAULT 'development'")
     if "analysis_result" not in request_columns:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN analysis_result TEXT NOT NULL DEFAULT '{}'")
+    if "history_context" not in request_columns:
+        conn.execute("ALTER TABLE delivery_requests ADD COLUMN history_context TEXT NOT NULL DEFAULT '[]'")
+    if "acceptance_ledger" not in request_columns:
+        conn.execute("ALTER TABLE delivery_requests ADD COLUMN acceptance_ledger TEXT NOT NULL DEFAULT '[]'")
+    if "quality_gate_result" not in request_columns:
+        conn.execute("ALTER TABLE delivery_requests ADD COLUMN quality_gate_result TEXT NOT NULL DEFAULT '{}'")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS ix_delivery_requests_joint_group ON delivery_requests(joint_group_id, joint_project_index)"
     )
@@ -475,6 +490,8 @@ def project_for_api(project: dict[str, Any]) -> dict[str, Any]:
     result["repository_base_branches"] = json_value(result.get("repository_base_branches"), {})
     result["repository_expectations"] = json_value(result.get("repository_expectations"), {})
     result["repository_tfs_paths"] = json_value(result.get("repository_tfs_paths"), {})
+    result["quality_profile"] = json_value(result.get("quality_profile"), {})
+    result["artifact_policy"] = json_value(result.get("artifact_policy"), {})
     result["enabled"] = bool(result["enabled"])
     result["simulation_mode"] = bool(result["simulation_mode"])
     result["allow_requirement_override"] = bool(result["allow_requirement_override"])
@@ -677,7 +694,10 @@ def add_event(request_id: str, event_type: str, message: str, *, level: str = "i
 def update_request(request_id: str, **fields: Any) -> None:
     if not fields:
         return
-    for json_field in ("repository_states", "supplement_requests", "supplement_answers", "analysis_result"):
+    for json_field in (
+        "repository_states", "supplement_requests", "supplement_answers", "analysis_result",
+        "history_context", "acceptance_ledger", "quality_gate_result",
+    ):
         if json_field in fields and not isinstance(fields[json_field], str):
             fields[json_field] = json.dumps(fields[json_field], ensure_ascii=False)
     fields["updated_at"] = utc_now()
@@ -780,6 +800,9 @@ def request_detail(request_id: str) -> dict[str, Any] | None:
     request["supplement_requests"] = json_value(request.get("supplement_requests"), [])
     request["supplement_answers"] = json_value(request.get("supplement_answers"), [])
     request["analysis_result"] = json_value(request.get("analysis_result"), {})
+    request["history_context"] = json_value(request.get("history_context"), [])
+    request["acceptance_ledger"] = json_value(request.get("acceptance_ledger"), [])
+    request["quality_gate_result"] = json_value(request.get("quality_gate_result"), {})
     request["notification_emails"] = json_value(request.get("notification_emails"), [request["requester_email"]])
     request["delivery_options"] = (
         None
@@ -796,3 +819,47 @@ def request_detail(request_id: str) -> dict[str, Any] | None:
             if step["step_code"] in ANALYSIS_PIPELINE_STEP_CODES
         ]
     return request
+
+
+def prior_request_history(
+    project_key: str,
+    work_item_id: int,
+    *,
+    exclude_request_id: str = "",
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    """Return compact, reusable evidence from earlier runs of the same project requirement."""
+    conditions = ["p.project_key=?", "r.work_item_id=?"]
+    params: list[Any] = [project_key, work_item_id]
+    if exclude_request_id:
+        conditions.append("r.id<>?")
+        params.append(exclude_request_id)
+    params.append(max(1, min(20, limit)))
+    items = rows(
+        f"""SELECT r.id,r.work_item_revision,r.task_type,r.status,r.title,r.result_summary,
+                   r.pr_id,r.pr_url,r.merge_commit,r.repository_states,r.analysis_result,
+                   r.acceptance_ledger,r.quality_gate_result,r.created_at,r.completed_at
+            FROM delivery_requests r JOIN projects p ON p.id=r.project_id
+            WHERE {' AND '.join(conditions)}
+            ORDER BY COALESCE(r.completed_at,r.updated_at) DESC LIMIT ?""",
+        tuple(params),
+    )
+    for item in items:
+        for key, fallback in (
+            ("repository_states", []), ("analysis_result", {}),
+            ("acceptance_ledger", []), ("quality_gate_result", {}),
+        ):
+            item[key] = json_value(item.get(key), fallback)
+        item["repository_states"] = [
+            {
+                key: state.get(key)
+                for key in (
+                    "name", "base_branch", "commit_hash", "merge_commit", "build_commit",
+                    "pr_id", "pr_url", "changed_files", "status",
+                )
+                if state.get(key) not in (None, "", [])
+            }
+            for state in item["repository_states"]
+            if isinstance(state, dict)
+        ]
+    return items
