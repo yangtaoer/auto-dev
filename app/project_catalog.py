@@ -3,11 +3,65 @@ from __future__ import annotations
 import html
 import json
 import re
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from .config import settings
+from .services.process_env import sanitized_process_env
 from .services.tfs import TfsClient
+
+
+@lru_cache(maxsize=512)
+def _repository_origin(repository_path: str) -> str:
+    """Resolve a repository's configured origin once per runner process."""
+    path = Path(repository_path)
+    if not repository_path.strip() or not path.exists():
+        return ""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(path), "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=8,
+            env=sanitized_process_env(),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode:
+        return ""
+    value = result.stdout.strip().rstrip("/")
+    parsed = urlsplit(value)
+    if parsed.scheme in {"http", "https"} and parsed.hostname:
+        host = parsed.hostname
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        return urlunsplit((parsed.scheme, host, parsed.path.rstrip("/"), "", ""))
+    return value
+
+
+def repository_tfs_paths(project: dict[str, Any]) -> dict[str, str]:
+    """Return display-safe remote repository paths keyed by local repository name."""
+    configured = project.get("repository_tfs_paths") or {}
+    result = {
+        str(name).strip(): str(url).strip().rstrip("/")
+        for name, url in configured.items()
+        if str(name).strip() and str(url).strip()
+    } if isinstance(configured, dict) else {}
+    paths = project.get("repository_paths") or [project.get("repository_path", "")]
+    for raw_path in paths:
+        value = str(raw_path or "").strip()
+        if not value:
+            continue
+        origin = _repository_origin(value)
+        if origin:
+            result[Path(value).name] = origin
+    return result
 
 
 def load_project_presets() -> list[dict[str, Any]]:
@@ -21,6 +75,7 @@ def load_project_presets() -> list[dict[str, Any]]:
             raise RuntimeError(f"项目预设无法读取：{path.name}：{exc}") from exc
         if not isinstance(project, dict):
             raise RuntimeError(f"项目预设必须是 JSON 对象：{path.name}")
+        project["repository_tfs_paths"] = repository_tfs_paths(project)
         project["runner_id"] = settings.runner_id
         projects.append(project)
     return projects

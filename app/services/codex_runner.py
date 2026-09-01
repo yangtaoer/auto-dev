@@ -9,6 +9,7 @@ from typing import Any, Callable
 from ..config import settings
 from .dm7_plugin import discover_dm7_plugin
 from .process_env import sanitized_process_env
+from .tfs import TfsClient
 
 
 RESULT_SCHEMA = {
@@ -172,6 +173,7 @@ class CodexRunner:
             if dm7.available
             else dm7.message
         )
+        requirement_image_context = self._requirement_image_context(work_item, project, on_event)
 
         if task_type == "analysis":
             tfs_relations = json.dumps(work_item.get("relations") or [], ensure_ascii=False)[:12000]
@@ -184,6 +186,7 @@ class CodexRunner:
 期望结果：{work_item.get('acceptance_criteria', '')}
 区域：{work_item.get('area_path', '')}
 TFS 附件与关联元数据：{tfs_relations or '无'}
+{requirement_image_context}
 仓库范围：{repository_scope}
 {project_context}
 {joint_context}
@@ -209,6 +212,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
 需求描述：{work_item.get('description', '')}
 验收标准：{work_item.get('acceptance_criteria', '')}
 区域：{work_item.get('area_path', '')}
+{requirement_image_context}
 仓库范围：{repository_scope}
 {project_context}
 {joint_context}
@@ -301,6 +305,35 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"DevCore 结果不是有效 JSON: {final_text[:500]}") from exc
         return CodexRunResult(thread.id, parsed)
+
+    @staticmethod
+    def _requirement_image_context(
+        work_item: dict,
+        project: dict,
+        on_event: Callable[[str, str], None],
+    ) -> str:
+        collection = str(project.get("tfs_collection_url") or "").strip()
+        sources = TfsClient._requirement_image_sources(work_item)
+        if not collection or not sources:
+            return "TFS 需求图片：未发现"
+        work_item_id = int(work_item.get("id") or 0)
+        revision = int(work_item.get("revision") or 0)
+        destination = settings.data_dir / "runner" / "requirement-images" / f"{work_item_id}-r{revision}"
+        result = TfsClient(collection).download_requirement_images(work_item, destination)
+        paths = result["paths"]
+        errors = result["errors"]
+        if paths:
+            on_event("tfs.images_downloaded", f"已通过 TFS 认证下载 {len(paths)} 张需求图片")
+        if errors:
+            on_event("tfs.images_partial", "；".join(errors))
+        path_lines = "\n".join(f"- {path}" for path in paths) or "- 无可读取图片"
+        error_lines = "\n".join(f"- {value}" for value in errors)
+        return (
+            "TFS 需求图片（已由外层使用 TFS 凭据下载，不要再次访问原始认证 URL）：\n"
+            f"{path_lines}\n"
+            "必须逐张使用本机图片查看能力读取，并将图片内容与文字需求共同作为实现/分析依据。"
+            + (f"\n未能下载的图片：\n{error_lines}" if error_lines else "")
+        )
 
     @classmethod
     def read_account_usage(cls) -> dict[str, Any]:

@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS projects (
     allowed_states TEXT NOT NULL DEFAULT '["已评审"]',
     repository_path TEXT NOT NULL DEFAULT '',
     repository_paths TEXT NOT NULL DEFAULT '[]',
+    repository_tfs_paths TEXT NOT NULL DEFAULT '{}',
     base_branch TEXT NOT NULL DEFAULT 'dev',
     repository_base_branches TEXT NOT NULL DEFAULT '{}',
     verification_command TEXT NOT NULL DEFAULT '',
@@ -276,6 +277,8 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE projects ADD COLUMN routing_title_keywords TEXT NOT NULL DEFAULT '[]'")
     if "repository_paths" not in project_columns:
         conn.execute("ALTER TABLE projects ADD COLUMN repository_paths TEXT NOT NULL DEFAULT '[]'")
+    if "repository_tfs_paths" not in project_columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN repository_tfs_paths TEXT NOT NULL DEFAULT '{}'")
     if "repository_base_branches" not in project_columns:
         conn.execute("ALTER TABLE projects ADD COLUMN repository_base_branches TEXT NOT NULL DEFAULT '{}'")
     if "verification_command" not in project_columns:
@@ -471,6 +474,7 @@ def project_for_api(project: dict[str, Any]) -> dict[str, Any]:
         result[key] = json_value(result[key], [])
     result["repository_base_branches"] = json_value(result.get("repository_base_branches"), {})
     result["repository_expectations"] = json_value(result.get("repository_expectations"), {})
+    result["repository_tfs_paths"] = json_value(result.get("repository_tfs_paths"), {})
     result["enabled"] = bool(result["enabled"])
     result["simulation_mode"] = bool(result["simulation_mode"])
     result["allow_requirement_override"] = bool(result["allow_requirement_override"])

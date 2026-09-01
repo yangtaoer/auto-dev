@@ -47,7 +47,6 @@ from .domain import (
     DEFAULT_DELIVERY_OPTIONS,
     DELIVERY_MODE_LABELS,
     DeliveryMode,
-    STATUS_LABELS,
     TERMINAL_STATUSES,
     RunStatus,
     TaskType,
@@ -75,7 +74,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.16",
+    version="1.0-Alpha.17",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -127,6 +126,7 @@ class ProjectInput(BaseModel):
     allowed_states: list[str] = ["已评审"]
     repository_path: str = ""
     repository_paths: list[str] = Field(default_factory=list, max_length=30)
+    repository_tfs_paths: dict[str, str] = Field(default_factory=dict)
     base_branch: str = "dev"
     repository_base_branches: dict[str, str] = Field(default_factory=dict)
     verification_command: str = ""

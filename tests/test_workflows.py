@@ -32,13 +32,15 @@ from app.db import SCHEMA, init_db, update_request, update_step  # noqa: E402
 from app.local_runner_main import report_initial_heartbeat  # noqa: E402
 from app.orchestrator import Worker, worker  # noqa: E402
 from app.project_catalog import (  # noqa: E402
+    _repository_origin,
     load_project_presets,
+    repository_tfs_paths,
     resolve_project_for_work_item,
     resolve_projects_for_work_item,
     update_project_routing_aliases,
     matching_project_terms,
 )
-from app.services.development_risks import development_risks
+from app.services.development_risks import development_risks  # noqa: E402
 from app.services.codex_runner import CodexRunner  # noqa: E402
 from app.services.dm7_plugin import discover_dm7_plugin  # noqa: E402
 from app.services.delivery import (  # noqa: E402
@@ -100,7 +102,7 @@ class WorkflowTests(unittest.TestCase):
             "    email_sent_at TEXT,\n",
             "    task_type TEXT NOT NULL DEFAULT 'development',\n",
         )
-        legacy_schema = SCHEMA
+        legacy_schema = SCHEMA.replace("    repository_tfs_paths TEXT NOT NULL DEFAULT '{}',\n", "", 1)
         for definition in legacy_request_definitions:
             legacy_schema = legacy_schema.replace(definition, "", 1)
         intake_start = legacy_schema.index("CREATE TABLE IF NOT EXISTS request_intakes")
@@ -127,11 +129,13 @@ class WorkflowTests(unittest.TestCase):
                 try:
                     request_columns = {row[1] for row in conn.execute("PRAGMA table_info(delivery_requests)")}
                     intake_columns = {row[1] for row in conn.execute("PRAGMA table_info(request_intakes)")}
+                    project_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)")}
                     indexes = {row[1] for row in conn.execute("PRAGMA index_list(delivery_requests)")}
                 finally:
                     conn.close()
                 self.assertTrue({"joint_group_id", "joint_project_index", "joint_project_count", "task_type", "analysis_result"} <= request_columns)
                 self.assertTrue({"result_request_ids", "matched_project_keys", "classification_summary", "task_type"} <= intake_columns)
+                self.assertIn("repository_tfs_paths", project_columns)
                 self.assertIn("ix_delivery_requests_joint_group", indexes)
             finally:
                 object.__setattr__(settings, "data_dir", original_data_dir)
@@ -645,6 +649,55 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(result["url"], "https://tfs.test/_workitems/edit/1653001")
         self.assertTrue(result["created"])
 
+    def test_tfs_requirement_images_are_downloaded_for_codex_with_auth_context(self) -> None:
+        client = TfsClient("https://tfs.test/DefaultCollection", pat="test-pat")
+        work_item = {
+            "id": 910031,
+            "revision": 7,
+            "description": (
+                '<p>现场现象</p><img src="https://tfs.test/DefaultCollection/_apis/wit/attachments/one?fileName=screen-one.png">'
+            ),
+            "acceptance_criteria": "<p>以截图为准</p>",
+            "relations": [
+                {
+                    "rel": "AttachedFile",
+                    "url": "https://tfs.test/DefaultCollection/_apis/wit/attachments/two?fileName=screen-two.jpg",
+                    "attributes": {"name": "screen-two.jpg"},
+                },
+                {
+                    "rel": "AttachedFile",
+                    "url": "https://tfs.test/DefaultCollection/_apis/wit/attachments/three?fileName=mapper.xml",
+                    "attributes": {"name": "mapper.xml"},
+                },
+            ],
+        }
+        png = b"\x89PNG\r\n\x1a\nrequirement"
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            client, "_download_requirement_image", return_value=(png, "image/png")
+        ) as download:
+            result = client.download_requirement_images(work_item, Path(directory))
+            downloaded = [Path(value) for value in result["paths"]]
+            self.assertEqual(download.call_count, 2)
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(len(downloaded), 2)
+            self.assertTrue(all(path.is_file() for path in downloaded))
+            self.assertEqual({path.suffix for path in downloaded}, {".png"})
+
+        events: list[tuple[str, str]] = []
+        with patch.object(
+            TfsClient,
+            "download_requirement_images",
+            return_value={"paths": [r"C:\autodev\requirements\screen-one.png"], "errors": []},
+        ):
+            context = CodexRunner._requirement_image_context(
+                work_item,
+                {"tfs_collection_url": "https://tfs.test/DefaultCollection"},
+                lambda event, message: events.append((event, message)),
+            )
+        self.assertIn("必须逐张", context)
+        self.assertIn("screen-one.png", context)
+        self.assertEqual(events[0][0], "tfs.images_downloaded")
+
     def test_tfs_delivery_artifacts_updates_discovered_html_field(self) -> None:
         client = TfsClient("https://tfs.test/DefaultCollection", pat="test-pat")
         with patch.object(client, "_request", return_value={}) as request:
@@ -820,6 +873,44 @@ class WorkflowTests(unittest.TestCase):
             new_sql.parent.mkdir()
             new_sql.write_text("SELECT 1;\n", encoding="utf-8")
             self.assertIn("sql/upgrade.sql", changed_files(repository, base_commit))
+
+    def test_app_delivery_collects_sql_but_not_xml_source_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = Path(temporary) / "dcsd-app-starter"
+            repository.mkdir()
+            subprocess.run(["git", "-C", str(repository), "init", "-q"], check=True)
+            subprocess.run(["git", "-C", str(repository), "config", "user.name", "AutoDev Test"], check=True)
+            subprocess.run(["git", "-C", str(repository), "config", "user.email", "autodev-test@example.com"], check=True)
+            mapper = repository / "src" / "Mapper.xml"
+            sql = repository / "sql" / "upgrade.sql"
+            mapper.parent.mkdir()
+            sql.parent.mkdir()
+            mapper.write_text("<mapper/>\n", encoding="utf-8")
+            sql.write_text("SELECT 1;\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(repository), "commit", "-q", "-m", "initial"], check=True)
+            base_commit = subprocess.run(
+                ["git", "-C", str(repository), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            mapper.write_text("<mapper><select/></mapper>\n", encoding="utf-8")
+            sql.write_text("SELECT 2;\n", encoding="utf-8")
+            recorded: list[tuple[str, str]] = []
+            service = ArtifactService(
+                recorder=lambda _request_id, kind, name, _local_path, _external_url="": (
+                    recorded.append((kind, name)) or len(recorded)
+                )
+            )
+            service.collect_changed_assets(
+                "app-artifact-policy",
+                repository,
+                base_commit,
+                {"sql_patterns": ["**/*.sql"], "config_patterns": []},
+                repository_name="dcsd-app-starter",
+            )
+        self.assertEqual(recorded, [("sql", "dcsd-app-starter/sql/upgrade.sql")])
 
     def test_prepare_worktrees_enables_long_paths_and_rolls_back_partial_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1867,7 +1958,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.16"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.17"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -1878,6 +1969,10 @@ else:
         self.assertIn("支持项目与别名", page.text)
         self.assertIn("可自主研发项目", page.text)
         self.assertIn("project-guide", page.text)
+        self.assertIn('<span>自主项目</span>', page.text)
+        self.assertIn('data-filter-select="task_type"', page.text)
+        self.assertIn('data-filter-date="date_from"', page.text)
+        self.assertNotIn('type="date"', page.text)
         self.assertEqual(page.text.count('name="delivery_options"'), 3)
         self.assertIn('value="auto_release" checked', page.text)
         self.assertNotIn('value="merge_screenshot" checked', page.text)
@@ -1899,6 +1994,9 @@ else:
         self.assertIn("delivery_options", script)
         self.assertIn("release_artifact", script)
         self.assertIn("renderProjectGuide", script)
+        self.assertIn("renderLedgerCalendar", script)
+        self.assertIn("ledger-lock", script)
+        self.assertIn("repository_tfs_paths", script)
         self.assertNotIn("project-guide-trigger')?.addEventListener('click'", script)
 
         login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
@@ -1917,6 +2015,8 @@ else:
         self.assertIn("--editorial-orange-ink: #a3381f", editorial_styles)
         self.assertIn("--editorial-white: #f3f0e8", editorial_styles)
         self.assertIn(".record-filters input,", editorial_styles)
+        self.assertIn(".ledger-calendar-days button.selected", editorial_styles)
+        self.assertIn(".repository-paths > a", editorial_styles)
         self.assertIn("select option { background: #fffdf7; color: var(--editorial-ink); }", editorial_styles)
         self.assertIn(".run-card.joint-run-card,", editorial_styles)
         self.assertIn(".waiting-runner-signal {", editorial_styles)
@@ -2091,18 +2191,18 @@ else:
 
     def test_project_menu_is_hidden_from_project_manager(self) -> None:
         admin_page = self.client.get("/")
-        self.assertIn("<span>自主</span>", admin_page.text)
+        self.assertIn("<span>自主项目</span>", admin_page.text)
         self.client.post("/api/auth/logout")
         login_page = self.client.get("/login")
-        self.assertIn("editorial-ui.css?v=1.0-Alpha.16-login", login_page.text)
-        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.16", login_page.text)
+        self.assertIn("editorial-ui.css?v=1.0-Alpha.17-login", login_page.text)
+        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.17", login_page.text)
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
-        self.assertNotIn("<span>自主</span>", pm_page.text)
+        self.assertNotIn("<span>自主项目</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.16"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.17"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
@@ -2424,6 +2524,10 @@ else:
                 "routing_title_keywords": ["成都网络下令"],
                 "repository_path": "C:\\work\\demo",
                 "repository_paths": ["C:\\work\\demo", "C:\\work\\demo-api"],
+                "repository_tfs_paths": {
+                    "demo": "http://dev.tellhowsoft.com/DefaultCollection/DCS/_git/demo",
+                    "demo-api": "http://dev.tellhowsoft.com/DefaultCollection/DCS/_git/demo-api",
+                },
                 "base_branch": "dev",
                 "repository_base_branches": {"demo-api": "chongqing"},
                 "build_command": "echo test",
@@ -2460,6 +2564,8 @@ else:
         self.assertEqual(synced["name"], "目录项目一（已更新）")
         self.assertEqual(synced["reviewer_name"], "朱星舟")
         self.assertEqual(synced["repository_paths"], ["C:\\work\\demo", "C:\\work\\demo-api"])
+        self.assertEqual(len(synced["repository_tfs_paths"]), 2)
+        self.assertTrue(synced["repository_tfs_paths"]["demo"].endswith("/_git/demo"))
         self.assertEqual(synced["repository_base_branches"], {"demo-api": "chongqing"})
         self.assertEqual(synced["routing_title_keywords"], ["成都网络下令"])
         cleared = self.client.put(
@@ -2511,7 +2617,11 @@ else:
         )
         self.assertIn("-ValidateOnly", project["verification_command"])
         self.assertEqual(project["package_patterns"], ["release/ddyxzhyy.zip", "release/dcsd-app-starter*.jar"])
+        self.assertEqual(project["config_patterns"], [])
         self.assertIn("_sccd", project["development_instructions"])
+        self.assertIn("serviceIdMap", project["development_instructions"])
+        self.assertIn("不单独交付", project["development_instructions"])
+        self.assertIsInstance(project["repository_tfs_paths"], dict)
         self.assertEqual(project["repository_expectations"]["dcsd-app-ui"], "dcsd-app-ui-sichuan")
         script = (
             Path(__file__).resolve().parents[1]
@@ -2524,6 +2634,24 @@ else:
         self.assertIn("VUE_APP_PLATFORM", script)
         self.assertIn("ddyxzhyy", script)
         self.assertIn("fetchYdztToken", script)
+
+    def test_project_catalog_resolves_display_safe_tfs_origins(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory) / "demo-ui"
+            subprocess.run(["git", "init", "-q", str(repository)], check=True)
+            subprocess.run(
+                [
+                    "git", "-C", str(repository), "remote", "add", "origin",
+                    "https://user:secret@dev.example.test/DefaultCollection/DCS/_git/demo-ui/",
+                ],
+                check=True,
+            )
+            _repository_origin.cache_clear()
+            paths = repository_tfs_paths({"repository_paths": [str(repository)]})
+        self.assertEqual(
+            paths,
+            {"demo-ui": "https://dev.example.test/DefaultCollection/DCS/_git/demo-ui"},
+        )
 
     def test_reviewed_local_package_builds_only_changed_repository_side(self) -> None:
         class Store:

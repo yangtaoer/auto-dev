@@ -24,3 +24,5 @@
 `wechart_client@2.0.2-fix-data` 和 `thpush-lib@1.0.8` 在当前 npm 源均不可用。构建从配置的 APP 主仓库中提取同版本已验证依赖，封装为 SHA256 寻址的本地缓存；不会复制整套可变 node_modules。只在构建阶段临时将内部依赖替换为本地 tgz，成功或失败均恢复 package.json/package-lock.json。缺失/版本不符则报错，不降级替换。缓存位于 `data/runner/build-dependencies/`，不会上传 GitHub。构建日志记录依赖版本及哈希；其他依赖继续按当前仓库的清单/lock 安装。
 
 本机项目预设中的 `development_instructions`、`repository_expectations` 会同步到云端任务快照。已创建的错误项目任务不能通过更改全局配置直接放行，需要重新发起以重新归类。已经人工完成的需求应先核对 PR，避免重复开发。
+
+TFS 需求描述或附件中的图片由本机执行器使用 TFS PAT 下载到隔离的数据目录，再把本机绝对路径交给 DevCore 逐张读取。研发任务不再依赖浏览器登录态直接访问附件 URL；下载失败会记录具体图片错误，不能用“认证限制未读取”替代图片核对。

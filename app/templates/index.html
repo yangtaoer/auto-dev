@@ -19,7 +19,7 @@
       <nav>
         <button class="nav-item active" data-view="dashboard"><span class="nav-index">01</span><span>任务总览</span></button>
         <button class="nav-item" data-view="requests"><span class="nav-index">02</span><span>交付记录</span></button>
-        {% if user.role == 'admin' %}<button class="nav-item" data-view="projects"><span class="nav-index">03</span><span>自主</span></button>
+        {% if user.role == 'admin' %}<button class="nav-item" data-view="projects"><span class="nav-index">03</span><span>自主项目</span></button>
         <button class="nav-item" data-view="analytics"><span class="nav-index">04</span><span>统计看板</span></button>
         <button class="nav-item" data-view="users"><span class="nav-index">05</span><span>账号管理</span></button>{% endif %}
       </nav>
@@ -61,12 +61,12 @@
         <div class="section-heading ledger-heading"><div><p class="eyebrow">交付台账 / DELIVERY LEDGER</p><h2>全部交付记录</h2></div><span class="catalog-source" id="record-total">共 0 条</span></div>
         <form class="record-filters" id="record-filters">
           <label class="record-search"><span>需求</span><input type="search" name="keyword" placeholder="TFS 编号或需求标题"></label>
-          <label><span>任务类型</span><select name="task_type"><option value="">全部类型</option><option value="development">自主研发</option><option value="analysis">问题分析</option></select></label>
-          <label><span>项目</span><select name="project_key" id="record-project-filter"><option value="">全部项目</option></select></label>
-          <label><span>状态</span><select name="status"><option value="">全部状态</option><option value="waiting_merge">等待 PR 合并</option><option value="waiting_input">待补充信息</option><option value="developing">研发中</option><option value="delivered">已交付</option><option value="failed">执行失败</option><option value="rejected">准入驳回</option><option value="cancelled">已取消</option></select></label>
-          {% if user.role == 'admin' %}<label><span>提交人</span><select name="requester_id" id="record-requester-filter"><option value="">全部提交人</option></select></label>{% endif %}
-          <label><span>开始日期</span><input type="date" name="date_from"></label>
-          <label><span>结束日期</span><input type="date" name="date_to"></label>
+          <label><span>任务类型</span><div class="ledger-select" data-filter-select="task_type"><input type="hidden" name="task_type"><button type="button" aria-haspopup="listbox" aria-expanded="false"><b>全部类型</b><i></i></button><div class="ledger-select-menu" role="listbox" hidden></div></div></label>
+          <label><span>项目</span><div class="ledger-select" id="record-project-filter" data-filter-select="project_key"><input type="hidden" name="project_key"><button type="button" aria-haspopup="listbox" aria-expanded="false"><b>全部项目</b><i></i></button><div class="ledger-select-menu" role="listbox" hidden></div></div></label>
+          <label><span>状态</span><div class="ledger-select" data-filter-select="status"><input type="hidden" name="status"><button type="button" aria-haspopup="listbox" aria-expanded="false"><b>全部状态</b><i></i></button><div class="ledger-select-menu" role="listbox" hidden></div></div></label>
+          {% if user.role == 'admin' %}<label><span>提交人</span><div class="ledger-select" id="record-requester-filter" data-filter-select="requester_id"><input type="hidden" name="requester_id"><button type="button" aria-haspopup="listbox" aria-expanded="false"><b>全部提交人</b><i></i></button><div class="ledger-select-menu" role="listbox" hidden></div></div></label>{% endif %}
+          <label><span>开始日期</span><div class="ledger-date" data-filter-date="date_from"><input type="hidden" name="date_from"><button type="button" aria-label="开始日期" aria-haspopup="dialog" aria-expanded="false"><b>选择日期</b><i></i></button><div class="ledger-calendar" role="dialog" aria-label="选择开始日期" hidden></div></div></label>
+          <label><span>结束日期</span><div class="ledger-date" data-filter-date="date_to"><input type="hidden" name="date_to"><button type="button" aria-label="结束日期" aria-haspopup="dialog" aria-expanded="false"><b>选择日期</b><i></i></button><div class="ledger-calendar" role="dialog" aria-label="选择结束日期" hidden></div></div></label>
           <div class="record-filter-actions"><button type="button" class="btn btn-ghost" id="reset-record-filters">重置</button><button type="submit" class="btn btn-secondary">筛选</button></div>
         </form>
         <div class="table-card delivery-table"><table><thead><tr><th>需求 / 项目</th><th>当前状态</th><th>提交人</th><th>提交时间</th><th>完成时间</th><th>总耗时</th><th>交付产物</th></tr></thead><tbody id="all-table"></tbody></table></div>

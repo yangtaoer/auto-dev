@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import base64
 import html
+import mimetypes
 import re
 import subprocess
 from datetime import UTC, datetime
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import quote, unquote
+from urllib.parse import parse_qs, quote, unquote, urljoin, urlsplit
 
 import httpx
 
@@ -37,6 +39,9 @@ class TfsError(RuntimeError):
 
 
 class TfsClient:
+    REQUIREMENT_IMAGE_LIMIT = 30
+    REQUIREMENT_IMAGE_BYTES = 20 * 1024 * 1024
+
     def __init__(self, base_url: str, pat: str | None = None) -> None:
         self.base_url = base_url.rstrip("/")
         self.pat = pat if pat is not None else settings.tfs_pat
@@ -71,6 +76,121 @@ class TfsClient:
             "acceptance_criteria": fields.get("Microsoft.VSTS.Common.AcceptanceCriteria", ""),
             "relations": item.get("relations", []),
         }
+
+    @staticmethod
+    def _requirement_image_sources(work_item: dict) -> list[tuple[str, str]]:
+        """Collect image references from rich-text fields and AttachedFile relations."""
+        sources: list[tuple[str, str]] = []
+        seen: set[str] = set()
+
+        def add(source: str, name: str = "") -> None:
+            normalized = html.unescape(str(source or "")).strip()
+            if not normalized or normalized in seen:
+                return
+            seen.add(normalized)
+            resolved_name = str(name or "").strip()
+            if not resolved_name:
+                resolved_name = unquote(parse_qs(urlsplit(normalized).query).get("fileName", [""])[0])
+            sources.append((normalized, resolved_name))
+
+        for field_name in ("description", "acceptance_criteria"):
+            value = str(work_item.get(field_name) or "")
+            for match in re.finditer(
+                r"<img\b[^>]*?\bsrc\s*=\s*(['\"])(.*?)\1",
+                value,
+                flags=re.IGNORECASE | re.DOTALL,
+            ):
+                add(match.group(2))
+
+        image_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
+        for relation in work_item.get("relations") or []:
+            if not isinstance(relation, dict) or str(relation.get("rel") or "").casefold() != "attachedfile":
+                continue
+            attributes = relation.get("attributes") or {}
+            name = str(attributes.get("name") or attributes.get("comment") or "").strip()
+            url = str(relation.get("url") or "").strip()
+            query_name = parse_qs(urlsplit(url).query).get("fileName", [""])[0]
+            candidate = name or unquote(query_name)
+            if Path(candidate).suffix.casefold() in image_extensions:
+                add(url, candidate)
+        return sources[: TfsClient.REQUIREMENT_IMAGE_LIMIT]
+
+    @staticmethod
+    def _image_extension(content: bytes, content_type: str, suggested_name: str) -> str:
+        allowed = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
+        if content.startswith(b"\x89PNG\r\n\x1a\n"):
+            return ".png"
+        if content.startswith(b"\xff\xd8\xff"):
+            return ".jpg"
+        if content.startswith((b"GIF87a", b"GIF89a")):
+            return ".gif"
+        if content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+            return ".webp"
+        if content.startswith(b"BM"):
+            return ".bmp"
+        if content.startswith((b"II*\x00", b"MM\x00*")):
+            return ".tiff"
+        normalized = content_type.split(";", 1)[0].strip().casefold()
+        mapped = mimetypes.guess_extension(normalized) if normalized.startswith("image/") else None
+        if mapped == ".jpe":
+            return ".jpg"
+        if mapped in allowed:
+            return ".jpg" if mapped == ".jpeg" else mapped
+        suffix = Path(suggested_name).suffix.casefold()
+        if normalized.startswith("image/") and suffix in allowed:
+            return ".jpg" if suffix == ".jpeg" else suffix
+        return ""
+
+    def _download_requirement_image(self, source: str) -> tuple[bytes, str]:
+        if source.casefold().startswith("data:image/"):
+            header, separator, payload = source.partition(",")
+            if not separator or ";base64" not in header.casefold():
+                raise TfsError("内嵌需求图片不是受支持的 base64 格式")
+            try:
+                content = base64.b64decode(payload, validate=True)
+            except ValueError as exc:
+                raise TfsError("内嵌需求图片 base64 无效") from exc
+            if len(content) > self.REQUIREMENT_IMAGE_BYTES:
+                raise TfsError("内嵌需求图片超过 20 MB 限制")
+            return content, header[5:].split(";", 1)[0]
+
+        url = urljoin(self.base_url + "/", source)
+        base_host = urlsplit(self.base_url).hostname
+        if urlsplit(url).scheme not in {"http", "https"} or urlsplit(url).hostname != base_host:
+            raise TfsError("需求图片地址不属于当前 TFS 服务")
+        try:
+            with self._client() as client:
+                response = client.get(url, follow_redirects=True)
+        except httpx.HTTPError as exc:
+            raise TfsError(f"TFS 需求图片下载失败：{exc}") from exc
+        if response.is_error:
+            raise TfsError(f"TFS 需求图片下载返回 {response.status_code}")
+        if urlsplit(str(response.url)).hostname != base_host:
+            raise TfsError("TFS 需求图片重定向到了非受信地址")
+        if len(response.content) > self.REQUIREMENT_IMAGE_BYTES:
+            raise TfsError("TFS 需求图片超过 20 MB 限制")
+        return response.content, response.headers.get("content-type", "")
+
+    def download_requirement_images(self, work_item: dict, destination: Path) -> dict[str, list[str]]:
+        """Download TFS-protected requirement images for local Codex inspection."""
+        paths: list[str] = []
+        errors: list[str] = []
+        destination.mkdir(parents=True, exist_ok=True)
+        for index, (source, suggested_name) in enumerate(self._requirement_image_sources(work_item), 1):
+            try:
+                content, content_type = self._download_requirement_image(source)
+                if not content:
+                    raise TfsError("图片内容为空")
+                extension = self._image_extension(content, content_type, suggested_name)
+                if not extension:
+                    raise TfsError("附件内容不是受支持的图片格式")
+                stem = re.sub(r"[^0-9A-Za-z._-]+", "-", Path(suggested_name).stem).strip("-.")
+                target = destination / f"{index:02d}-{stem or 'requirement-image'}{extension}"
+                target.write_bytes(content)
+                paths.append(str(target.resolve()))
+            except (OSError, TfsError) as exc:
+                errors.append(f"第 {index} 张需求图片：{exc}")
+        return {"paths": paths, "errors": errors}
 
     def update_delivery_artifacts(self, work_item_id: int, html_value: str) -> None:
         patch = [{"op": "add", "path": f"/fields/{DELIVERY_ARTIFACTS_FIELD}", "value": html_value}]
