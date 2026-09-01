@@ -51,3 +51,17 @@ html{background:var(--ink);color:var(--paper);font-family:Bahnschrift,"Microsoft
 .supplement-form>.btn{justify-self:end;min-width:210px}
 @keyframes supplementPulse{50%{transform:scale(.72);opacity:.55}}
 @media(max-width:650px){.supplement-panel{margin-left:-6px;margin-right:-6px}.supplement-signal,.supplement-conclusion,.supplement-form{padding-left:16px;padding-right:16px}.supplement-item{grid-template-columns:1fr}.supplement-index{padding:0}.supplement-form>.btn{width:100%}}
+
+/* 管理员恢复执行：保留现场，不把可继续解决的风险做成终点。 */
+.continuation-panel{display:grid;grid-template-columns:minmax(210px,.72fr) minmax(280px,1.28fr);margin:18px 0 24px;border:1px solid #8e6043;background:#151d1a;box-shadow:8px 8px 0 rgba(142,96,67,.22);overflow:hidden}
+.continuation-marker{position:relative;padding:21px 22px;background:linear-gradient(145deg,#693421,#9f4a28);color:#fff8ec}
+.continuation-marker:after{content:"↻";position:absolute;right:15px;bottom:4px;color:rgba(255,248,236,.14);font:700 70px Georgia,serif;line-height:1}
+.continuation-marker>span{display:block;color:#ffd5a6;font:700 9px Consolas,monospace;letter-spacing:.16em}
+.continuation-marker>b{position:relative;z-index:1;display:block;margin-top:10px;font-size:18px;line-height:1.35}
+.continuation-marker>p{position:relative;z-index:1;margin:9px 0 0;color:#f4d9c5;font-size:11px;line-height:1.65}
+.continuation-form{display:grid;gap:10px;padding:19px 21px;background:linear-gradient(135deg,#17221e,#101714)}
+.continuation-form label{display:grid;gap:4px}.continuation-form label>b{color:#f8eadb;font-size:12px}.continuation-form label>small{color:#9fb2a8;font-size:10px;line-height:1.5}
+.continuation-form textarea{min-height:94px;resize:vertical;border:1px solid #5b695f;background:#09100d;color:#f5f0e8;padding:12px 13px;line-height:1.6}
+.continuation-form textarea:focus{outline:0;border-color:#f07b45;box-shadow:0 0 0 2px rgba(240,123,69,.17)}
+.continuation-form>.btn{justify-self:end}.continuation-error{margin:0}
+@media(max-width:650px){.continuation-panel{grid-template-columns:1fr;margin-left:-6px;margin-right:-6px}.continuation-form>.btn{width:100%}}

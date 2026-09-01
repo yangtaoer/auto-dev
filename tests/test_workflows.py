@@ -1813,6 +1813,64 @@ else:
         self.assertEqual(response.status_code, 409)
         update_request(created.json()["id"], status="cancelled")
 
+    def test_admin_can_continue_waiting_approval_with_prompt_in_same_task(self) -> None:
+        project_id = self.create_project("test-admin-continue", "product_manual_review")
+        created = self.client.post(
+            "/api/requests", json={"project_id": project_id, "work_item_id": 910025}
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        request_id = created.json()["id"]
+        update_request(
+            request_id,
+            status="waiting_approval",
+            current_step="develop",
+            progress=48,
+            codex_thread_id="thread-to-resume",
+            repository_states=[{
+                "name": "demo",
+                "worktree_path": TEST_DATA.name,
+                "base_commit": "base",
+                "branch": "feature/910025-yangtao",
+            }],
+            error_message="缺少真实页面截图",
+        )
+
+        response = self.client.post(
+            f"/api/requests/{request_id}/continue",
+            json={"prompt": "需求没有要求截图，请使用 production 构建和路由断言继续。"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["id"], request_id)
+        detail = self.client.get(f"/api/requests/{request_id}").json()["request"]
+        self.assertEqual(detail["status"], "queued")
+        self.assertEqual(detail["current_step"], "validate")
+        self.assertNotIn("codex_thread_id", detail)
+        self.assertEqual(detail["error_message"], "")
+        self.assertIn("production 构建", detail["supplement_answers"][-1]["answer"])
+        self.assertEqual(detail["supplement_requests"][-1]["question"], "管理员继续执行指示")
+        self.assertTrue(any(event["event_type"] == "development.admin_continued" for event in detail["events"]))
+        update_request(request_id, status="cancelled")
+
+    def test_only_admin_can_continue_waiting_approval(self) -> None:
+        project_id = self.create_project("test-admin-continue-role", "local_package")
+        created = self.client.post(
+            "/api/requests", json={"project_id": project_id, "work_item_id": 910026}
+        )
+        request_id = created.json()["id"]
+        update_request(
+            request_id,
+            status="waiting_approval",
+            codex_thread_id="thread-to-resume",
+            repository_states=[{"name": "demo", "worktree_path": TEST_DATA.name}],
+        )
+        self.client.post("/api/auth/logout")
+        self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
+        response = self.client.post(f"/api/requests/{request_id}/continue", json={"prompt": "继续"})
+        self.assertEqual(response.status_code, 403)
+        self.client.post("/api/auth/logout")
+        self.client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        update_request(request_id, status="cancelled")
+
     def test_admin_analytics_exposes_platform_distributions(self) -> None:
         analytics = self.client.get("/api/admin/analytics")
         self.assertEqual(analytics.status_code, 200, analytics.text)
@@ -2005,7 +2063,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.18"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.19"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -2042,6 +2100,9 @@ else:
         self.assertIn("release_artifact", script)
         self.assertIn("renderProjectGuide", script)
         self.assertIn("renderLedgerCalendar", script)
+        self.assertIn("renderContinuationPanel", script)
+        self.assertIn("/continue", script)
+        self.assertIn("继续执行并保留现场", script)
         self.assertIn("ledger-lock", script)
         self.assertIn("repository_tfs_paths", script)
         self.assertNotIn("project-guide-trigger')?.addEventListener('click'", script)
@@ -2068,6 +2129,7 @@ else:
         self.assertIn(".run-card.joint-run-card,", editorial_styles)
         self.assertIn(".waiting-runner-signal {", editorial_styles)
         self.assertIn(".supplement-copy textarea {", editorial_styles)
+        self.assertIn(".continuation-panel {", editorial_styles)
         self.assertIn(".control-strip .metrics.admin-metrics", editorial_styles)
         self.assertIn("@media (max-width: 900px)", editorial_styles)
         local_client = Path("app/local_client.py").read_text(encoding="utf-8")
@@ -2241,15 +2303,15 @@ else:
         self.assertIn("<span>自主项目</span>", admin_page.text)
         self.client.post("/api/auth/logout")
         login_page = self.client.get("/login")
-        self.assertIn("editorial-ui.css?v=1.0-Alpha.18-login", login_page.text)
-        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.18", login_page.text)
+        self.assertIn("editorial-ui.css?v=1.0-Alpha.19-login", login_page.text)
+        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.19", login_page.text)
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("<span>自主项目</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.18"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.19"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
         pm_dashboard = self.client.get("/api/dashboard")
@@ -3143,6 +3205,8 @@ else:
         self.assertEqual(app_project["artifact_policy"]["allowed_user_facing_kinds"], ["package", "sql"])
         self.assertEqual(app_project["artifact_policy"]["allowed_package_extensions"], [".zip", ".jar"])
         self.assertIn(".xml", app_project["artifact_policy"]["forbidden_standalone_extensions"])
+        self.assertFalse(app_project["quality_profile"]["visual"]["required_for_frontend"])
+        self.assertIn("页面截图", app_project["quality_profile"]["visual"]["require_when_requirement_mentions"])
 
     def test_runner_history_endpoint_returns_prior_evidence_for_same_requirement(self) -> None:
         project_id = self.create_project("test-history-context", "local_package")
@@ -3209,6 +3273,65 @@ else:
             self.assertIn("迁移版本 V2.0 冲突", joined)
             self.assertIn("Feature.java", joined)
             self.assertEqual(gate["business_invariants"], [])
+
+    def test_app_visual_gate_requires_screenshot_only_when_requirement_requests_it(self) -> None:
+        state = {
+            "name": "dcsd-app-ui",
+            "worktree_path": TEST_DATA.name,
+            "base_commit": "base",
+            "changed_files": ["src/views/chengdu/Command.vue"],
+        }
+        project = {
+            "quality_profile": {
+                "require_acceptance_ledger": True,
+                "business_invariants": {"required": False, "change_patterns": []},
+                "visual": {
+                    "required_for_frontend": False,
+                    "require_when_requirement_mentions": ["页面截图", "以截图为准"],
+                    "frontend_patterns": ["dcsd-app-ui/**/*.vue"],
+                    "viewports": ["390x844"],
+                    "deployment_checks": [
+                        "asset_manifest_checked", "directory_layout_checked", "cache_strategy_checked",
+                    ],
+                },
+                "menu": {"require_binding_manifest": False},
+            }
+        }
+        result = {
+            "decision": "completed",
+            "acceptance_ledger": [{
+                "id": "AC-1", "criterion": "只修改成都逻辑", "status": "completed",
+                "repositories": ["dcsd-app-ui"],
+                "files": ["src/views/chengdu/Command.vue"],
+                "tests": ["production 构建通过", "8 条路由断言通过"],
+                "evidence": [],
+            }],
+            "business_invariants": [],
+            "visual_validation": {
+                "status": "blocked", "routes": ["/chengdu/command"], "viewports": [],
+                "screenshots": [], "notes": ["当前无浏览器后端"],
+            },
+            "deployment_validation": {
+                "asset_manifest_checked": True,
+                "directory_layout_checked": True,
+                "cache_strategy_checked": True,
+                "notes": [],
+            },
+        }
+
+        normal = evaluate_development_quality(
+            project, [state], result, requirement_text="只修复成都逻辑，不影响其他地市"
+        )
+        self.assertEqual(normal["status"], "passed")
+        self.assertFalse(any("截图验收" in blocker for blocker in normal["blockers"]))
+        check = next(item for item in normal["checks"] if item["id"] == "visual-acceptance")
+        self.assertEqual(check["status"], "passed")
+
+        screenshot_required = evaluate_development_quality(
+            project, [state], result, requirement_text="修改完成后提供页面截图，以截图为准"
+        )
+        self.assertEqual(screenshot_required["status"], "blocked")
+        self.assertTrue(any("截图验收" in blocker for blocker in screenshot_required["blockers"]))
 
     def test_artifact_policy_rejects_xml_as_standalone_app_delivery(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

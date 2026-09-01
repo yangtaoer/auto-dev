@@ -34,6 +34,19 @@ def _path_is_mapped(path: str, mapped: set[str]) -> bool:
     )
 
 
+def _requirement_requests_visual_evidence(profile: dict[str, Any], requirement_text: str) -> bool:
+    """Return whether the requirement explicitly promotes screenshots to a blocking acceptance gate."""
+    if profile.get("required_for_frontend"):
+        return True
+    normalized = re.sub(r"\s+", "", str(requirement_text or "")).casefold()
+    keywords = [
+        str(value).strip().casefold()
+        for value in profile.get("require_when_requirement_mentions") or []
+        if str(value).strip()
+    ]
+    return bool(normalized and any(re.sub(r"\s+", "", keyword) in normalized for keyword in keywords))
+
+
 def normalize_acceptance_ledger(result: dict[str, Any]) -> list[dict[str, Any]]:
     """Convert legacy string mappings while preserving the richer new contract."""
     value = result.get("acceptance_ledger")
@@ -88,6 +101,8 @@ def evaluate_development_quality(
     project: dict[str, Any],
     repository_states: list[dict[str, Any]],
     result: dict[str, Any],
+    *,
+    requirement_text: str = "",
 ) -> dict[str, Any]:
     profile = project.get("quality_profile") or {}
     checks: list[dict[str, Any]] = []
@@ -205,7 +220,10 @@ def evaluate_development_quality(
     visual_profile = profile.get("visual") or {}
     frontend_patterns = visual_profile.get("frontend_patterns") or []
     frontend_changed = any(_matches(path, frontend_patterns) for path in changed_paths)
-    if frontend_changed and visual_profile.get("required_for_frontend"):
+    visual_required = frontend_changed and _requirement_requests_visual_evidence(
+        visual_profile, requirement_text
+    )
+    if visual_required:
         visual = result.get("visual_validation") or {}
         expected_viewports = {str(item) for item in visual_profile.get("viewports") or []}
         actual_viewports = {str(item) for item in visual.get("viewports") or []}
@@ -220,6 +238,21 @@ def evaluate_development_quality(
             "要求视口：" + ("、".join(sorted(expected_viewports)) or "按项目默认"),
             [str(item) for item in visual.get("screenshots") or []],
         )
+    elif frontend_changed:
+        visual = result.get("visual_validation") or {}
+        _check(
+            checks,
+            "visual-acceptance",
+            "页面视觉验收",
+            "passed",
+            "需求未明确要求真实页面截图；采用验收账本中的生产构建、路由与自动断言证据",
+            [
+                *[str(item) for item in visual.get("screenshots") or []],
+                *[str(item) for item in visual.get("notes") or []],
+            ],
+        )
+
+    if frontend_changed:
         deployment = result.get("deployment_validation") or {}
         required_checks = visual_profile.get("deployment_checks") or []
         missed = [name for name in required_checks if not deployment.get(name)]

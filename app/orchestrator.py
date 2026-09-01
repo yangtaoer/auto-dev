@@ -396,7 +396,16 @@ class Worker:
                 return
             mode = DeliveryMode(detail["delivery_mode"])
             warnings, blockers = development_risks(result, legacy_review=mode.value in SICHUAN_APPROVAL_DELIVERY_MODES)
-            quality_gate = evaluate_development_quality(project, repository_states, result)
+            requirement_text = "\n".join(
+                str(work_item.get(field) or "")
+                for field in ("title", "description", "acceptance_criteria")
+            )
+            quality_gate = evaluate_development_quality(
+                project,
+                repository_states,
+                result,
+                requirement_text=requirement_text,
+            )
             self.store.update_request(
                 request_id,
                 acceptance_ledger=acceptance_ledger,

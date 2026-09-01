@@ -75,7 +75,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.18",
+    version="1.0-Alpha.19",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -174,6 +174,10 @@ class SupplementAnswerInput(BaseModel):
 
 class SupplementInput(BaseModel):
     answers: list[SupplementAnswerInput] = Field(min_length=1, max_length=30)
+
+
+class ContinueRequestInput(BaseModel):
+    prompt: str = Field(default="", max_length=6000)
 
 
 class RunnerProjectSync(BaseModel):
@@ -1585,6 +1589,87 @@ def supplement_request(
             (
                 user["id"], "request.supplement", "delivery_request", request_id,
                 json.dumps({"answer_ids": list(provided)}, ensure_ascii=False), now,
+            ),
+        )
+    return {"id": request_id, "status": RunStatus.QUEUED.value}
+
+
+@app.post("/api/requests/{request_id}/continue")
+def continue_waiting_approval_request(
+    request_id: str,
+    payload: ContinueRequestInput,
+    user: Annotated[dict, Depends(admin_user)],
+) -> dict:
+    """Resume the same workspace and DevCore session after an administrator reviews a blocker."""
+    detail = can_access_request(user, request_id)
+    if detail["status"] != RunStatus.WAITING_APPROVAL.value:
+        raise HTTPException(status_code=409, detail="只有等待人工确认的任务可以继续执行")
+    if not detail.get("codex_thread_id") or not detail.get("repository_states"):
+        raise HTTPException(status_code=409, detail="当前任务没有可恢复的 DevCore 会话或隔离工作区")
+
+    prompt = payload.prompt.strip() or (
+        "请基于现有代码和验证结果继续解决当前阻塞风险。对于需求未明确要求的验证形式，"
+        "使用等价、可复核的自动化证据，不要仅因工具不可用再次阻断。"
+    )
+    continuation_id = f"admin-continue-{uuid.uuid4().hex[:12]}"
+    continuation_request = {
+        "id": continuation_id,
+        "question": "管理员继续执行指示",
+        "reason": str(detail.get("error_message") or "任务在研发风险门禁处暂停"),
+        "suggested_answer": "结合当前阻塞原因继续修改、自检，并重新提交结构化研发结论。",
+        "required": True,
+    }
+    supplement_requests = [
+        item for item in detail.get("supplement_requests") or [] if isinstance(item, dict)
+    ]
+    supplement_answers = [
+        item for item in detail.get("supplement_answers") or [] if isinstance(item, dict)
+    ]
+    supplement_requests.append(continuation_request)
+    supplement_answers.append({"id": continuation_id, "answer": prompt})
+
+    # An administrator-initiated continuation explicitly adopts the latest synced
+    # project policy. This lets corrected machine gates apply to an already paused task.
+    latest_project = row("SELECT * FROM projects WHERE id=? AND enabled=1", (detail["project_id"],))
+    if not latest_project:
+        raise HTTPException(status_code=409, detail="任务所属项目已停用，无法继续执行")
+    latest_policy = project_for_api(latest_project)
+    now = utc_now()
+    update_request(
+        request_id,
+        policy_snapshot=latest_policy,
+        supplement_requests=supplement_requests,
+        supplement_answers=supplement_answers,
+        supplemented_at=now,
+        status=RunStatus.QUEUED.value,
+        current_step="validate",
+        progress=4,
+        completed_at=None,
+        next_poll_at=None,
+        error_message="",
+    )
+    update_step(request_id, "develop", "pending", f"{user['display_name']} 已要求继续尝试解决阻塞风险")
+    add_event(
+        request_id,
+        "development.admin_continued",
+        f"{user['display_name']} 已确认继续执行，任务将复用原隔离工作区和 DevCore 会话",
+        metadata={"continuation_id": continuation_id, "policy_refreshed": True},
+    )
+    with transaction() as conn:
+        conn.execute(
+            "INSERT INTO audit_logs(actor_id,action,target_type,target_id,detail,created_at) VALUES(?,?,?,?,?,?)",
+            (
+                user["id"], "request.continue", "delivery_request", request_id,
+                json.dumps(
+                    {
+                        "continuation_id": continuation_id,
+                        "prompt": prompt,
+                        "previous_error": detail.get("error_message") or "",
+                        "policy_refreshed": True,
+                    },
+                    ensure_ascii=False,
+                ),
+                now,
             ),
         )
     return {"id": request_id, "status": RunStatus.QUEUED.value}

@@ -71,7 +71,13 @@ APP_QUALITY_PROFILE = {
         "change_patterns": ["**/*home*", "**/*list*", "**/*badge*", "**/*statistics*", "**/*score*"],
     },
     "visual": {
-        "required_for_frontend": True,
+        # APP 功能改动优先使用生产构建、真实路由和自动断言作为验收证据。
+        # 只有需求明确要求截图、设计稿还原或视觉效果时，才把真实页面截图提升为阻塞门禁。
+        "required_for_frontend": False,
+        "require_when_requirement_mentions": [
+            "真实页面截图", "页面截图", "截图验收", "以截图为准", "以图片为准",
+            "设计稿", "视觉效果", "页面效果", "界面效果", "像素级", "还原UI",
+        ],
         "frontend_patterns": ["dcsd-app-ui/**/*.vue", "dcsd-app-ui/**/*.js", "dcsd-app-ui/**/*.css"],
         "viewports": ["390x844", "430x932"],
         "deployment_checks": ["asset_manifest_checked", "directory_layout_checked", "cache_strategy_checked"],

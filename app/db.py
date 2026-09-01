@@ -695,7 +695,7 @@ def update_request(request_id: str, **fields: Any) -> None:
     if not fields:
         return
     for json_field in (
-        "repository_states", "supplement_requests", "supplement_answers", "analysis_result",
+        "policy_snapshot", "repository_states", "supplement_requests", "supplement_answers", "analysis_result",
         "history_context", "acceptance_ledger", "quality_gate_result",
     ):
         if json_field in fields and not isinstance(fields[json_field], str):

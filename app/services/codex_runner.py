@@ -378,7 +378,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
 16. 开始修改前先检查历史任务、最新目标分支、相关 PR 与提交。若需求已完整进入最新目标分支，返回 decision=already_satisfied，保持工作区零改动，并在 existing_implementation 中列出提交、PR和代码证据；不得重复开发。
 17. 将每条验收标准编号为 AC-1、AC-2……写入 acceptance_ledger；每项必须映射仓库、文件、测试和证据。changed_files 中的每个实际变更都必须归属至少一个验收项，以支持按验收项精确回滚。
 18. 涉及统计、积分、状态、数据关联或保存查询链时，必须核验业务数据不变量，包括数据来源时点、计算公式、排序与显示字段、导出与页面列、提交字段与持久化/查询关联键的一致性，并写入 business_invariants。
-19. 涉及前端时按项目 quality_profile 完成真实路由、指定视口和截图验证；同时核对构建资源哈希、部署目录层级和缓存策略。无法完成时必须标为 blocked，不能用构建成功替代页面验收。
+19. 涉及前端时按项目 quality_profile 验证真实路由，并核对构建资源哈希、部署目录层级和缓存策略。只有 visual.required_for_frontend=true，或需求文字明确命中 visual.require_when_requirement_mentions 中的截图/设计稿/视觉要求时，真实页面截图和指定视口才是阻塞门禁；否则可使用 production 构建、路由测试和自动断言作为验收证据，浏览器后端不可用只能写入 risks，不得写入 blocking_risks。
 20. 新增 view.xml 时必须输出 menu_changes，包含菜单链接和权限绑定方式；版本化 SQL 必须在最新目标分支上检查版本冲突、Schema 占位符、DM7 LOB 限制和 SQL 变更日志。
 21. database_validation 必须如实区分“插件可用”和“数据库连接已验证”；只有实际连通并执行元数据或样例查询后才能标为 verified，并注明环境和连接名称。
 """.strip()
