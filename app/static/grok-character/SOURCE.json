@@ -1,0 +1,17 @@
+{
+  "source": "https://github.com/blessonism/grok-icon-study",
+  "commit": "647e9bd7c60290c42a738fad586589b3f36a4680",
+  "authorization": "Usage rights confirmed by the platform owner on 2026-09-02.",
+  "verification": "SHA-256 of UTF-8 content after CRLF-to-LF normalization and trimming final newlines.",
+  "files": {
+    "geometry-data.js": "0ca64ad6a9a897a4a710cf8c8f74122ba5eae546b75ead4313325ef8bd0da1da",
+    "grok-blob-idle.svg": "be4145d04c5d75fc8b0074ea4cb1e61d9a62e9cf047792f1f6a702016825d130",
+    "src/math.js": "aa2c3ef72f70029e0ba8a753589541faf67c9397ad7969d62967c25b18a0aba7",
+    "src/tables.js": "42aafa51de6625485cd54f483e2886f962b646c80bbfa28f5b428604af25a4de",
+    "src/pose.js": "48910b4a5f645a5a2c0f492b1f33f43d87c97d9e140f001968c76c991e477544",
+    "src/tricks.js": "515fb2d258d9a400d4985d725e3873ecb2638682d3f7d5f59e6925084534fea7",
+    "src/fx.js": "815cff39821d6535e423ee9beff1f09a75600a4edd4afab997b6f94d0f7a9d21",
+    "src/eyes.js": "d5bc54feae01898835074c26de78510c3c075560d25bf969fd39a55f8708f4ab",
+    "src/character.js": "7fe19498cd14f30c622ac935969a70afc4b792f67513455f4a4bb2d7d93ecd36"
+  }
+}

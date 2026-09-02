@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-import re
 import sqlite3
 import subprocess
 import tempfile
@@ -2064,7 +2064,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.20"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.21"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -2104,10 +2104,9 @@ else:
         self.assertIn("renderContinuationPanel", script)
         self.assertIn("/continue", script)
         self.assertIn("继续执行并保留现场", script)
-        self.assertIn("const TASK_MOTION =", script)
-        self.assertIn("taskMotionMarkup", script)
-        self.assertIn("card.querySelector('.task-kinetic').dataset.motion=taskMotionKind(visualStatus)", script)
-        self.assertIn("任务动力核心 / LIVE STATE ENGINE", script)
+        self.assertNotIn("const TASK_MOTION =", script)
+        self.assertNotIn("taskMotionMarkup", script)
+        self.assertNotIn("task-kinetic", script)
         self.assertIn("ledger-lock", script)
         self.assertIn("repository_tfs_paths", script)
         self.assertNotIn("project-guide-trigger')?.addEventListener('click'", script)
@@ -2116,6 +2115,13 @@ else:
         self.assertIn("login-logo-lockup", login_template)
         self.assertIn("autodev-sidebar-mark.png", login_template)
         self.assertIn("Auto<span>Dev</span>", login_template)
+        self.assertIn('id="login-grok-character"', login_template)
+        self.assertIn("new GrokCharacter", login_template)
+        self.assertIn("shape: 'blob'", login_template)
+        self.assertIn("color: 'black'", login_template)
+        self.assertIn("loginCharacter.setState('curious'", login_template)
+        self.assertIn("PROJECT PIPELINE", login_template)
+        self.assertIn("交付离场", login_template)
         self.assertNotIn("brand-float", Path("app/static/brand-ui.css").read_text(encoding="utf-8"))
         self.assertNotIn("login-logo-plate", login_template)
         self.assertNotIn("CONTINUOUS CODE DELIVERY", login_template)
@@ -2135,8 +2141,10 @@ else:
         self.assertIn(".waiting-runner-signal {", editorial_styles)
         self.assertIn(".supplement-copy textarea {", editorial_styles)
         self.assertIn(".continuation-panel {", editorial_styles)
-        self.assertIn(".task-kinetic {", editorial_styles)
-        self.assertIn('.task-kinetic[data-motion="craft"]', editorial_styles)
+        self.assertNotIn(".task-kinetic {", editorial_styles)
+        self.assertIn(".login-character-stage svg", editorial_styles)
+        self.assertIn("@keyframes login-route-marker", editorial_styles)
+        self.assertIn(".loop-progress::after", editorial_styles)
         self.assertIn("@media (prefers-reduced-motion: reduce)", editorial_styles)
         self.assertIn(".control-strip .metrics.admin-metrics", editorial_styles)
         self.assertIn("@media (max-width: 900px)", editorial_styles)
@@ -2311,15 +2319,15 @@ else:
         self.assertIn("<span>自主项目</span>", admin_page.text)
         self.client.post("/api/auth/logout")
         login_page = self.client.get("/login")
-        self.assertIn("editorial-ui.css?v=1.0-Alpha.20-login", login_page.text)
-        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.20", login_page.text)
+        self.assertIn("editorial-ui.css?v=1.0-Alpha.21-login", login_page.text)
+        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.21", login_page.text)
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("<span>自主项目</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.20"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.21"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
 
@@ -2333,17 +2341,29 @@ else:
         restored = self.client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
         self.assertEqual(restored.status_code, 200, restored.text)
 
-    def test_task_motion_covers_every_visible_request_state(self) -> None:
-        script = Path("app/static/app.js").read_text(encoding="utf-8")
-        motion = re.search(r"const TASK_MOTION = \{(?P<body>.*?)\};", script, re.DOTALL)
-        self.assertIsNotNone(motion)
-        motion_keys = set(re.findall(r"(?:^|,)\s*([a-z_]+)\s*:", motion.group("body")))
-        visible_keys: set[str] = set()
-        for constant in ("STATUS", "ANALYSIS_STATUS"):
-            match = re.search(rf"const {constant} = \{{(?P<body>.*?)\}};", script, re.DOTALL)
-            self.assertIsNotNone(match)
-            visible_keys.update(re.findall(r"(?:^|,)\s*([a-z_]+)\s*:", match.group("body")))
-        self.assertEqual(visible_keys - motion_keys, set())
+    def test_login_character_matches_authorized_reference_source(self) -> None:
+        asset_root = Path("app/static/grok-character")
+        manifest = json.loads((asset_root / "SOURCE.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["source"], "https://github.com/blessonism/grok-icon-study")
+        self.assertEqual(manifest["commit"], "647e9bd7c60290c42a738fad586589b3f36a4680")
+        for relative_path, expected_hash in manifest["files"].items():
+            content = (asset_root / relative_path).read_text(encoding="utf-8")
+            normalized = content.replace("\r\n", "\n").rstrip("\r\n").encode("utf-8")
+            self.assertEqual(hashlib.sha256(normalized).hexdigest(), expected_hash, relative_path)
+
+        login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
+        expected_order = [
+            "geometry-data.js",
+            "src/math.js",
+            "src/tables.js",
+            "src/pose.js",
+            "src/tricks.js",
+            "src/fx.js",
+            "src/eyes.js",
+            "src/character.js",
+        ]
+        positions = [login_template.index(f"/static/grok-character/{path}") for path in expected_order]
+        self.assertEqual(positions, sorted(positions))
 
     def test_pipeline_step_keeps_first_start_and_exposes_duration(self) -> None:
         project_id = self.create_project("test-step-timing", "local_package")

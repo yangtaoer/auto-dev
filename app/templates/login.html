@@ -25,12 +25,16 @@
         <h1>编号进入，<br>交付离场。</h1>
       </div>
       <div class="delivery-loop" aria-hidden="true">
-        <div class="loop-rail"><i></i><i></i><i></i><i></i><b></b></div>
-        <div class="loop-labels"><span>需求</span><span>研发</span><span>合并</span><span>交付</span></div>
+        <div class="loop-head"><span>PROJECT PIPELINE</span><em>AUTO / 01—04</em></div>
+        <div class="loop-rail"><span class="loop-progress"></span><i></i><i></i><i></i><i></i><b></b></div>
+        <div class="loop-labels"><span><em>01</em>需求准入</span><span><em>02</em>自主研发</span><span><em>03</em>合并校验</span><span><em>04</em>交付离场</span></div>
       </div>
       <div class="orbit orbit-a" aria-hidden="true"></div><div class="orbit orbit-b" aria-hidden="true"></div>
     </section>
     <section class="login-panel">
+      <div class="login-character-stage">
+        <svg id="login-grok-character" role="img" aria-label="Grok Bot 动态角色"></svg>
+      </div>
       <div>
         <div class="mobile-brand" aria-label="AutoDev">
           <span><img src="/static/brand/autodev-sidebar-mark.png?v={{ app_version }}" alt=""></span>
@@ -50,7 +54,28 @@
       {% endif %}
     </section>
   </main>
+  <script src="/static/grok-character/geometry-data.js?v={{ app_version }}"></script>
+  <script src="/static/grok-character/src/math.js?v={{ app_version }}"></script>
+  <script src="/static/grok-character/src/tables.js?v={{ app_version }}"></script>
+  <script src="/static/grok-character/src/pose.js?v={{ app_version }}"></script>
+  <script src="/static/grok-character/src/tricks.js?v={{ app_version }}"></script>
+  <script src="/static/grok-character/src/fx.js?v={{ app_version }}"></script>
+  <script src="/static/grok-character/src/eyes.js?v={{ app_version }}"></script>
+  <script src="/static/grok-character/src/character.js?v={{ app_version }}"></script>
   <script>
+    const loginCharacter = new GrokCharacter(document.querySelector('#login-grok-character'), {
+      mode: 'onboarding',
+      shape: 'blob',
+      color: 'black',
+      scheme: 'light',
+      loginWrap: true,
+      followPointer: true,
+      sizePx: 112,
+    });
+    loginCharacter.moodN = 1;
+    loginCharacter.setState('curious', {resetEyes: true});
+    window.addEventListener('pagehide', () => loginCharacter.destroy(), {once: true});
+
     document.querySelector('#login-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const button = event.currentTarget.querySelector('button');
