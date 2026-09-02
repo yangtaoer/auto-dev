@@ -54,6 +54,7 @@ html{background:var(--ink);color:var(--paper);font-family:Bahnschrift,"Microsoft
 
 /* 管理员恢复执行：保留现场，不把可继续解决的风险做成终点。 */
 .continuation-panel{display:grid;grid-template-columns:minmax(210px,.72fr) minmax(280px,1.28fr);margin:18px 0 24px;border:1px solid #8e6043;background:#151d1a;box-shadow:8px 8px 0 rgba(142,96,67,.22);overflow:hidden}
+.blocker-brief{margin:20px 0 24px;border:1px solid #8e6043;background:#151d1a;overflow:hidden;box-shadow:8px 8px 0 rgba(142,96,67,.2)}.blocker-brief>header{padding:15px 18px;background:#1a1b17}.blocker-brief>header span{display:block;color:#f07b45;font:700 9px Consolas,monospace;letter-spacing:.16em}.blocker-brief>header b{display:block;margin-top:5px;color:#fff8ec;font-size:18px}.blocker-brief-grid{display:grid;grid-template-columns:1fr 1fr}.blocker-brief article{min-width:0;padding:17px 18px;border-top:1px solid #55463d}.blocker-brief article+article{border-left:1px solid #55463d}.blocker-brief article span{display:block;color:#f4a679;font:700 10px Consolas,monospace;letter-spacing:.08em}.blocker-brief article p{margin:8px 0 0;color:#f4e5d7;font-size:12px;line-height:1.72;white-space:pre-wrap}.blocker-decision{background:rgba(217,149,24,.08)}
 .continuation-marker{position:relative;padding:21px 22px;background:linear-gradient(145deg,#693421,#9f4a28);color:#fff8ec}
 .continuation-marker:after{content:"↻";position:absolute;right:15px;bottom:4px;color:rgba(255,248,236,.14);font:700 70px Georgia,serif;line-height:1}
 .continuation-marker>span{display:block;color:#ffd5a6;font:700 9px Consolas,monospace;letter-spacing:.16em}
@@ -64,4 +65,4 @@ html{background:var(--ink);color:var(--paper);font-family:Bahnschrift,"Microsoft
 .continuation-form textarea{min-height:94px;resize:vertical;border:1px solid #5b695f;background:#09100d;color:#f5f0e8;padding:12px 13px;line-height:1.6}
 .continuation-form textarea:focus{outline:0;border-color:#f07b45;box-shadow:0 0 0 2px rgba(240,123,69,.17)}
 .continuation-form>.btn{justify-self:end}.continuation-error{margin:0}
-@media(max-width:650px){.continuation-panel{grid-template-columns:1fr;margin-left:-6px;margin-right:-6px}.continuation-form>.btn{width:100%}}
+@media(max-width:650px){.blocker-brief,.continuation-panel{margin-left:-6px;margin-right:-6px}.blocker-brief-grid,.continuation-panel{grid-template-columns:1fr}.blocker-brief article+article{border-left:0}.continuation-form>.btn{width:100%}}

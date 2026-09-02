@@ -503,9 +503,24 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("AutoDev · 待确认", mailer.delivery_subject(blocked_detail, action_required=True))
         self.assertIn("等待风险确认", blocked_mail)
         self.assertIn("缺少 APP 客户端仓库 &lt;client&gt;", blocked_mail)
+        self.assertIn("为什么阻塞", blocked_mail)
+        self.assertIn("需要你判断", blocked_mail)
+        self.assertIn("缺失仓库是否属于本次需求范围", blocked_mail)
+        self.assertIn("登录 AutoDev 判断并继续", blocked_mail)
         self.assertNotIn("无需 PR", blocked_mail)
         self.assertNotIn("等待代码合并", blocked_mail)
         self.assertNotIn("请逐个联系有权限的同事审核并合并", blocked_mail)
+
+        deployment_mail = mailer.delivery_html(
+            {
+                **blocked_detail,
+                "error_message": "发现阻塞风险，需要人工确认：前端部署验证未完成：asset_manifest_checked、directory_layout_checked、cache_strategy_checked",
+            },
+            action_required=True,
+        )
+        self.assertIn("静态资源清单校验（asset_manifest_checked）", deployment_mail)
+        self.assertIn("是否足以证明版本可发布", deployment_mail)
+        self.assertIn("AutoDev · DECISION SIGNAL", deployment_mail)
 
         failed_detail = {**detail, "status": "failed", "error_message": "Filename too long"}
         failed = mailer.delivery_html(failed_detail, terminal_status="failed")
@@ -1836,6 +1851,10 @@ else:
             error_message="缺少真实页面截图",
         )
 
+        blocked_detail = self.client.get(f"/api/requests/{request_id}").json()["request"]
+        self.assertEqual(blocked_detail["blocker_summary"]["reason"], "缺少真实页面截图")
+        self.assertIn("需求是否明确要求真实页面截图", blocked_detail["blocker_summary"]["decision_required"])
+
         response = self.client.post(
             f"/api/requests/{request_id}/continue",
             json={"prompt": "需求没有要求截图，请使用 production 构建和路由断言继续。"},
@@ -2064,7 +2083,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.25"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.26"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -2108,6 +2127,9 @@ else:
         self.assertIn("renderProjectGuide", script)
         self.assertIn("renderLedgerCalendar", script)
         self.assertIn("renderContinuationPanel", script)
+        self.assertIn("renderBlockerSummary", script)
+        self.assertIn("为什么阻塞", script)
+        self.assertIn("需要你判断", script)
         self.assertIn("/continue", script)
         self.assertIn("继续执行并保留现场", script)
         self.assertIn("syncSidebarOrbState", script)
@@ -2335,15 +2357,15 @@ else:
         self.assertIn("<span>自主项目</span>", admin_page.text)
         self.client.post("/api/auth/logout")
         login_page = self.client.get("/login")
-        self.assertIn("editorial-ui.css?v=1.0-Alpha.25-login", login_page.text)
-        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.25", login_page.text)
+        self.assertIn("editorial-ui.css?v=1.0-Alpha.26-login", login_page.text)
+        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.26", login_page.text)
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("<span>自主项目</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.25"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.26"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
 

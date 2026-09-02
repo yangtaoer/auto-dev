@@ -59,6 +59,7 @@ from .orchestrator import worker
 from .live_stream import live_codex_streams
 from .security import hash_password, verify_password
 from .services.delivery import ArtifactService, Mailer
+from .services.blocker_summary import summarize_blocker
 from .services.tfs import TfsClient
 
 
@@ -75,7 +76,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.25",
+    version="1.0-Alpha.26",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -355,6 +356,8 @@ def public_request_payload(detail: dict[str, Any]) -> dict[str, Any]:
     for key in ("analysis_result", "history_context", "acceptance_ledger", "quality_gate_result"):
         if isinstance(result.get(key), (dict, list)):
             result[key] = public_engine_text_tree(result[key])
+    if result.get("status") == RunStatus.WAITING_APPROVAL.value:
+        result["blocker_summary"] = summarize_blocker(result)
     return result
 
 

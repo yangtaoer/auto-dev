@@ -681,6 +681,16 @@ select { color-scheme: light; }
 .event b { color: var(--editorial-orange-ink); }
 .event p { color: #514d45; }
 .error-box { border-left-color: var(--red); background: #f4d3ce; color: #7d251f; }
+.blocker-brief { border-color:var(--editorial-ink); background:#fffdf7; box-shadow:7px 7px 0 #d2cbbf; }
+.blocker-brief > header { background:var(--editorial-ink); }
+.blocker-brief > header span { color:var(--editorial-on-dark-accent); }
+.blocker-brief > header b { color:#fffaf1; }
+.blocker-brief article { border-color:#c8c0b3; }
+.blocker-brief article + article { border-color:#c8c0b3; }
+.blocker-brief article span { color:var(--editorial-orange-ink); }
+.blocker-brief article p { color:var(--editorial-ink); }
+.blocker-reason { box-shadow:inset 5px 0 0 #c63f32; }
+.blocker-decision { background:#fff1c8; box-shadow:inset 5px 0 0 #d99518; }
 
 .joint-delivery-panel {
   border: 1px solid var(--editorial-ink) !important;

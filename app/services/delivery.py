@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 from ..config import settings
 from ..db import add_artifact, request_detail
 from ..domain import DELIVERY_MODE_LABELS, STATUS_LABELS, DeliveryMode, RunStatus, TaskType, visible_delivery_artifacts
+from .blocker_summary import summarize_blocker
 from .process_env import sanitized_process_env
 
 
@@ -737,10 +738,14 @@ class Mailer:
               <tr><td style="padding:0 13px 13px"><a href="{console_url}" style="display:inline-block;padding:8px 12px;background:#171813;color:#ffffff;text-decoration:none;font-size:12px;font-weight:700">登录 AutoDev 补充并继续 →</a></td></tr>
             </table>"""
         elif waiting_approval:
-            reason = safe_text(detail.get("error_message"), "请登录平台查看需要确认的研发风险。", limit=3000)
-            action = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;background:#fff4d8;border-left:4px solid #d99518">
-              <tr><td style="padding:12px 13px;color:#625c52;font-size:12px;line-height:1.65"><b style="display:block;color:#171813;font-size:14px">研发已暂停，需要确认阻塞风险</b>{reason}<div style="margin-top:7px">这不是 PR 合并等待。请联系管理员核对研发结论和阻塞原因，处理后再继续任务。</div></td></tr>
-              <tr><td style="padding:0 13px 13px"><a href="{console_url}" style="display:inline-block;padding:8px 12px;background:#171813;color:#ffffff;text-decoration:none;font-size:12px;font-weight:700">登录 AutoDev 查看详情 →</a></td></tr>
+            blocker = summarize_blocker(detail)
+            reason = safe_text(blocker["reason"], limit=3000)
+            decision_required = safe_text(blocker["decision_required"], limit=3000)
+            action = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;border:1px solid #171813;background:#fffdf7">
+              <tr><td colspan="2" style="padding:12px 14px;background:#171813;color:#fffdf7"><span style="display:block;color:#ff7952;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.16em">BLOCKED / DECISION REQUIRED</span><b style="display:block;margin-top:4px;font-size:15px">任务已暂停，等待你的判断</b></td></tr>
+              <tr><td width="118" valign="top" style="padding:12px 10px 12px 14px;border-bottom:1px solid #d6cbb8;color:#a3381f;font-size:11px;font-weight:700">为什么阻塞</td><td valign="top" style="padding:12px 14px 12px 10px;border-bottom:1px solid #d6cbb8;color:#4f4a42;font-size:12px;line-height:1.7">{reason}</td></tr>
+              <tr><td width="118" valign="top" style="padding:12px 10px 12px 14px;color:#8c5d16;font-size:11px;font-weight:700">需要你判断</td><td valign="top" style="padding:12px 14px 12px 10px;color:#171813;font-size:12px;line-height:1.7">{decision_required}</td></tr>
+              <tr><td colspan="2" style="padding:0 14px 14px"><a href="{console_url}" style="display:inline-block;padding:8px 12px;background:#e9572b;color:#171813;text-decoration:none;font-size:12px;font-weight:700">登录 AutoDev 判断并继续 →</a></td></tr>
             </table>"""
         elif action_required:
             review_items = [
@@ -769,7 +774,7 @@ class Mailer:
 
         completed_text = format_datetime(detail.get("completed_at"), "进行中")
         signal_label = "TERMINAL SIGNAL" if terminal else (
-            "INPUT SIGNAL" if waiting_input else ("REVIEW SIGNAL" if waiting_approval else "DELIVERY SIGNAL")
+            "INPUT SIGNAL" if waiting_input else ("DECISION SIGNAL" if waiting_approval else "DELIVERY SIGNAL")
         )
         duration_label = "任务耗时" if terminal else (
             "当前耗时" if action_required else ("分析耗时" if analysis_task else "开发耗时")
