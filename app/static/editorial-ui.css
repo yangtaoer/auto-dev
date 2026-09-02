@@ -136,7 +136,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   contain: layout size;
 }
 .autodev-orb-canvas,
-.autodev-orb-fallback {
+.autodev-orb-fallback,
+.autodev-orb-depth-back {
   position: absolute;
   inset: 0;
   display: block;
@@ -146,15 +147,23 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .autodev-orb-canvas {
   z-index: 1;
   opacity: 0;
+  filter: drop-shadow(0 6px 4px rgba(76, 20, 5, .30)) drop-shadow(4px 10px 9px rgba(54, 15, 4, .16));
   transform-origin: 50% 50%;
   will-change: transform;
   transition: opacity .28s ease;
 }
+.autodev-orb-depth-back { z-index: 0; overflow: visible; pointer-events: none; }
 .autodev-orb-fallback { z-index: 2; overflow: visible; }
 .autodev-orb.is-webgl .autodev-orb-canvas { opacity: 1; }
 .autodev-orb.is-webgl .autodev-orb-fallback { display: block; }
 .autodev-orb.is-webgl .orb-driver-body { opacity: 0; }
+.autodev-orb.is-webgl .orb-driver-eyes > path {
+  filter: drop-shadow(0 1.2px .9px rgba(82, 18, 3, .24));
+}
 .autodev-orb.is-fallback .autodev-orb-canvas { display: none; }
+.sidebar-character-stage .autodev-orb-canvas {
+  filter: drop-shadow(0 6px 5px rgba(0, 0, 0, .58)) drop-shadow(4px 10px 10px rgba(0, 0, 0, .28));
+}
 .sidebar-character-stage .autodev-orb-fallback {
   width: 122px;
   height: 122px;

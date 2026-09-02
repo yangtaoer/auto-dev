@@ -59,15 +59,22 @@
       float breathe = sin(slow * 1.18) * (0.003 + u_energy * 0.003);
       vec2 center = vec2(0.0, 0.0);
       vec2 local = uv - center;
-      float radius = 0.825 + breathe;
+      // 228.5 / 259 matches the authorized driver's circular body in its viewBox.
+      float radius = 0.882 + breathe;
       vec2 sphere = local / radius;
       float radial = length(sphere);
       float bodyAlpha = 1.0 - smoothstep(0.982, 1.018, radial);
 
-      float shadowWide = mix(0.52, 0.59, u_dark);
-      vec2 shadowPoint = vec2(uv.x, uv.y + 0.825);
-      float shadow = exp(-pow(shadowPoint.x / shadowWide, 2.0) - pow(shadowPoint.y / 0.105, 2.0));
-      float shadowAlpha = shadow * mix(0.19, 0.34, u_dark);
+      vec2 softShadowPoint = vec2(uv.x + 0.035, uv.y + radius * 0.94);
+      vec2 contactShadowPoint = vec2(uv.x + 0.015, uv.y + radius * 0.91);
+      float softShadow = exp(-pow(softShadowPoint.x / mix(0.58, 0.64, u_dark), 2.0)
+                           - pow(softShadowPoint.y / 0.135, 2.0));
+      float contactShadow = exp(-pow(contactShadowPoint.x / 0.39, 2.0)
+                              - pow(contactShadowPoint.y / 0.052, 2.0));
+      float shadowAlpha = clamp(
+        softShadow * mix(0.27, 0.43, u_dark) + contactShadow * mix(0.20, 0.31, u_dark),
+        0.0, 0.72
+      );
       vec3 shadowColor = mix(vec3(0.18, 0.09, 0.045), vec3(0.0), u_dark);
 
       if (bodyAlpha <= 0.001) {
@@ -78,20 +85,24 @@
       float z = sqrt(max(0.0, 1.0 - dot(sphere, sphere)));
       vec3 normal = normalize(vec3(sphere.x, sphere.y, z));
       vec3 lightDirection = normalize(vec3(-0.58 + u_pointer.x * 0.08, 0.76 + u_pointer.y * 0.05, 0.92));
-      float diffuse = max(dot(normal, lightDirection), 0.0);
+      float normalLight = dot(normal, lightDirection);
+      float diffuse = max(normalLight, 0.0);
+      float formLight = smoothstep(-0.48, 0.92, normalLight);
       float halfLight = max(dot(normal, normalize(lightDirection + vec3(0.0, 0.0, 1.0))), 0.0);
-      float specular = pow(halfLight, 34.0);
-      float rim = pow(1.0 - z, 2.35);
+      float specular = pow(halfLight, 42.0);
+      float broadSpecular = pow(halfLight, 7.0);
+      float rim = pow(1.0 - z, 2.6);
 
       vec3 brand = vec3(0.941, 0.322, 0.176);
       vec3 vermilion = vec3(0.955, 0.235, 0.105);
-      vec3 burnt = vec3(0.690, 0.115, 0.045);
+      vec3 burnt = vec3(0.515, 0.065, 0.022);
       vec3 highlight = vec3(1.0, 0.815, 0.610);
-      vec3 body = mix(burnt, brand, 0.48 + diffuse * 0.54);
-      body = mix(body, vermilion, smoothstep(-0.45, 0.72, sphere.y) * 0.30);
-      body += highlight * specular * 0.42;
-      body += vermilion * rim * (0.10 + u_energy * 0.035);
-      body *= 1.0 - smoothstep(0.08, 0.92, -sphere.y) * 0.15;
+      vec3 body = mix(burnt, brand, 0.14 + formLight * 0.86);
+      body = mix(body, vermilion, smoothstep(-0.40, 0.75, sphere.y) * 0.24);
+      body += highlight * (specular * 0.58 + broadSpecular * 0.075);
+      body += vermilion * rim * (0.055 + diffuse * 0.12 + u_energy * 0.025);
+      body *= 1.0 - smoothstep(-0.08, 0.94, -sphere.y) * 0.27;
+      body *= 1.0 - pow(max(-normalLight, 0.0), 1.35) * 0.18;
       body *= 1.0 - u_error * 0.22;
 
       float tide = sin((sphere.x * 1.35 - sphere.y * 0.85 + slow * 0.24 + u_turn * 0.34) * 3.14159265);
@@ -99,7 +110,7 @@
 
       float edgeGlow = rim * smoothstep(0.72, 1.0, radial) * 0.16;
       body += vermilion * edgeGlow;
-      float solidAlpha = bodyAlpha * 0.985;
+      float solidAlpha = bodyAlpha * 0.992;
       vec3 premultiplied = body * solidAlpha + shadowColor * shadowAlpha * (1.0 - solidAlpha);
       float alpha = solidAlpha + shadowAlpha * (1.0 - solidAlpha);
       gl_FragColor = vec4(premultiplied, alpha);
@@ -221,7 +232,101 @@
       this.motionDriver.moodN = 1;
       this.motionDriver.setPaused(this.reducedMotion);
       this.fallbackCharacter = this.motionDriver;
-      if (!asFallback && this.motionDriver.body) this.motionDriver.body.classList.add('orb-driver-body');
+      if (!asFallback) this._initializeDepthLayers();
+    }
+
+    _initializeDepthLayers() {
+      if (!this.motionDriver?.body || !this.fallbackSvg) return;
+      this.motionDriver.body.classList.add('orb-driver-body');
+
+      const ns = 'http://www.w3.org/2000/svg';
+      const radius = global.GROK_GEO?.Re || 114.2705;
+      const suffix = Math.random().toString(36).slice(2, 8);
+      const defs = this.fallbackSvg.querySelector('defs');
+      const eyesGroup = this.motionDriver.eyeEls?.[0]?.parentNode;
+
+      if (defs && eyesGroup) {
+        const sphereClip = document.createElementNS(ns, 'clipPath');
+        const sphereClipId = `orb-sphere-clip-${suffix}`;
+        sphereClip.setAttribute('id', sphereClipId);
+        sphereClip.setAttribute('clipPathUnits', 'userSpaceOnUse');
+        const sphereCircle = document.createElementNS(ns, 'circle');
+        sphereCircle.setAttribute('cx', radius);
+        sphereCircle.setAttribute('cy', radius);
+        sphereCircle.setAttribute('r', radius - 0.8);
+        sphereClip.appendChild(sphereCircle);
+        defs.appendChild(sphereClip);
+
+        const edgeGradient = document.createElementNS(ns, 'radialGradient');
+        const edgeGradientId = `orb-edge-fade-${suffix}`;
+        edgeGradient.setAttribute('id', edgeGradientId);
+        edgeGradient.setAttribute('gradientUnits', 'userSpaceOnUse');
+        edgeGradient.setAttribute('cx', radius);
+        edgeGradient.setAttribute('cy', radius);
+        edgeGradient.setAttribute('r', radius);
+        [['0%', '#fff'], ['95%', '#fff'], ['100%', '#000']].forEach(([offset, color]) => {
+          const stop = document.createElementNS(ns, 'stop');
+          stop.setAttribute('offset', offset);
+          stop.setAttribute('stop-color', color);
+          edgeGradient.appendChild(stop);
+        });
+        defs.appendChild(edgeGradient);
+
+        const sphereMask = document.createElementNS(ns, 'mask');
+        const sphereMaskId = `orb-sphere-mask-${suffix}`;
+        sphereMask.setAttribute('id', sphereMaskId);
+        sphereMask.setAttribute('maskUnits', 'userSpaceOnUse');
+        sphereMask.setAttribute('x', '-2');
+        sphereMask.setAttribute('y', '-2');
+        sphereMask.setAttribute('width', String(radius * 2 + 4));
+        sphereMask.setAttribute('height', String(radius * 2 + 4));
+        const maskCircle = document.createElementNS(ns, 'circle');
+        maskCircle.setAttribute('cx', radius);
+        maskCircle.setAttribute('cy', radius);
+        maskCircle.setAttribute('r', radius);
+        maskCircle.setAttribute('fill', `url(#${edgeGradientId})`);
+        sphereMask.appendChild(maskCircle);
+        defs.appendChild(sphereMask);
+
+        const eyeGradient = document.createElementNS(ns, 'linearGradient');
+        const eyeGradientId = `orb-eye-depth-${suffix}`;
+        eyeGradient.setAttribute('id', eyeGradientId);
+        eyeGradient.setAttribute('x1', '0');
+        eyeGradient.setAttribute('y1', '0');
+        eyeGradient.setAttribute('x2', '0.72');
+        eyeGradient.setAttribute('y2', '1');
+        [['0%', '#38352e'], ['34%', '#171813'], ['100%', '#070806']].forEach(([offset, color]) => {
+          const stop = document.createElementNS(ns, 'stop');
+          stop.setAttribute('offset', offset);
+          stop.setAttribute('stop-color', color);
+          eyeGradient.appendChild(stop);
+        });
+        defs.appendChild(eyeGradient);
+
+        eyesGroup.classList.add('orb-driver-eyes');
+        eyesGroup.setAttribute('clip-path', `url(#${sphereClipId})`);
+        eyesGroup.setAttribute('mask', `url(#${sphereMaskId})`);
+        this.fallbackSvg.style.setProperty('--bg', `url(#${eyeGradientId})`);
+      }
+
+      const backSvg = document.createElementNS(ns, 'svg');
+      backSvg.setAttribute('class', 'autodev-orb-depth-back');
+      backSvg.setAttribute('aria-hidden', 'true');
+      backSvg.setAttribute('focusable', 'false');
+      backSvg.style.setProperty('--fg', BRAND_ORANGE);
+      backSvg.style.overflow = 'visible';
+      this.root.insertBefore(backSvg, this.canvas);
+      backSvg.appendChild(this.motionDriver.fx.back);
+      this.backSvg = backSvg;
+      this._syncDepthLayers();
+    }
+
+    _syncDepthLayers() {
+      if (!this.backSvg || !this.fallbackSvg) return;
+      const viewBox = this.fallbackSvg.getAttribute('viewBox');
+      if (viewBox && this.backSvg.getAttribute('viewBox') !== viewBox) this.backSvg.setAttribute('viewBox', viewBox);
+      this.backSvg.style.transform = this.fallbackSvg.style.transform;
+      this.backSvg.style.transformOrigin = this.fallbackSvg.style.transformOrigin || '50% 50%';
     }
 
     _bind() {
@@ -315,6 +420,7 @@
 
     _syncDriverMotion() {
       if (!this.motionDriver) return;
+      this._syncDepthLayers();
       const motionState = this.motionDriver.state || DRIVER_STATES[this.state] || this.state;
       this.root.dataset.motionState = motionState;
       this.root.dataset.eye = String(this.motionDriver.eyeTo ?? '');
@@ -400,6 +506,7 @@
       this.reduceMotionQuery.removeEventListener('change', this._onMotionChange);
       if (this.resizeObserver) this.resizeObserver.disconnect();
       if (this.fallbackCharacter) this.fallbackCharacter.destroy();
+      if (this.backSvg) this.backSvg.remove();
       if (this.gl) {
         this.gl.deleteBuffer(this.buffer);
         this.gl.deleteProgram(this.program);
