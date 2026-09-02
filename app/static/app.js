@@ -76,6 +76,17 @@ async function refresh(){
   Object.assign(USER,me.user);state.dashboard=dashboard;state.projects=projects.projects;state.users=users.users||[];state.notificationUsers=recipients.users||[];state.analytics=analytics;applyDeliveryRecords(records);renderDashboard();renderProjects();renderProjectGuide();renderAnalytics();renderUsers();renderRequestEmailOptions(false);renderRecordFilterOptions();renderAllTable();
   if(state.selectedRequest&&!state.selectedTerminal) refreshDetail(state.selectedRequest,true);
 }
+function syncSidebarOrbState(activeRuns,runners){
+  const character=window.sidebarCharacter;if(!character)return;
+  const runs=activeRuns||[],statuses=runs.map(runVisualStatus);
+  let characterState='curious';
+  if(statuses.some(status=>['failed','rejected'].includes(status)))characterState='error';
+  else if(statuses.some(status=>['waiting_approval','waiting_input','waiting_merge','waiting_runner'].includes(status)))characterState='listening';
+  else if(statuses.some(status=>['routing','validating','queued'].includes(status)))characterState='thinking';
+  else if(runs.length)characterState='working';
+  else if(!(runners||[]).some(runner=>runner.online))characterState='sleeping';
+  character.setState(characterState);
+}
 function renderDashboard(){
   const c=state.dashboard.counts;
   const delivered=c.delivered||0, waiting=c.waiting_merge||0, failed=c.failed||0;
@@ -95,6 +106,7 @@ function renderDashboard(){
   bindRows();
   const runners=state.dashboard.runners||[],online=runners.filter(r=>r.online),status=document.querySelector('#runner-status');
   status.classList.toggle('offline',online.length===0);status.querySelector('span').textContent=online.length?'执行器在线':'执行器离线';
+  syncSidebarOrbState(state.dashboard.active,runners);
 }
 function renderDevCoreQuota(){const el=document.querySelector('#devcore-quota');if(!el)return;const runners=state.dashboard.runners||[];const runner=runners.find(r=>r.online&&r.devcore_usage?.available)||runners.find(r=>r.devcore_usage?.available);if(!runner){el.innerHTML='<div><p class="eyebrow">研发容量 / DEVCORE CAPACITY</p><h2>套餐信息暂不可用</h2></div><span class="muted">执行器上线后自动同步</span>';return}const usage=runner.devcore_usage,primary=usage.primary||{},remaining=primary.remaining_percent,used=primary.used_percent??0,credits=usage.credits||{},plan=String(usage.plan_type||'unknown').toUpperCase();const reset=primary.resets_at?new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(primary.resets_at*1000)):'—';const balance=credits.unlimited?'无限':(credits.balance??'0');el.innerHTML=`<div class="quota-copy"><p class="eyebrow">研发容量 / DEVCORE CAPACITY / ${escapeHtml(runner.runner_id)}</p><h2>${escapeHtml(plan)} 套餐</h2><span>周期重置 ${escapeHtml(reset)} · 额外余额 ${escapeHtml(balance)}</span></div><div class="quota-meter"><div class="quota-number"><b>${remaining??'—'}%</b><span>套餐剩余</span></div><div class="quota-track"><i style="width:${Math.max(0,Math.min(100,100-used))}%"></i></div><small>数据更新时间 ${fmt(usage.updated_at)}</small></div>`}
 function activeRunKey(r){return `${r.record_type==='intake'||r.intake_id?'intake':'request'}:${r.intake_id||r.id}`}

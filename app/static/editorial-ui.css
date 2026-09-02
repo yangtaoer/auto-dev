@@ -127,11 +127,34 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   overflow: hidden;
   pointer-events: none;
 }
-.sidebar-character-stage svg {
+.autodev-orb {
+  position: relative;
   display: block;
   width: 122px;
   height: 122px;
-  overflow: visible;
+  isolation: isolate;
+  contain: layout paint size;
+}
+.autodev-orb-canvas,
+.autodev-orb-fallback {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.autodev-orb-canvas {
+  z-index: 2;
+  opacity: 0;
+  transition: opacity .28s ease;
+}
+.autodev-orb-fallback { z-index: 1; overflow: visible; }
+.autodev-orb.is-webgl .autodev-orb-canvas { opacity: 1; }
+.autodev-orb.is-webgl .autodev-orb-fallback { display: none; }
+.autodev-orb.is-fallback .autodev-orb-canvas { display: none; }
+.sidebar-character-stage .autodev-orb-fallback {
+  width: 122px;
+  height: 122px;
   color-scheme: dark;
   --sand-bg-base: var(--editorial-ink);
   --disk: var(--editorial-ink);
@@ -930,8 +953,11 @@ select { color-scheme: light; }
   height: 118px;
   pointer-events: none;
 }
-.login-character-stage svg {
-  display: block;
+.login-character-stage .autodev-orb {
+  width: 112px;
+  height: 112px;
+}
+.login-character-stage .autodev-orb-fallback {
   width: 112px;
   height: 112px;
   overflow: visible;
@@ -1021,7 +1047,8 @@ select { color-scheme: light; }
   .login-logo-lockup strong { font-size: 44px; }
   .login-panel { border-left: 0; border-top: 2px solid var(--editorial-ink); padding: 50px 34px; }
   .login-panel > .login-character-stage { top: 42px; right: 42px; width: 100px; height: 100px; }
-  .login-character-stage svg { width: 96px !important; height: 96px !important; }
+  .login-character-stage .autodev-orb,
+  .login-character-stage .autodev-orb-fallback { width: 96px !important; height: 96px !important; }
   .login-brand h1 { font-size: 66px; }
   .detail-drawer { width: min(720px, 96vw); }
   .devcore-stream-panel { right: 0; width: 100vw; min-width: 0; }
@@ -1043,7 +1070,8 @@ select { color-scheme: light; }
   .delivery-loop { margin-top: 45px; }
   .loop-labels { gap: 4px; font-size: 8px; }
   .login-panel > .login-character-stage { top: 34px; right: 24px; width: 78px; height: 78px; }
-  .login-character-stage svg { width: 74px !important; height: 74px !important; }
+  .login-character-stage .autodev-orb,
+  .login-character-stage .autodev-orb-fallback { width: 74px !important; height: 74px !important; }
   .login-panel > div:not(.login-character-stage) { max-width: calc(100% - 86px); }
   .sidebar { grid-template-columns: 90px minmax(0, 1fr); }
 }

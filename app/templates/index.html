@@ -24,7 +24,10 @@
         <button class="nav-item" data-view="users"><span class="nav-index">05</span><span>账号管理</span></button>{% endif %}
       </nav>
       <div class="sidebar-character-stage" aria-hidden="true">
-        <svg id="sidebar-grok-character"></svg>
+        <div id="sidebar-orb-character" class="autodev-orb">
+          <canvas class="autodev-orb-canvas" aria-hidden="true"></canvas>
+          <svg class="autodev-orb-fallback" aria-hidden="true"></svg>
+        </div>
       </div>
       <div class="sidebar-foot">
         <div class="system-status offline" id="runner-status"><i></i><span>执行器离线</span></div>
@@ -181,20 +184,15 @@
   <script src="/static/grok-character/src/fx.js?v={{ app_version }}"></script>
   <script src="/static/grok-character/src/eyes.js?v={{ app_version }}"></script>
   <script src="/static/grok-character/src/character.js?v={{ app_version }}"></script>
+  <script src="/static/orb-character.js?v={{ app_version }}"></script>
   <script>
-    const sidebarCharacter = new GrokCharacter(document.querySelector('#sidebar-grok-character'), {
-      mode: 'onboarding',
-      shape: 'blob',
-      color: 'black',
-      scheme: 'dark',
-      inkFlat: '#fffaf1',
-      eyeColor: '#171813',
-      loginWrap: true,
+    const sidebarCharacter = new AutoDevOrb(document.querySelector('#sidebar-orb-character'), {
+      environment: 'dark',
       followPointer: true,
       sizePx: 122,
+      state: 'curious',
     });
-    sidebarCharacter.moodN = 1;
-    sidebarCharacter.setState('curious', {resetEyes: true});
+    window.sidebarCharacter = sidebarCharacter;
     const sidebarCompact = window.matchMedia('(max-width: 900px)');
     const syncSidebarCharacter = () => sidebarCharacter.setPaused(sidebarCompact.matches);
     syncSidebarCharacter();

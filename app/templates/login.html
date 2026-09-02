@@ -33,7 +33,10 @@
     </section>
     <section class="login-panel">
       <div class="login-character-stage">
-        <svg id="login-grok-character" role="img" aria-label="Grok Bot 动态角色"></svg>
+        <div id="login-orb-character" class="autodev-orb" role="img" aria-label="AutoDev 橙色球体动态角色">
+          <canvas class="autodev-orb-canvas" aria-hidden="true"></canvas>
+          <svg class="autodev-orb-fallback" aria-hidden="true"></svg>
+        </div>
       </div>
       <div>
         <div class="mobile-brand" aria-label="AutoDev">
@@ -62,18 +65,14 @@
   <script src="/static/grok-character/src/fx.js?v={{ app_version }}"></script>
   <script src="/static/grok-character/src/eyes.js?v={{ app_version }}"></script>
   <script src="/static/grok-character/src/character.js?v={{ app_version }}"></script>
+  <script src="/static/orb-character.js?v={{ app_version }}"></script>
   <script>
-    const loginCharacter = new GrokCharacter(document.querySelector('#login-grok-character'), {
-      mode: 'onboarding',
-      shape: 'blob',
-      color: 'black',
-      scheme: 'light',
-      loginWrap: true,
+    const loginCharacter = new AutoDevOrb(document.querySelector('#login-orb-character'), {
+      environment: 'light',
       followPointer: true,
       sizePx: 112,
+      state: 'curious',
     });
-    loginCharacter.moodN = 1;
-    loginCharacter.setState('curious', {resetEyes: true});
     window.addEventListener('pagehide', () => loginCharacter.destroy(), {once: true});
 
     document.querySelector('#login-form').addEventListener('submit', async (event) => {
