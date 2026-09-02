@@ -23,10 +23,11 @@
         <button class="nav-item" data-view="analytics"><span class="nav-index">04</span><span>统计看板</span></button>
         <button class="nav-item" data-view="users"><span class="nav-index">05</span><span>账号管理</span></button>{% endif %}
       </nav>
-      <div class="sidebar-character-stage" aria-hidden="true">
-        <div id="sidebar-orb-character" class="autodev-orb">
+      <div class="sidebar-character-stage">
+        <div id="sidebar-orb-character" class="autodev-orb" role="button" tabindex="0" aria-label="AutoDev 动态角色">
           <canvas class="autodev-orb-canvas" aria-hidden="true"></canvas>
           <svg class="autodev-orb-fallback" aria-hidden="true"></svg>
+          <span class="orb-presence" aria-hidden="true"><i></i><b>观察流水线</b></span>
         </div>
       </div>
       <div class="sidebar-foot">
@@ -193,6 +194,7 @@
       followPointer: true,
       sizePx: 122,
       state: 'curious',
+      interactive: true,
     });
     window.sidebarCharacter = sidebarCharacter;
     const sidebarCompact = window.matchMedia('(max-width: 900px)');

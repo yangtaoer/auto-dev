@@ -7,9 +7,13 @@
   const STATE_PROFILES = {
     idle:      {energy: .12, attention: .24, success: 0, error: 0, sleep: 0},
     curious:   {energy: .20, attention: .72, success: 0, error: 0, sleep: 0},
+    reading:   {energy: .44, attention: 1.00, success: 0, error: 0, sleep: 0},
     listening: {energy: .18, attention: 1.00, success: 0, error: 0, sleep: 0},
     thinking:  {energy: .36, attention: .82, success: 0, error: 0, sleep: 0},
     working:   {energy: .88, attention: .56, success: 0, error: 0, sleep: 0},
+    building:  {energy: .74, attention: .66, success: 0, error: 0, sleep: 0},
+    delivering:{energy: .68, attention: .78, success: .16, error: 0, sleep: 0},
+    blocked:   {energy: .08, attention: 1.00, success: 0, error: .62, sleep: 0},
     success:   {energy: .58, attention: .75, success: 1, error: 0, sleep: 0},
     error:     {energy: .08, attention: .32, success: 0, error: 1, sleep: 0},
     sleeping:  {energy: 0, attention: 0, success: 0, error: 0, sleep: 1},
@@ -24,8 +28,14 @@
     celebrate: {energy: 1.00, attention: .76, success: 1, error: 0, sleep: 0},
   };
   const DRIVER_STATES = {
-    idle: 'idle', curious: 'curious', listening: 'listening', thinking: 'thinking',
-    working: 'working', success: 'celebrate', error: 'confused', sleeping: 'sleeping',
+    idle: 'idle', curious: 'curious', reading: 'searching', listening: 'listening', thinking: 'thinking',
+    working: 'working', building: 'working', delivering: 'proud', blocked: 'confused',
+    success: 'celebrate', error: 'confused', sleeping: 'sleeping',
+  };
+  const STATE_LABELS = {
+    idle: '待命中', curious: '观察流水线', reading: '读取需求', listening: '等待信号',
+    thinking: '校验方案', working: '持续研发', building: '构建版本', delivering: '整理交付',
+    blocked: '等待判断', success: '交付完成', error: '检查异常', sleeping: '执行器休眠',
   };
 
   const VERTEX_SHADER = `
@@ -164,6 +174,11 @@
       this.profile = Object.assign({}, STATE_PROFILES.curious);
       this.targetProfile = Object.assign({}, STATE_PROFILES.curious);
       this.driverTurn = 0;
+      this.driverReactionTimer = 0;
+      this.reactionClassTimer = 0;
+      this.gazeTimer = 0;
+      this.whisperTimer = 0;
+      this.tapCycle = 0;
       this.reduceMotionQuery = global.matchMedia('(prefers-reduced-motion: reduce)');
       this.reducedMotion = this.reduceMotionQuery.matches;
 
@@ -171,6 +186,8 @@
       this._onVisibilityChange = this._onVisibilityChange.bind(this);
       this._onMotionChange = this._onMotionChange.bind(this);
       this._onContextLost = this._onContextLost.bind(this);
+      this._onInteract = this._onInteract.bind(this);
+      this._onInteractKey = this._onInteractKey.bind(this);
       this._resize = this._resize.bind(this);
       this._frame = this._frame.bind(this);
 
@@ -334,12 +351,83 @@
       if (this.canvas) this.canvas.addEventListener('webglcontextlost', this._onContextLost);
       document.addEventListener('visibilitychange', this._onVisibilityChange);
       this.reduceMotionQuery.addEventListener('change', this._onMotionChange);
+      if (this.options.interactive) {
+        this.root.classList.add('is-interactive');
+        this.root.addEventListener('click', this._onInteract);
+        this.root.addEventListener('keydown', this._onInteractKey);
+      }
       if ('ResizeObserver' in global) {
         this.resizeObserver = new ResizeObserver(this._resize);
         this.resizeObserver.observe(this.root);
       } else {
         global.addEventListener('resize', this._resize, {passive: true});
       }
+    }
+
+    _onInteract() {
+      if (this.manualPaused) return;
+      const reactions = [
+        ['playful', () => this.motionDriver?.bounceOnce()],
+        ['happy', () => this.motionDriver?.spinOnce(.72)],
+        ['excited', () => this.motionDriver?.burstOnce()],
+      ];
+      const [driverState, action] = reactions[this.tapCycle % reactions.length];
+      this.tapCycle += 1;
+      action();
+      this._temporaryDriverState(driverState, 1250);
+      this._markReaction('tap', 620);
+      const messages = {
+        blocked: '我在等你给出判断依据。',
+        working: '正在把代码变成可复核的证据。',
+        building: '构建轮正在转，稍等一下。',
+        delivering: '交付件正在离场。',
+        sleeping: '执行器还在休眠。',
+        error: '我发现了需要处理的异常。',
+      };
+      this._showWhisper(messages[this.state] || '流水线正常，我在这里盯着。');
+    }
+
+    _onInteractKey(event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      this._onInteract();
+    }
+
+    _temporaryDriverState(driverState, duration = 1100) {
+      if (!this.motionDriver || this.reducedMotion) return;
+      if (this.driverReactionTimer) clearTimeout(this.driverReactionTimer);
+      this.motionDriver.setMode('manual');
+      this.motionDriver.setState(driverState);
+      this.driverReactionTimer = global.setTimeout(() => {
+        this.driverReactionTimer = 0;
+        if (this.destroyed || !this.motionDriver) return;
+        this.motionDriver.setState(DRIVER_STATES[this.state] || 'curious');
+      }, duration);
+    }
+
+    _markReaction(name, duration = 900) {
+      if (this.reactionClassTimer) clearTimeout(this.reactionClassTimer);
+      this.root.dataset.reaction = name;
+      this.reactionClassTimer = global.setTimeout(() => {
+        this.reactionClassTimer = 0;
+        if (!this.destroyed) delete this.root.dataset.reaction;
+      }, duration);
+    }
+
+    _showWhisper(message) {
+      let whisper = this.root.querySelector('.orb-whisper');
+      if (!whisper) {
+        whisper = document.createElement('span');
+        whisper.className = 'orb-whisper';
+        whisper.setAttribute('role', 'status');
+        this.root.appendChild(whisper);
+      }
+      whisper.textContent = message;
+      whisper.classList.remove('show');
+      void whisper.offsetWidth;
+      whisper.classList.add('show');
+      if (this.whisperTimer) clearTimeout(this.whisperTimer);
+      this.whisperTimer = global.setTimeout(() => whisper.classList.remove('show'), 1900);
     }
 
     _onPointerMove(event) {
@@ -482,7 +570,66 @@
         if (state === 'success' && !this.reducedMotion) this.motionDriver.burstOnce();
       }
       this.root.dataset.state = state;
+      const label = STATE_LABELS[state] || STATE_LABELS.curious;
+      const caption = this.root.parentElement?.querySelector('.orb-presence b');
+      if (caption) caption.textContent = label;
+      if (this.options.interactive) this.root.setAttribute('aria-label', `AutoDev 动态角色，当前状态：${label}。按回车可互动。`);
       this._schedule();
+    }
+
+    lookAt(target, duration = 1200) {
+      const rect = target?.getBoundingClientRect?.();
+      const point = rect
+        ? {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2}
+        : (Number.isFinite(target?.x) && Number.isFinite(target?.y) ? target : null);
+      if (!point) return;
+      const rootRect = this.root.getBoundingClientRect();
+      if (rootRect.width && rootRect.height) {
+        this.pointer.targetX = Math.max(-1, Math.min(1, (point.x - (rootRect.left + rootRect.width / 2)) / (rootRect.width * 1.7)));
+        this.pointer.targetY = Math.max(-1, Math.min(1, ((rootRect.top + rootRect.height / 2) - point.y) / (rootRect.height * 1.7)));
+      }
+      this.motionDriver?.setGazeTarget(point);
+      if (this.gazeTimer) clearTimeout(this.gazeTimer);
+      if (duration > 0) this.gazeTimer = global.setTimeout(() => this.clearLook(), duration);
+    }
+
+    clearLook() {
+      if (this.gazeTimer) clearTimeout(this.gazeTimer);
+      this.gazeTimer = 0;
+      this.motionDriver?.setGazeTarget(null);
+      this.pointer.targetX = 0;
+      this.pointer.targetY = 0;
+    }
+
+    dispatchOnce(target) {
+      this.lookAt(target, 1450);
+      this.motionDriver?.bounceOnce();
+      this._temporaryDriverState('excited', 1350);
+      this._markReaction('dispatch', 900);
+    }
+
+    progressOnce(target) {
+      this.lookAt(target, 1150);
+      this.motionDriver?.spinOnce(.32);
+      this._temporaryDriverState('playful', 1050);
+      this._markReaction('progress', 760);
+    }
+
+    celebrateOnce(target) {
+      this.lookAt(target, 1900);
+      this.motionDriver?.bounceOnce();
+      this.motionDriver?.burstOnce();
+      this._temporaryDriverState('celebrate', 1850);
+      this._markReaction('success', 1500);
+      this._showWhisper('交付完成，成果已安全离场。');
+    }
+
+    alertOnce(target) {
+      this.lookAt(target, 1500);
+      this.motionDriver?.bounceOnce();
+      this._temporaryDriverState('surprised', 1350);
+      this._markReaction('blocked', 1100);
+      this._showWhisper('这里卡住了，等待你给出判断依据。');
     }
 
     setPaused(paused) {
@@ -504,6 +651,11 @@
       global.removeEventListener('resize', this._resize);
       document.removeEventListener('visibilitychange', this._onVisibilityChange);
       this.reduceMotionQuery.removeEventListener('change', this._onMotionChange);
+      this.root.removeEventListener('click', this._onInteract);
+      this.root.removeEventListener('keydown', this._onInteractKey);
+      [this.driverReactionTimer, this.reactionClassTimer, this.gazeTimer, this.whisperTimer].forEach(timer => {
+        if (timer) clearTimeout(timer);
+      });
       if (this.resizeObserver) this.resizeObserver.disconnect();
       if (this.fallbackCharacter) this.fallbackCharacter.destroy();
       if (this.backSvg) this.backSvg.remove();

@@ -84,8 +84,8 @@
       button.disabled = true; error.hidden = true;
       const payload = Object.fromEntries(new FormData(event.currentTarget));
       const response = await fetch('/api/auth/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-      if (response.ok) location.href = '/';
-      else { const data = await response.json(); error.textContent = data.detail || '登录失败'; error.hidden = false; button.disabled = false; }
+      if (response.ok) { loginCharacter.dispatchOnce(button); document.querySelector('.login-shell').classList.add('is-authenticating'); setTimeout(() => { location.href = '/'; }, 520); }
+      else { const data = await response.json(); error.textContent = data.detail || '登录失败'; error.hidden = false; button.disabled = false; loginCharacter.alertOnce(error); }
     });
   </script>
 </body>
