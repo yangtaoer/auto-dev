@@ -118,6 +118,26 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .sidebar nav { gap: 5px; }
+.sidebar-character-stage {
+  position: relative;
+  display: grid;
+  flex: 1 1 auto;
+  place-items: center;
+  min-height: 150px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.sidebar-character-stage svg {
+  display: block;
+  width: 122px;
+  height: 122px;
+  overflow: visible;
+  color-scheme: dark;
+  --sand-bg-base: var(--editorial-ink);
+  --disk: var(--editorial-ink);
+  --bg: var(--editorial-ink);
+  --fg: #fffaf1;
+}
 .nav-item {
   position: relative;
   grid-template-columns: 30px 1fr;
@@ -823,13 +843,22 @@ select { color-scheme: light; }
   background: repeating-linear-gradient(90deg, rgba(23,24,19,.12) 0 24px, transparent 24px 26px), #f5b19a;
 }
 .loop-progress { position: absolute; left: 1px; right: 1px; top: 14px; height: 6px; overflow: hidden; }
+.loop-progress::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(23,24,19,.08), rgba(23,24,19,.26), rgba(23,24,19,.08));
+}
 .loop-progress::after {
   content: "";
   position: absolute;
   inset: 0 auto 0 0;
-  width: 22%;
-  background: var(--editorial-ink);
-  animation: login-route-scan 5.6s steps(4, end) infinite;
+  width: 34%;
+  opacity: 0;
+  background: linear-gradient(90deg, transparent 0, rgba(23,24,19,.3) 22%, var(--editorial-ink) 58%, rgba(23,24,19,.54) 76%, transparent 100%);
+  transform: translate3d(-110%, 0, 0);
+  will-change: transform, opacity;
+  animation: login-route-scan 7.2s cubic-bezier(.38, .02, .16, 1) infinite;
 }
 .loop-rail i {
   position: relative;
@@ -840,11 +869,12 @@ select { color-scheme: light; }
   background: #fffaf1;
   box-shadow: 0 0 0 2px var(--editorial-orange);
   transform: rotate(45deg);
-  animation: login-station-cycle 5.6s steps(1, end) infinite;
+  will-change: transform, background-color, box-shadow;
+  animation: login-station-cycle 7.2s ease-in-out infinite;
 }
-.loop-rail i:nth-of-type(2) { animation-delay: 1.4s; }
-.loop-rail i:nth-of-type(3) { animation-delay: 2.8s; }
-.loop-rail i:nth-of-type(4) { animation-delay: 4.2s; }
+.loop-rail i:nth-of-type(2) { animation-delay: 2.05s; }
+.loop-rail i:nth-of-type(3) { animation-delay: 4.1s; }
+.loop-rail i:nth-of-type(4) { animation-delay: 5.95s; }
 .loop-rail b {
   top: 8px;
   z-index: 3;
@@ -855,7 +885,9 @@ select { color-scheme: light; }
   background: #fffaf1;
   box-shadow: inset 0 0 0 4px var(--editorial-green);
   transform: rotate(45deg);
-  animation: login-route-marker 5.6s steps(1, end) infinite;
+  opacity: 0;
+  will-change: left, transform, opacity;
+  animation: login-route-marker 7.2s cubic-bezier(.38, .02, .16, 1) infinite;
 }
 .loop-labels {
   display: grid;
@@ -928,20 +960,27 @@ select { color-scheme: light; }
 @keyframes editorial-blink { 0%, 72% { opacity: 1; } 73%, 85% { opacity: .25; } 86%, 100% { opacity: 1; } }
 @keyframes editorial-scan { 0%, 100% { opacity: .2; transform: scaleX(.12); transform-origin: left; } 50% { opacity: 1; transform: scaleX(1); transform-origin: left; } }
 @keyframes login-route-scan {
-  0% { transform: translateX(0); }
-  25% { transform: translateX(118%); }
-  50% { transform: translateX(236%); }
-  75%, 100% { transform: translateX(354%); }
+  0% { opacity: 0; transform: translate3d(-110%, 0, 0); }
+  5% { opacity: .92; }
+  84% { opacity: .92; transform: translate3d(330%, 0, 0); }
+  92%, 100% { opacity: 0; transform: translate3d(330%, 0, 0); }
 }
 @keyframes login-route-marker {
-  0% { left: 0; }
-  25% { left: calc(33.333% - 6px); }
-  50% { left: calc(66.666% - 12px); }
-  75%, 100% { left: calc(100% - 18px); }
+  0% { left: 0; opacity: 0; transform: rotate(45deg) scale(.76); }
+  5% { opacity: 1; transform: rotate(45deg) scale(1); }
+  28% { transform: rotate(45deg) scale(1); }
+  31% { transform: rotate(45deg) scale(.86); }
+  34% { transform: rotate(45deg) scale(1); }
+  54% { transform: rotate(45deg) scale(1); }
+  57% { transform: rotate(45deg) scale(.86); }
+  60% { transform: rotate(45deg) scale(1); }
+  84% { left: calc(100% - 18px); opacity: 1; transform: rotate(45deg) scale(1); }
+  88% { transform: rotate(45deg) scale(1.12); }
+  92%, 100% { left: calc(100% - 18px); opacity: 0; transform: rotate(45deg) scale(.78); }
 }
 @keyframes login-station-cycle {
-  0%, 24% { background: var(--editorial-green); }
-  25%, 100% { background: #fffaf1; }
+  0%, 14%, 100% { background: #fffaf1; box-shadow: 0 0 0 2px var(--editorial-orange); transform: rotate(45deg) scale(1); }
+  5% { background: var(--editorial-green); box-shadow: 0 0 0 2px var(--editorial-orange), 0 0 0 6px rgba(23,24,19,.12); transform: rotate(45deg) scale(1.24); }
 }
 
 @media (max-width: 1280px) {
@@ -963,6 +1002,7 @@ select { color-scheme: light; }
   .sidebar-brand-mark { width: 90px; height: 36px; }
   .logo .sidebar-brand-name { width: auto; text-align: left; font-size: 20px; }
   .sidebar nav { display: flex; min-width: 0; margin-left: 0; overflow-x: auto; }
+  .sidebar-character-stage { display: none; }
   .sidebar .nav-item { display: block; min-width: 128px; padding: 12px 14px; text-align: center; white-space: nowrap; }
   .sidebar .nav-index { display: none; }
   .sidebar-foot { display: none; }

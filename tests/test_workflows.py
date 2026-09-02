@@ -2064,7 +2064,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.21"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.22"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -2076,6 +2076,10 @@ else:
         self.assertIn("可自主研发项目", page.text)
         self.assertIn("project-guide", page.text)
         self.assertIn('<span>自主项目</span>', page.text)
+        self.assertIn('id="sidebar-grok-character"', page.text)
+        self.assertIn("inkFlat: '#fffaf1'", page.text)
+        self.assertIn("eyeColor: '#171813'", page.text)
+        self.assertIn("sidebarCharacter.setState('curious'", page.text)
         self.assertIn('data-filter-select="task_type"', page.text)
         self.assertIn('data-filter-date="date_from"', page.text)
         self.assertNotIn('type="date"', page.text)
@@ -2145,6 +2149,10 @@ else:
         self.assertIn(".login-character-stage svg", editorial_styles)
         self.assertIn("@keyframes login-route-marker", editorial_styles)
         self.assertIn(".loop-progress::after", editorial_styles)
+        self.assertIn("login-route-scan 7.2s cubic-bezier", editorial_styles)
+        self.assertNotIn("login-route-scan 5.6s steps", editorial_styles)
+        self.assertIn(".sidebar-character-stage svg", editorial_styles)
+        self.assertIn(".sidebar-character-stage { display: none; }", editorial_styles)
         self.assertIn("@media (prefers-reduced-motion: reduce)", editorial_styles)
         self.assertIn(".control-strip .metrics.admin-metrics", editorial_styles)
         self.assertIn("@media (max-width: 900px)", editorial_styles)
@@ -2319,15 +2327,15 @@ else:
         self.assertIn("<span>自主项目</span>", admin_page.text)
         self.client.post("/api/auth/logout")
         login_page = self.client.get("/login")
-        self.assertIn("editorial-ui.css?v=1.0-Alpha.21-login", login_page.text)
-        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.21", login_page.text)
+        self.assertIn("editorial-ui.css?v=1.0-Alpha.22-login", login_page.text)
+        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.22", login_page.text)
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("<span>自主项目</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.21"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.22"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
 
@@ -2352,6 +2360,7 @@ else:
             self.assertEqual(hashlib.sha256(normalized).hexdigest(), expected_hash, relative_path)
 
         login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
+        index_template = Path("app/templates/index.html").read_text(encoding="utf-8")
         expected_order = [
             "geometry-data.js",
             "src/math.js",
@@ -2362,8 +2371,9 @@ else:
             "src/eyes.js",
             "src/character.js",
         ]
-        positions = [login_template.index(f"/static/grok-character/{path}") for path in expected_order]
-        self.assertEqual(positions, sorted(positions))
+        for template in (login_template, index_template):
+            positions = [template.index(f"/static/grok-character/{path}") for path in expected_order]
+            self.assertEqual(positions, sorted(positions))
 
     def test_pipeline_step_keeps_first_start_and_exposes_duration(self) -> None:
         project_id = self.create_project("test-step-timing", "local_package")

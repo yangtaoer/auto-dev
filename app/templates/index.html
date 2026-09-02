@@ -23,6 +23,9 @@
         <button class="nav-item" data-view="analytics"><span class="nav-index">04</span><span>统计看板</span></button>
         <button class="nav-item" data-view="users"><span class="nav-index">05</span><span>账号管理</span></button>{% endif %}
       </nav>
+      <div class="sidebar-character-stage" aria-hidden="true">
+        <svg id="sidebar-grok-character"></svg>
+      </div>
       <div class="sidebar-foot">
         <div class="system-status offline" id="runner-status"><i></i><span>执行器离线</span></div>
         <div class="profile"><div class="avatar">{{ user.display_name[0] }}</div><div><b>{{ user.display_name }}</b><span>{{ '管理员' if user.role == 'admin' else '项目经理' }}</span></div><button id="logout" title="退出">↪</button></div>
@@ -170,6 +173,37 @@
 
   <div class="toast" id="toast"></div>
   <script>window.__USER__ = {{ user | tojson }};</script>
+  <script src="/static/grok-character/geometry-data.js?v={{ app_version }}"></script>
+  <script src="/static/grok-character/src/math.js?v={{ app_version }}"></script>
+  <script src="/static/grok-character/src/tables.js?v={{ app_version }}"></script>
+  <script src="/static/grok-character/src/pose.js?v={{ app_version }}"></script>
+  <script src="/static/grok-character/src/tricks.js?v={{ app_version }}"></script>
+  <script src="/static/grok-character/src/fx.js?v={{ app_version }}"></script>
+  <script src="/static/grok-character/src/eyes.js?v={{ app_version }}"></script>
+  <script src="/static/grok-character/src/character.js?v={{ app_version }}"></script>
+  <script>
+    const sidebarCharacter = new GrokCharacter(document.querySelector('#sidebar-grok-character'), {
+      mode: 'onboarding',
+      shape: 'blob',
+      color: 'black',
+      scheme: 'dark',
+      inkFlat: '#fffaf1',
+      eyeColor: '#171813',
+      loginWrap: true,
+      followPointer: true,
+      sizePx: 122,
+    });
+    sidebarCharacter.moodN = 1;
+    sidebarCharacter.setState('curious', {resetEyes: true});
+    const sidebarCompact = window.matchMedia('(max-width: 900px)');
+    const syncSidebarCharacter = () => sidebarCharacter.setPaused(sidebarCompact.matches);
+    syncSidebarCharacter();
+    sidebarCompact.addEventListener('change', syncSidebarCharacter);
+    window.addEventListener('pagehide', () => {
+      sidebarCompact.removeEventListener('change', syncSidebarCharacter);
+      sidebarCharacter.destroy();
+    }, {once: true});
+  </script>
   <script src="/static/app.js?v={{ app_version }}"></script>
 </body>
 </html>
