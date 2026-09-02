@@ -1,4 +1,4 @@
-/* AutoDev Orb — lightweight, dependency-free WebGL character with an SVG fallback. */
+/* AutoDev Orb — WebGL volume, driven by the original spring/eye/trick engine. */
 (function (global) {
   'use strict';
 
@@ -13,9 +13,18 @@
     success:   {energy: .58, attention: .75, success: 1, error: 0, sleep: 0},
     error:     {energy: .08, attention: .32, success: 0, error: 1, sleep: 0},
     sleeping:  {energy: 0, attention: 0, success: 0, error: 0, sleep: 1},
+    happy:     {energy: .62, attention: .64, success: .35, error: 0, sleep: 0},
+    playful:   {energy: .82, attention: .78, success: .20, error: 0, sleep: 0},
+    excited:   {energy: 1.00, attention: .82, success: .42, error: 0, sleep: 0},
+    laughing:  {energy: .92, attention: .58, success: .46, error: 0, sleep: 0},
+    proud:     {energy: .30, attention: .48, success: .30, error: 0, sleep: 0},
+    shy:       {energy: .16, attention: .32, success: 0, error: 0, sleep: 0},
+    searching: {energy: .72, attention: 1.00, success: 0, error: 0, sleep: 0},
+    confused:  {energy: .34, attention: .88, success: 0, error: .28, sleep: 0},
+    celebrate: {energy: 1.00, attention: .76, success: 1, error: 0, sleep: 0},
   };
-  const FALLBACK_STATES = {
-    idle: 'idle', curious: 'curious', listening: 'curious', thinking: 'working',
+  const DRIVER_STATES = {
+    idle: 'idle', curious: 'curious', listening: 'listening', thinking: 'thinking',
     working: 'working', success: 'celebrate', error: 'confused', sleeping: 'sleeping',
   };
 
@@ -40,40 +49,25 @@
     uniform float u_error;
     uniform float u_sleep;
     uniform float u_dark;
-
-    float sdCapsule(vec2 p, vec2 a, vec2 b, float r) {
-      vec2 pa = p - a;
-      vec2 ba = b - a;
-      float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
-      return length(pa - ba * h) - r;
-    }
+    uniform float u_turn;
 
     void main() {
       vec2 uv = gl_FragCoord.xy / u_resolution.xy * 2.0 - 1.0;
       uv.x *= u_resolution.x / u_resolution.y;
 
       float slow = u_time * (0.78 + u_energy * 1.35);
-      float breathe = sin(slow * 1.18) * (0.008 + u_energy * 0.008);
-      float successKick = u_success * sin(min(u_age, 1.0) * 3.14159265) * 0.14;
-      float errorDrop = u_error * 0.045;
-      vec2 center = vec2(
-        sin(slow * 0.62) * (0.009 + u_attention * 0.010) + u_pointer.x * 0.010,
-        0.075 + sin(slow * 0.92) * (0.010 + u_energy * 0.009) + successKick - errorDrop
-      );
-
-      float squashBeat = sin(slow * 1.18) * (0.007 + u_energy * 0.006);
-      vec2 scale = vec2(1.0 + squashBeat + u_success * successKick * 0.17,
-                        1.0 - squashBeat - u_success * successKick * 0.12 - u_error * 0.025);
-      vec2 local = (uv - center) / scale;
-      float radius = 0.755 + breathe - u_error * 0.015;
+      float breathe = sin(slow * 1.18) * (0.003 + u_energy * 0.003);
+      vec2 center = vec2(0.0, 0.0);
+      vec2 local = uv - center;
+      float radius = 0.825 + breathe;
       vec2 sphere = local / radius;
       float radial = length(sphere);
       float bodyAlpha = 1.0 - smoothstep(0.982, 1.018, radial);
 
-      float shadowWide = mix(0.47, 0.55, u_dark);
-      vec2 shadowPoint = vec2(uv.x - center.x * 0.45, uv.y + 0.755 - successKick * 0.20);
+      float shadowWide = mix(0.52, 0.59, u_dark);
+      vec2 shadowPoint = vec2(uv.x, uv.y + 0.825);
       float shadow = exp(-pow(shadowPoint.x / shadowWide, 2.0) - pow(shadowPoint.y / 0.105, 2.0));
-      float shadowAlpha = shadow * mix(0.19, 0.34, u_dark) * (1.0 - successKick * 1.8);
+      float shadowAlpha = shadow * mix(0.19, 0.34, u_dark);
       vec3 shadowColor = mix(vec3(0.18, 0.09, 0.045), vec3(0.0), u_dark);
 
       if (bodyAlpha <= 0.001) {
@@ -83,7 +77,7 @@
 
       float z = sqrt(max(0.0, 1.0 - dot(sphere, sphere)));
       vec3 normal = normalize(vec3(sphere.x, sphere.y, z));
-      vec3 lightDirection = normalize(vec3(-0.58, 0.76, 0.92));
+      vec3 lightDirection = normalize(vec3(-0.58 + u_pointer.x * 0.08, 0.76 + u_pointer.y * 0.05, 0.92));
       float diffuse = max(dot(normal, lightDirection), 0.0);
       float halfLight = max(dot(normal, normalize(lightDirection + vec3(0.0, 0.0, 1.0))), 0.0);
       float specular = pow(halfLight, 34.0);
@@ -100,22 +94,8 @@
       body *= 1.0 - smoothstep(0.08, 0.92, -sphere.y) * 0.15;
       body *= 1.0 - u_error * 0.22;
 
-      float tide = sin((sphere.x * 1.35 - sphere.y * 0.85 + slow * 0.24) * 3.14159265);
+      float tide = sin((sphere.x * 1.35 - sphere.y * 0.85 + slow * 0.24 + u_turn * 0.34) * 3.14159265);
       body += vermilion * tide * (0.012 + u_energy * 0.010) * (1.0 - radial);
-
-      vec2 gaze = u_pointer * vec2(0.040, 0.028) * (0.35 + u_attention * 0.65);
-      gaze.y -= u_error * 0.025 + u_sleep * 0.035;
-      float lid = clamp(1.0 - u_blink * 0.88 - u_sleep * 0.82, 0.10, 1.0);
-      float eyeHalfHeight = 0.110 * lid;
-      float eyeRadius = mix(0.038, 0.066, lid);
-      vec2 leftEye = vec2(-0.185, 0.035) + gaze;
-      vec2 rightEye = vec2(0.185, 0.035) + gaze;
-      float leftDistance = sdCapsule(sphere, leftEye - vec2(0.0, eyeHalfHeight), leftEye + vec2(0.0, eyeHalfHeight), eyeRadius);
-      float rightDistance = sdCapsule(sphere, rightEye - vec2(0.0, eyeHalfHeight), rightEye + vec2(0.0, eyeHalfHeight), eyeRadius);
-      float eyeMask = 1.0 - smoothstep(-0.006, 0.006, min(leftDistance, rightDistance));
-      eyeMask *= smoothstep(0.12, 0.48, z);
-      vec3 eyeInk = vec3(0.055, 0.059, 0.050);
-      body = mix(body, eyeInk, eyeMask * 0.98);
 
       float edgeGlow = rim * smoothstep(0.72, 1.0, radial) * 0.16;
       body += vermilion * edgeGlow;
@@ -161,7 +141,7 @@
       this.root = root;
       this.canvas = root.querySelector('.autodev-orb-canvas');
       this.fallbackSvg = root.querySelector('.autodev-orb-fallback');
-      this.options = Object.assign({followPointer: true, environment: 'light', state: 'curious'}, options);
+      this.options = Object.assign({followPointer: true, environment: 'light', state: 'curious', mode: 'manual', ambient: true}, options);
       this.destroyed = false;
       this.manualPaused = false;
       this.frameRequest = 0;
@@ -172,19 +152,19 @@
       this.pointer = {x: 0, y: 0, targetX: 0, targetY: 0};
       this.profile = Object.assign({}, STATE_PROFILES.curious);
       this.targetProfile = Object.assign({}, STATE_PROFILES.curious);
-      this.blink = 0;
-      this.blinkStartedAt = -1;
-      this.nextBlinkAt = this.startedAt + 1800 + Math.random() * 2600;
+      this.driverTurn = 0;
       this.reduceMotionQuery = global.matchMedia('(prefers-reduced-motion: reduce)');
       this.reducedMotion = this.reduceMotionQuery.matches;
 
       this._onPointerMove = this._onPointerMove.bind(this);
       this._onVisibilityChange = this._onVisibilityChange.bind(this);
       this._onMotionChange = this._onMotionChange.bind(this);
+      this._onContextLost = this._onContextLost.bind(this);
       this._resize = this._resize.bind(this);
       this._frame = this._frame.bind(this);
 
-      if (!this.canvas || !this._initializeWebGL()) this._initializeFallback();
+      this.webglReady = Boolean(this.canvas && this._initializeWebGL());
+      this._initializeMotionDriver(!this.webglReady);
       this.setState(this.options.state, {immediate: true});
       this._bind();
       this._resize();
@@ -211,7 +191,7 @@
         this.program = program;
         this.buffer = buffer;
         this.uniforms = {};
-        ['resolution', 'pointer', 'time', 'age', 'blink', 'energy', 'attention', 'success', 'error', 'sleep', 'dark'].forEach(name => {
+        ['resolution', 'pointer', 'time', 'age', 'blink', 'energy', 'attention', 'success', 'error', 'sleep', 'dark', 'turn'].forEach(name => {
           this.uniforms[name] = gl.getUniformLocation(program, `u_${name}`);
         });
         gl.clearColor(0, 0, 0, 0);
@@ -223,11 +203,12 @@
       }
     }
 
-    _initializeFallback() {
-      this.root.classList.add('is-fallback');
+    _initializeMotionDriver(asFallback) {
+      this.root.classList.toggle('is-fallback', asFallback);
       if (!this.fallbackSvg || typeof global.GrokCharacter !== 'function') return;
-      this.fallbackCharacter = new global.GrokCharacter(this.fallbackSvg, {
-        mode: 'onboarding',
+      this.motionDriver = new global.GrokCharacter(this.fallbackSvg, {
+        mode: this.options.mode,
+        state: DRIVER_STATES[this.options.state] || 'curious',
         shape: 'blob',
         color: 'black',
         scheme: this.options.environment === 'dark' ? 'dark' : 'light',
@@ -237,12 +218,15 @@
         followPointer: this.options.followPointer,
         sizePx: this.options.sizePx || 112,
       });
-      this.fallbackCharacter.moodN = 1;
-      this.fallbackCharacter.setPaused(this.reducedMotion);
+      this.motionDriver.moodN = 1;
+      this.motionDriver.setPaused(this.reducedMotion);
+      this.fallbackCharacter = this.motionDriver;
+      if (!asFallback && this.motionDriver.body) this.motionDriver.body.classList.add('orb-driver-body');
     }
 
     _bind() {
       if (this.options.followPointer) global.addEventListener('pointermove', this._onPointerMove, {passive: true});
+      if (this.canvas) this.canvas.addEventListener('webglcontextlost', this._onContextLost);
       document.addEventListener('visibilitychange', this._onVisibilityChange);
       this.reduceMotionQuery.addEventListener('change', this._onMotionChange);
       if ('ResizeObserver' in global) {
@@ -274,6 +258,16 @@
       this._schedule(this.reducedMotion);
     }
 
+    _onContextLost(event) {
+      event.preventDefault();
+      this.webglReady = false;
+      this.gl = null;
+      this.root.classList.remove('is-webgl');
+      this.root.classList.add('is-fallback');
+      if (this.motionDriver?.body) this.motionDriver.body.classList.remove('orb-driver-body');
+      if (this.canvas) this.canvas.style.transform = '';
+    }
+
     _resize() {
       if (!this.gl || !this.canvas) return;
       const rect = this.root.getBoundingClientRect();
@@ -286,6 +280,7 @@
         this.canvas.height = height;
         this.gl.viewport(0, 0, width, height);
       }
+      this._syncDriverMotion();
       this._render(performance.now());
     }
 
@@ -294,6 +289,7 @@
       if (forceStatic || this.reducedMotion || this.manualPaused || document.hidden) {
         if (this.frameRequest) cancelAnimationFrame(this.frameRequest);
         this.frameRequest = 0;
+        this._syncDriverMotion();
         this._render(performance.now());
         return;
       }
@@ -311,27 +307,35 @@
       });
       this.pointer.x += (this.pointer.targetX - this.pointer.x) * pointerEase;
       this.pointer.y += (this.pointer.targetY - this.pointer.y) * pointerEase;
-      this._updateBlink(now);
+      this._syncDriverMotion();
       this.lastFrameAt = now;
       this._render(now);
       this._schedule();
     }
 
-    _updateBlink(now) {
-      if (this.profile.sleep > .7) {
-        this.blink += (1 - this.blink) * .08;
-        return;
-      }
-      if (this.blinkStartedAt < 0 && now >= this.nextBlinkAt) this.blinkStartedAt = now;
-      if (this.blinkStartedAt >= 0) {
-        const progress = (now - this.blinkStartedAt) / 170;
-        this.blink = Math.sin(Math.min(1, progress) * Math.PI);
-        if (progress >= 1) {
-          this.blink = 0;
-          this.blinkStartedAt = -1;
-          this.nextBlinkAt = now + 2200 + Math.random() * 4300;
-        }
-      }
+    _syncDriverMotion() {
+      if (!this.motionDriver) return;
+      const motionState = this.motionDriver.state || DRIVER_STATES[this.state] || this.state;
+      this.root.dataset.motionState = motionState;
+      this.root.dataset.eye = String(this.motionDriver.eyeTo ?? '');
+      const motionProfile = STATE_PROFILES[motionState] || STATE_PROFILES[this.state] || STATE_PROFILES.curious;
+      this.targetProfile = Object.assign({}, motionProfile);
+      if (!this.webglReady || !this.canvas || !this.motionDriver.group) return;
+      const transform = this.motionDriver.group.getAttribute('transform') || '';
+      const match = transform.match(/translate\(([-\d.]+)\s+([-\d.]+)\)\s+rotate\(([-\d.]+)\)\s+scale\(([-\d.]+)\s+([-\d.]+)\)/);
+      if (!match) return;
+      const center = global.GROK_GEO?.Re || 114.2705;
+      const viewWidth = global.GROK_TABLES?.VIEW?.width || 259;
+      const pixelScale = this.root.getBoundingClientRect().width / viewWidth;
+      const poseScale = this.motionDriver.pose?.scale || 1;
+      const dx = (Number(match[1]) - center) * pixelScale * poseScale;
+      const dy = (Number(match[2]) - center) * pixelScale * poseScale;
+      const rotation = Number(match[3]);
+      const sx = Number(match[4]) * poseScale;
+      const sy = Number(match[5]) * poseScale;
+      const surfaceTurn = Number(this.motionDriver.extras?.turn);
+      this.driverTurn = Number.isFinite(surfaceTurn) ? surfaceTurn : rotation * Math.PI / 180;
+      this.canvas.style.transform = `translate3d(${dx.toFixed(3)}px, ${dy.toFixed(3)}px, 0) rotate(${rotation.toFixed(3)}deg) scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`;
     }
 
     _render(now) {
@@ -343,13 +347,14 @@
       gl.uniform2f(this.uniforms.pointer, this.pointer.x, this.pointer.y);
       gl.uniform1f(this.uniforms.time, this.reducedMotion ? 0.6 : (now - this.startedAt) / 1000);
       gl.uniform1f(this.uniforms.age, (now - this.stateStartedAt) / 1000);
-      gl.uniform1f(this.uniforms.blink, this.reducedMotion ? 0 : this.blink);
+      gl.uniform1f(this.uniforms.blink, this.motionDriver?.blink?.x ?? 1);
       gl.uniform1f(this.uniforms.energy, this.profile.energy);
       gl.uniform1f(this.uniforms.attention, this.profile.attention);
       gl.uniform1f(this.uniforms.success, this.profile.success);
       gl.uniform1f(this.uniforms.error, this.profile.error);
       gl.uniform1f(this.uniforms.sleep, this.profile.sleep);
       gl.uniform1f(this.uniforms.dark, this.options.environment === 'dark' ? 1 : 0);
+      gl.uniform1f(this.uniforms.turn, this.driverTurn);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
     }
 
@@ -360,8 +365,15 @@
       this.stateStartedAt = performance.now();
       this.targetProfile = Object.assign({}, STATE_PROFILES[state]);
       if (immediate || this.reducedMotion) this.profile = Object.assign({}, this.targetProfile);
-      if (this.fallbackCharacter) {
-        this.fallbackCharacter.setState(FALLBACK_STATES[state] || 'curious', {resetEyes: immediate});
+      if (this.motionDriver) {
+        const useOnboarding = state === 'curious' && (this.options.ambient || this.options.mode === 'onboarding');
+        const driverMode = useOnboarding ? 'onboarding' : 'manual';
+        if (this.motionDriver.mode !== driverMode) {
+          this.motionDriver.setMode(driverMode);
+          if (useOnboarding) this.motionDriver.moodN = 1;
+        }
+        this.motionDriver.setState(DRIVER_STATES[state] || 'curious', {resetEyes: immediate});
+        if (state === 'success' && !this.reducedMotion) this.motionDriver.burstOnce();
       }
       this.root.dataset.state = state;
       this._schedule();
@@ -373,11 +385,16 @@
       this._schedule(this.manualPaused);
     }
 
+    spinOnce(turns = 1) { this.motionDriver?.spinOnce(turns); }
+    bounceOnce() { this.motionDriver?.bounceOnce(); }
+    burstOnce() { this.motionDriver?.burstOnce(); }
+
     destroy() {
       if (this.destroyed) return;
       this.destroyed = true;
       if (this.frameRequest) cancelAnimationFrame(this.frameRequest);
       global.removeEventListener('pointermove', this._onPointerMove);
+      if (this.canvas) this.canvas.removeEventListener('webglcontextlost', this._onContextLost);
       global.removeEventListener('resize', this._resize);
       document.removeEventListener('visibilitychange', this._onVisibilityChange);
       this.reduceMotionQuery.removeEventListener('change', this._onMotionChange);

@@ -133,7 +133,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   width: 122px;
   height: 122px;
   isolation: isolate;
-  contain: layout paint size;
+  contain: layout size;
 }
 .autodev-orb-canvas,
 .autodev-orb-fallback {
@@ -144,13 +144,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   height: 100%;
 }
 .autodev-orb-canvas {
-  z-index: 2;
+  z-index: 1;
   opacity: 0;
+  transform-origin: 50% 50%;
+  will-change: transform;
   transition: opacity .28s ease;
 }
-.autodev-orb-fallback { z-index: 1; overflow: visible; }
+.autodev-orb-fallback { z-index: 2; overflow: visible; }
 .autodev-orb.is-webgl .autodev-orb-canvas { opacity: 1; }
-.autodev-orb.is-webgl .autodev-orb-fallback { display: none; }
+.autodev-orb.is-webgl .autodev-orb-fallback { display: block; }
+.autodev-orb.is-webgl .orb-driver-body { opacity: 0; }
 .autodev-orb.is-fallback .autodev-orb-canvas { display: none; }
 .sidebar-character-stage .autodev-orb-fallback {
   width: 122px;
