@@ -2104,7 +2104,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.29"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.30"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -2392,15 +2392,15 @@ else:
         self.assertIn("<span>自主项目</span>", admin_page.text)
         self.client.post("/api/auth/logout")
         login_page = self.client.get("/login")
-        self.assertIn("editorial-ui.css?v=1.0-Alpha.29-login", login_page.text)
-        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.29", login_page.text)
+        self.assertIn("editorial-ui.css?v=1.0-Alpha.30-login", login_page.text)
+        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.30", login_page.text)
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("<span>自主项目</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.29"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.30"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
 
@@ -2494,6 +2494,14 @@ else:
         self.assertNotIn("demo-credential", login_template)
         self.assertNotIn("login-entry-heading", login_template)
         self.assertIn("进入工作台", login_template)
+
+        editorial_styles = Path("app/static/editorial-ui.css").read_text(encoding="utf-8")
+        self.assertIn("container-type: inline-size", editorial_styles)
+        self.assertIn(".login-panel::-webkit-scrollbar", editorial_styles)
+        self.assertIn("height: clamp(70px, 19.5cqw, 110px) !important", editorial_styles)
+        self.assertIn("left: calc(33.333% - 4px)", editorial_styles)
+        self.assertIn("left: calc(66.667% - 8px)", editorial_styles)
+        self.assertIn("left: calc(100% - 12px)", editorial_styles)
 
         media_root = Path("app/static/media")
         for name in (

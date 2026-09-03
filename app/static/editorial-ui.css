@@ -1396,19 +1396,31 @@ select { color-scheme: light; }
   height: 100dvh;
   min-height: 0;
   padding: clamp(28px, 4vh, 48px) clamp(32px, 3vw, 54px);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
   border: 0;
   border-left: 2px solid var(--editorial-ink);
   color: var(--editorial-ink);
   background: rgba(251,248,240,.985);
   box-shadow: -12px 0 30px rgba(23,24,19,.12);
   backdrop-filter: blur(8px) saturate(.78);
+  container-type: inline-size;
 }
+.login-panel::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .login-panel::before {
   content: "SECURE ENTRY / 01";
+  left: auto;
   right: 18px;
   top: 22px;
+  bottom: auto;
+  width: auto;
+  height: auto;
   color: rgba(23,24,19,.48);
+  background: none;
+  animation: none;
+  pointer-events: none;
 }
 .login-panel > * {
   width: 100%;
@@ -1416,7 +1428,7 @@ select { color-scheme: light; }
 }
 .login-panel-brand {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 72px;
+  grid-template-columns: minmax(0, 1fr) clamp(72px, 20cqw, 112px);
   align-items: center;
   gap: 18px;
   padding-bottom: 14px;
@@ -1426,17 +1438,17 @@ select { color-scheme: light; }
   display: flex;
   align-items: center;
   min-width: 0;
-  gap: 12px;
+  gap: clamp(10px, 2.5cqw, 16px);
 }
 .login-panel-logo img {
   display: block;
-  width: clamp(82px, 6.5vw, 118px);
-  height: 48px;
+  width: clamp(82px, 27cqw, 152px);
+  height: clamp(48px, 12cqw, 68px);
   object-fit: contain;
 }
 .login-panel-logo strong {
   color: var(--editorial-ink);
-  font: 900 clamp(24px, 1.8vw, 34px)/1 Georgia, serif;
+  font: 900 clamp(24px, 8cqw, 46px)/1 Georgia, serif;
   letter-spacing: -.065em;
   white-space: nowrap;
 }
@@ -1445,14 +1457,14 @@ select { color-scheme: light; }
   position: relative;
   display: grid;
   place-items: center;
-  width: 72px;
-  height: 72px;
+  width: clamp(72px, 20cqw, 112px);
+  height: clamp(72px, 20cqw, 112px);
   pointer-events: none;
 }
 .login-panel-brand .autodev-orb,
 .login-panel-brand .autodev-orb-fallback {
-  width: 70px !important;
-  height: 70px !important;
+  width: clamp(70px, 19.5cqw, 110px) !important;
+  height: clamp(70px, 19.5cqw, 110px) !important;
 }
 .login-panel-slogan {
   padding: 2px 0 2px 14px;
@@ -1463,7 +1475,7 @@ select { color-scheme: light; }
   margin: 0;
   color: var(--editorial-ink);
   font-family: "STZhongsong", "SimSun", serif;
-  font-size: clamp(28px, 2vw, 36px);
+  font-size: clamp(28px, 7.2cqw, 42px);
   line-height: 1.05;
   letter-spacing: -.07em;
   white-space: nowrap;
@@ -1476,7 +1488,30 @@ select { color-scheme: light; }
   box-shadow: none;
   backdrop-filter: none;
 }
-.login-panel .loop-rail { height: 27px; margin-top: 5px; }
+.login-panel .loop-rail { height: 28px; margin-top: 5px; }
+.login-panel .loop-rail::before {
+  top: 50%;
+  height: 6px;
+  transform: translateY(-50%);
+}
+.login-panel .loop-progress {
+  top: 50%;
+  height: 4px;
+  transform: translateY(-50%);
+}
+.login-panel .loop-rail i {
+  z-index: 2;
+  flex: 0 0 12px;
+  width: 12px;
+  height: 12px;
+}
+.login-panel .loop-rail b {
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  box-shadow: inset 0 0 0 3px var(--editorial-green), 0 0 0 2px rgba(255,250,241,.72);
+}
 .login-panel .loop-labels { margin-top: 3px; font-size: 8px; }
 .login-panel .form-stack {
   margin-top: 4px;
@@ -1512,6 +1547,25 @@ select { color-scheme: light; }
   .login-panel-logo strong { font-size: 25px; }
   .login-panel-slogan h1 { font-size: 28px; }
   .login-panel .delivery-loop { padding-left: 9px; padding-right: 9px; }
+}
+
+@keyframes login-route-marker {
+  0% { left: 0; opacity: 0; transform: rotate(45deg) scale(.76); }
+  4% { left: 0; opacity: 1; transform: rotate(45deg) scale(1); }
+  9% { left: 0; opacity: 1; transform: rotate(45deg) scale(1.12); }
+  30% { left: calc(33.333% - 4px); opacity: 1; transform: rotate(45deg) scale(1); }
+  33% { left: calc(33.333% - 4px); opacity: 1; transform: rotate(45deg) scale(.84); }
+  37% { left: calc(33.333% - 4px); opacity: 1; transform: rotate(45deg) scale(1.12); }
+  58% { left: calc(66.667% - 8px); opacity: 1; transform: rotate(45deg) scale(1); }
+  61% { left: calc(66.667% - 8px); opacity: 1; transform: rotate(45deg) scale(.84); }
+  65% { left: calc(66.667% - 8px); opacity: 1; transform: rotate(45deg) scale(1.12); }
+  84% { left: calc(100% - 12px); opacity: 1; transform: rotate(45deg) scale(1); }
+  88% { left: calc(100% - 12px); opacity: 1; transform: rotate(45deg) scale(1.14); }
+  93%, 100% { left: calc(100% - 12px); opacity: 0; transform: rotate(45deg) scale(.78); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-panel .loop-rail b { left: calc(100% - 12px); }
 }
 
 /* Problem analysis: a read-only evidence desk inside the operational system. */
