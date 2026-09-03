@@ -29,8 +29,8 @@ def _decision_required(reason: str) -> str:
     text = reason.casefold()
     if any(keyword in text for keyword in ("真实页面截图", "页面截图", "浏览器截图")):
         return (
-            "请判断需求是否明确要求真实页面截图；若未要求，可允许使用 production 构建、"
-            "路由测试和自动断言作为等价验收证据继续。若必须截图，请说明必须验证的页面和环境。"
+            "真实页面截图不属于任何项目的交付硬门禁；请直接使用 production 构建、真实路由、"
+            "自动断言、资源哈希和部署检查作为可复核证据继续，不需要补充截图环境。"
         )
     if any(keyword in text for keyword in _TECHNICAL_CHECK_LABELS) or "前端部署验证" in text:
         return (

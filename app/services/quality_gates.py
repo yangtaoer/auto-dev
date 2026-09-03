@@ -35,16 +35,9 @@ def _path_is_mapped(path: str, mapped: set[str]) -> bool:
 
 
 def _requirement_requests_visual_evidence(profile: dict[str, Any], requirement_text: str) -> bool:
-    """Return whether the requirement explicitly promotes screenshots to a blocking acceptance gate."""
-    if profile.get("required_for_frontend"):
-        return True
-    normalized = re.sub(r"\s+", "", str(requirement_text or "")).casefold()
-    keywords = [
-        str(value).strip().casefold()
-        for value in profile.get("require_when_requirement_mentions") or []
-        if str(value).strip()
-    ]
-    return bool(normalized and any(re.sub(r"\s+", "", keyword) in normalized for keyword in keywords))
+    """Keep screenshots non-blocking for every project, including stale task snapshots."""
+    del profile, requirement_text
+    return False
 
 
 def normalize_acceptance_ledger(result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -245,7 +238,7 @@ def evaluate_development_quality(
             "visual-acceptance",
             "页面视觉验收",
             "passed",
-            "需求未明确要求真实页面截图；采用验收账本中的生产构建、路由与自动断言证据",
+            "全平台不以真实页面截图作为交付依据；采用生产构建、真实路由与自动断言证据",
             [
                 *[str(item) for item in visual.get("screenshots") or []],
                 *[str(item) for item in visual.get("notes") or []],

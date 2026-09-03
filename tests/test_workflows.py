@@ -32,6 +32,7 @@ from app.config import settings  # noqa: E402
 from app.db import SCHEMA, init_db, update_request, update_step  # noqa: E402
 from app.local_runner_main import report_initial_heartbeat  # noqa: E402
 from app.orchestrator import Worker, worker  # noqa: E402
+from app.project_experience import apply_project_experience  # noqa: E402
 from app.project_catalog import (  # noqa: E402
     _repository_origin,
     load_project_presets,
@@ -1874,7 +1875,7 @@ else:
 
         blocked_detail = self.client.get(f"/api/requests/{request_id}").json()["request"]
         self.assertEqual(blocked_detail["blocker_summary"]["reason"], "缺少真实页面截图")
-        self.assertIn("需求是否明确要求真实页面截图", blocked_detail["blocker_summary"]["decision_required"])
+        self.assertIn("不属于任何项目的交付硬门禁", blocked_detail["blocker_summary"]["decision_required"])
 
         response = self.client.post(
             f"/api/requests/{request_id}/continue",
@@ -2104,7 +2105,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.30"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.31"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -2157,6 +2158,10 @@ else:
         self.assertIn("需要你判断", script)
         self.assertIn("/continue", script)
         self.assertIn("继续执行并保留现场", script)
+        self.assertIn("continuationDrafts:new Map()", script)
+        self.assertIn("state.continuationDrafts.set(d.id", script)
+        self.assertIn("prompt.setSelectionRange(selectionStart,selectionEnd)", script)
+        self.assertIn("输入内容会在任务自动刷新期间保留", script)
         self.assertIn("syncSidebarOrbState", script)
         self.assertIn("renderSidebarOrbActivity", script)
         self.assertIn("ORB_RUNNING_STATUSES", script)
@@ -2392,15 +2397,15 @@ else:
         self.assertIn("<span>自主项目</span>", admin_page.text)
         self.client.post("/api/auth/logout")
         login_page = self.client.get("/login")
-        self.assertIn("editorial-ui.css?v=1.0-Alpha.30-login", login_page.text)
-        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.30", login_page.text)
+        self.assertIn("editorial-ui.css?v=1.0-Alpha.31-login", login_page.text)
+        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.31", login_page.text)
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("<span>自主项目</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.30"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.31"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
 
@@ -3398,7 +3403,20 @@ else:
         self.assertEqual(app_project["artifact_policy"]["allowed_package_extensions"], [".zip", ".jar"])
         self.assertIn(".xml", app_project["artifact_policy"]["forbidden_standalone_extensions"])
         self.assertFalse(app_project["quality_profile"]["visual"]["required_for_frontend"])
-        self.assertIn("页面截图", app_project["quality_profile"]["visual"]["require_when_requirement_mentions"])
+        self.assertEqual(app_project["quality_profile"]["visual"]["require_when_requirement_mentions"], [])
+        self.assertTrue(all(not item["quality_profile"]["visual"]["required_for_frontend"] for item in projects))
+        self.assertTrue(all(not item["quality_profile"]["visual"]["require_when_requirement_mentions"] for item in projects))
+        legacy_override = apply_project_experience({
+            "project_key": "legacy-project",
+            "quality_profile": {
+                "visual": {
+                    "required_for_frontend": True,
+                    "require_when_requirement_mentions": ["页面截图", "以截图为准"],
+                }
+            },
+        })
+        self.assertFalse(legacy_override["quality_profile"]["visual"]["required_for_frontend"])
+        self.assertEqual(legacy_override["quality_profile"]["visual"]["require_when_requirement_mentions"], [])
 
     def test_runner_history_endpoint_returns_prior_evidence_for_same_requirement(self) -> None:
         project_id = self.create_project("test-history-context", "local_package")
@@ -3466,7 +3484,7 @@ else:
             self.assertIn("Feature.java", joined)
             self.assertEqual(gate["business_invariants"], [])
 
-    def test_app_visual_gate_requires_screenshot_only_when_requirement_requests_it(self) -> None:
+    def test_visual_gate_never_requires_real_screenshot_for_any_requirement(self) -> None:
         state = {
             "name": "dcsd-app-ui",
             "worktree_path": TEST_DATA.name,
@@ -3522,8 +3540,17 @@ else:
         screenshot_required = evaluate_development_quality(
             project, [state], result, requirement_text="修改完成后提供页面截图，以截图为准"
         )
-        self.assertEqual(screenshot_required["status"], "blocked")
-        self.assertTrue(any("截图验收" in blocker for blocker in screenshot_required["blockers"]))
+        self.assertEqual(screenshot_required["status"], "passed")
+        self.assertFalse(any("截图验收" in blocker for blocker in screenshot_required["blockers"]))
+        screenshot_check = next(item for item in screenshot_required["checks"] if item["id"] == "visual-acceptance")
+        self.assertIn("全平台不以真实页面截图作为交付依据", screenshot_check["detail"])
+
+        project["quality_profile"]["visual"]["required_for_frontend"] = True
+        stale_snapshot = evaluate_development_quality(
+            project, [state], result, requirement_text="旧任务快照仍要求真实浏览器页面截图"
+        )
+        self.assertEqual(stale_snapshot["status"], "passed")
+        self.assertFalse(any("截图验收" in blocker for blocker in stale_snapshot["blockers"]))
 
     def test_artifact_policy_rejects_xml_as_standalone_app_delivery(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

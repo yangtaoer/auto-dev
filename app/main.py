@@ -76,7 +76,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.30",
+    version="1.0-Alpha.31",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -1611,8 +1611,9 @@ def continue_waiting_approval_request(
         raise HTTPException(status_code=409, detail="当前任务没有可恢复的 DevCore 会话或隔离工作区")
 
     prompt = payload.prompt.strip() or (
-        "请基于现有代码和验证结果继续解决当前阻塞风险。对于需求未明确要求的验证形式，"
-        "使用等价、可复核的自动化证据，不要仅因工具不可用再次阻断。"
+        "请基于现有代码和验证结果继续解决当前阻塞风险。所有项目均不得把真实页面截图作为"
+        "交付依据或阻塞门禁；请使用 production 构建、真实路由、自动断言、资源哈希和部署检查"
+        "等可复核证据继续，不要仅因浏览器或截图工具不可用再次阻断。"
     )
     continuation_id = f"admin-continue-{uuid.uuid4().hex[:12]}"
     continuation_request = {

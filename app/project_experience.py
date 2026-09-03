@@ -5,7 +5,7 @@ from typing import Any
 
 
 NETWORK_COMMON_INSTRUCTIONS = """
-这是传统 PC/TBP 网络发令项目。开始修改前必须检查同一 TFS 需求的历史任务、PR、提交以及最新目标分支，避免重复开发；历史结论只能作为线索，必须用当前代码复核。多仓项目只修改实际涉及的仓库，禁止把其他地区的表名、区域字段和专属规则直接复制进来。每条验收标准都要建立验收项账本并映射仓库、文件、测试和证据，以便局部交付与精确回滚。涉及“保存成功但页面未变化”时，按显示字段、提交参数、持久化字段、查询关联键、刷新逻辑逐段核对，不能用额外刷新掩盖关联错误。涉及统计、状态、积分、排序或导出时必须验证数据来源时点、计算公式、显示字段、排序字段和导出字段的一致性。TBP/MiniUI 页面在 Grid 之间传递数据时只能复制业务字段，禁止复用 _id、_uid 等框架内部标识。新增 view.xml 必须同时给出菜单链接、权限绑定和部署操作；XML 内嵌 SQL 需要按 DM7 语法及开发库样例进行验证。前端修改必须通过真实路由、项目规定视口和截图验收，并核对构建资源哈希、部署目录层级、浏览器及 iframe 缓存。代码问题、数据问题和环境问题必须分开描述，数据库结论必须注明开发、测试或现场环境。
+这是传统 PC/TBP 网络发令项目。开始修改前必须检查同一 TFS 需求的历史任务、PR、提交以及最新目标分支，避免重复开发；历史结论只能作为线索，必须用当前代码复核。多仓项目只修改实际涉及的仓库，禁止把其他地区的表名、区域字段和专属规则直接复制进来。每条验收标准都要建立验收项账本并映射仓库、文件、测试和证据，以便局部交付与精确回滚。涉及“保存成功但页面未变化”时，按显示字段、提交参数、持久化字段、查询关联键、刷新逻辑逐段核对，不能用额外刷新掩盖关联错误。涉及统计、状态、积分、排序或导出时必须验证数据来源时点、计算公式、显示字段、排序字段和导出字段的一致性。TBP/MiniUI 页面在 Grid 之间传递数据时只能复制业务字段，禁止复用 _id、_uid 等框架内部标识。新增 view.xml 必须同时给出菜单链接、权限绑定和部署操作；XML 内嵌 SQL 需要按 DM7 语法及开发库样例进行验证。前端修改必须通过 production 构建、真实路由、自动断言及资源哈希、部署目录层级、浏览器或 iframe 缓存核验；所有项目均不得把真实页面截图作为交付依据或阻塞门禁。代码问题、数据问题和环境问题必须分开描述，数据库结论必须注明开发、测试或现场环境。
 """.strip()
 
 
@@ -26,7 +26,8 @@ COMMON_QUALITY_PROFILE: dict[str, Any] = {
         "require_database_verification": True,
     },
     "visual": {
-        "required_for_frontend": True,
+        "required_for_frontend": False,
+        "require_when_requirement_mentions": [],
         "frontend_patterns": ["**/*.jsp", "**/*.js", "**/*.css", "**/*.vue", "**/*.html", "**/*.view.xml"],
         "viewports": ["1280x720", "1440x900"],
         "deployment_checks": ["asset_manifest_checked", "directory_layout_checked", "cache_strategy_checked"],
@@ -71,13 +72,10 @@ APP_QUALITY_PROFILE = {
         "change_patterns": ["**/*home*", "**/*list*", "**/*badge*", "**/*statistics*", "**/*score*"],
     },
     "visual": {
-        # APP 功能改动优先使用生产构建、真实路由和自动断言作为验收证据。
-        # 只有需求明确要求截图、设计稿还原或视觉效果时，才把真实页面截图提升为阻塞门禁。
+        # 所有项目统一使用生产构建、真实路由和自动断言作为前端验收证据。
+        # 真实页面截图可作为辅助材料，但不得成为交付依据或阻塞门禁。
         "required_for_frontend": False,
-        "require_when_requirement_mentions": [
-            "真实页面截图", "页面截图", "截图验收", "以截图为准", "以图片为准",
-            "设计稿", "视觉效果", "页面效果", "界面效果", "像素级", "还原UI",
-        ],
+        "require_when_requirement_mentions": [],
         "frontend_patterns": ["dcsd-app-ui/**/*.vue", "dcsd-app-ui/**/*.js", "dcsd-app-ui/**/*.css"],
         "viewports": ["390x844", "430x932"],
         "deployment_checks": ["asset_manifest_checked", "directory_layout_checked", "cache_strategy_checked"],
@@ -143,6 +141,14 @@ def apply_project_experience(project: dict[str, Any]) -> dict[str, Any]:
     else:
         result["quality_profile"] = _deep_merge(COMMON_QUALITY_PROFILE, result.get("quality_profile") or {})
         result["artifact_policy"] = _deep_merge(NETWORK_ARTIFACT_POLICY, result.get("artifact_policy") or {})
+
+    # Platform invariant: stale catalog values and per-project overrides must never
+    # promote screenshots back into a blocking delivery gate.
+    quality_profile = deepcopy(result.get("quality_profile") or {})
+    visual_profile = quality_profile.setdefault("visual", {})
+    visual_profile["required_for_frontend"] = False
+    visual_profile["require_when_requirement_mentions"] = []
+    result["quality_profile"] = quality_profile
 
     instructions = []
     if key not in {"network-command-app", "bazhong-self-developed"}:
