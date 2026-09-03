@@ -897,7 +897,7 @@ select { color-scheme: light; }
 .orb-flight-signal[data-tone="dispatch"] { --orb-signal:#ff7952; }
 .orb-delivery-token { position:absolute; min-width:34px; padding:4px 6px; border:1px solid var(--editorial-ink); background:#fffdf7; color:var(--editorial-ink); box-shadow:3px 3px 0 var(--editorial-orange); font:800 8px Consolas,monospace; letter-spacing:.08em; text-align:center; }
 #recent-table tr.orb-impact > td { animation:orb-row-impact .85s ease; }
-.login-shell.is-authenticating .login-panel { opacity:.68; transition:opacity .45s ease; }
+.login-shell.is-authenticating .login-panel { opacity:1; transition:none; }
 .login-shell.is-authenticating .login-character-stage { animation:login-orb-departure .52s cubic-bezier(.24,.75,.26,1); }
 
 @keyframes orb-mechanical-orbit { to { transform:rotate(360deg); } }
@@ -1403,9 +1403,9 @@ select { color-scheme: light; }
   border: 0;
   border-left: 2px solid var(--editorial-ink);
   color: var(--editorial-ink);
-  background: rgba(251,248,240,.985);
+  background: #fbf8f0;
   box-shadow: -12px 0 30px rgba(23,24,19,.12);
-  backdrop-filter: blur(8px) saturate(.78);
+  backdrop-filter: none;
   container-type: inline-size;
 }
 .login-panel::-webkit-scrollbar { display: none; width: 0; height: 0; }
@@ -1428,27 +1428,33 @@ select { color-scheme: light; }
 }
 .login-panel-brand {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(72px, 20cqw, 112px);
+  grid-template-columns: minmax(0, 1fr) clamp(84px, 21cqw, 124px);
   align-items: center;
-  gap: 18px;
+  min-height: clamp(178px, 21vh, 214px);
+  gap: clamp(14px, 3cqw, 22px);
   padding-bottom: 14px;
   border-bottom: 1px solid rgba(23,24,19,.32);
 }
 .login-panel-logo {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-rows: auto auto;
+  align-content: center;
+  justify-items: center;
   min-width: 0;
-  gap: clamp(10px, 2.5cqw, 16px);
+  height: 100%;
+  gap: clamp(0px, .6cqw, 4px);
+  padding: 4px clamp(4px, 2cqw, 12px) 8px;
 }
 .login-panel-logo img {
   display: block;
-  width: clamp(82px, 27cqw, 152px);
-  height: clamp(48px, 12cqw, 68px);
+  width: clamp(230px, 58cqw, 340px);
+  height: clamp(84px, 19cqw, 112px);
   object-fit: contain;
+  object-position: center;
 }
 .login-panel-logo strong {
   color: var(--editorial-ink);
-  font: 900 clamp(24px, 8cqw, 46px)/1 Georgia, serif;
+  font: 900 clamp(44px, 12.5cqw, 70px)/.92 Georgia, serif;
   letter-spacing: -.065em;
   white-space: nowrap;
 }
@@ -1457,14 +1463,14 @@ select { color-scheme: light; }
   position: relative;
   display: grid;
   place-items: center;
-  width: clamp(72px, 20cqw, 112px);
-  height: clamp(72px, 20cqw, 112px);
+  width: clamp(84px, 21cqw, 124px);
+  height: clamp(84px, 21cqw, 124px);
   pointer-events: none;
 }
 .login-panel-brand .autodev-orb,
 .login-panel-brand .autodev-orb-fallback {
-  width: clamp(70px, 19.5cqw, 110px) !important;
-  height: clamp(70px, 19.5cqw, 110px) !important;
+  width: clamp(82px, 20.5cqw, 122px) !important;
+  height: clamp(82px, 20.5cqw, 122px) !important;
 }
 .login-panel-slogan {
   padding: 2px 0 2px 14px;
@@ -1524,10 +1530,11 @@ select { color-scheme: light; }
 @media (max-width: 1100px) {
   .login-panel {
     width: clamp(400px, 38vw, 500px);
-    background: rgba(251,248,240,.97);
+    background: #fbf8f0;
   }
-  .login-panel-logo img { width: 82px; }
-  .login-panel-logo strong { font-size: 24px; }
+  .login-panel-brand { min-height: 168px; }
+  .login-panel-logo img { width: clamp(205px, 56cqw, 248px); height: 88px; }
+  .login-panel-logo strong { font-size: clamp(40px, 12cqw, 52px); }
   .login-panel-slogan h1 { font-size: 28px; }
 }
 
@@ -1536,15 +1543,15 @@ select { color-scheme: light; }
     width: 100vw;
     padding: 24px;
     border-left: 0;
-    background: rgba(251,248,240,.955);
+    background: #fbf8f0;
   }
   .login-panel::before { display: none; }
-  .login-panel-brand { grid-template-columns: minmax(0,1fr) 68px; }
+  .login-panel-brand { grid-template-columns: minmax(0,1fr) 68px; min-height: 152px; gap: 10px; }
   .login-panel-brand .login-character-stage { width: 68px; height: 68px; }
   .login-panel-brand .autodev-orb,
   .login-panel-brand .autodev-orb-fallback { width: 66px !important; height: 66px !important; }
-  .login-panel-logo img { width: 92px; height: 42px; }
-  .login-panel-logo strong { font-size: 25px; }
+  .login-panel-logo img { width: clamp(170px, 53cqw, 230px); height: 74px; }
+  .login-panel-logo strong { font-size: clamp(34px, 12cqw, 44px); }
   .login-panel-slogan h1 { font-size: 28px; }
   .login-panel .delivery-loop { padding-left: 9px; padding-right: 9px; }
 }
