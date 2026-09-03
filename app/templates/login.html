@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#171813">
-  <title>登录 · AutoDev 自主研发交付</title>
+  <title>AutoDev 自主研发交付</title>
   <link rel="icon" href="/static/brand/favicon.ico?v={{ app_version }}" sizes="any">
   <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
   <link rel="manifest" href="/static/brand/site.webmanifest">
@@ -14,47 +14,50 @@
 </head>
 <body class="login-body">
   <main class="login-shell">
-    <section class="login-brand">
-      <div class="login-logo-lockup" aria-label="AutoDev">
-        <span class="login-logo-symbol"><img src="/static/brand/autodev-sidebar-mark.png?v={{ app_version }}" alt=""></span>
-        <strong>Auto<span>Dev</span></strong>
+    <div class="login-film" aria-hidden="true">
+      <video
+        class="login-film-video"
+        autoplay
+        muted
+        loop
+        playsinline
+        preload="metadata"
+        poster="/static/media/login-delivery-line-poster.jpg?v={{ app_version }}"
+        tabindex="-1"
+        disablepictureinpicture
+      >
+        <source src="/static/media/login-delivery-line.webm?v={{ app_version }}" type="video/webm">
+        <source src="/static/media/login-delivery-line.mp4?v={{ app_version }}" type="video/mp4">
+      </video>
+    </div>
+    <section class="login-panel">
+      <div class="login-panel-brand">
+        <div class="login-panel-logo" aria-label="AutoDev">
+          <img src="/static/brand/autodev-sidebar-mark.png?v={{ app_version }}" alt="">
+          <strong>Auto<span>Dev</span></strong>
+        </div>
+        <div class="login-character-stage">
+          <div id="login-orb-character" class="autodev-orb" role="img" aria-label="AutoDev 橙色球体动态角色">
+            <canvas class="autodev-orb-canvas" aria-hidden="true"></canvas>
+            <svg class="autodev-orb-fallback" aria-hidden="true"></svg>
+          </div>
+        </div>
       </div>
-      <div class="login-edition">AUTONOMOUS DELIVERY DESK · SECURE ENTRY</div>
-      <div class="login-copy">
+      <div class="login-panel-slogan">
         <p class="eyebrow">自主交付 / AUTONOMOUS DELIVERY</p>
-        <h1>编号进入，<br>交付离场。</h1>
+        <h1>编号进入，交付离场。</h1>
       </div>
       <div class="delivery-loop" aria-hidden="true">
         <div class="loop-head"><span>PROJECT PIPELINE</span><em>AUTO / 01—04</em></div>
         <div class="loop-rail"><span class="loop-progress"></span><i></i><i></i><i></i><i></i><b></b></div>
         <div class="loop-labels"><span><em>01</em>需求准入</span><span><em>02</em>自主研发</span><span><em>03</em>合并校验</span><span><em>04</em>交付离场</span></div>
       </div>
-      <div class="orbit orbit-a" aria-hidden="true"></div><div class="orbit orbit-b" aria-hidden="true"></div>
-    </section>
-    <section class="login-panel">
-      <div class="login-character-stage">
-        <div id="login-orb-character" class="autodev-orb" role="img" aria-label="AutoDev 橙色球体动态角色">
-          <canvas class="autodev-orb-canvas" aria-hidden="true"></canvas>
-          <svg class="autodev-orb-fallback" aria-hidden="true"></svg>
-        </div>
-      </div>
-      <div>
-        <div class="mobile-brand" aria-label="AutoDev">
-          <span><img src="/static/brand/autodev-sidebar-mark.png?v={{ app_version }}" alt=""></span>
-          <strong>Auto<em>Dev</em></strong>
-        </div>
-        <p class="eyebrow">登录 / SIGN IN</p>
-        <h2>登录</h2>
-      </div>
       <form id="login-form" class="form-stack">
         <label><span>用户名</span><input name="username" autocomplete="username" placeholder="请输入用户名" required autofocus></label>
         <label><span>密码</span><input name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required></label>
         <p id="login-error" class="form-error" hidden></p>
-        <button class="btn btn-primary btn-large" type="submit"><span>登录系统</span><i>↗</i></button>
+        <button class="btn btn-primary btn-large" type="submit"><span>进入工作台</span><i>↗</i></button>
       </form>
-      {% if demo_enabled %}
-      <div class="demo-credential"><span>首次体验</span><code>admin / admin123</code><code>pm / pm123</code></div>
-      {% endif %}
     </section>
   </main>
   <script src="/static/grok-character/geometry-data.js?v={{ app_version }}"></script>
@@ -67,6 +70,29 @@
   <script src="/static/grok-character/src/character.js?v={{ app_version }}"></script>
   <script src="/static/orb-character.js?v={{ app_version }}"></script>
   <script>
+    const loginFilm = document.querySelector('.login-film-video');
+    const loginFilmStage = loginFilm?.closest('.login-film');
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const conserveData = Boolean(navigator.connection?.saveData);
+    const revealLoginFilm = () => loginFilmStage?.classList.add('is-ready');
+    const syncLoginFilmPlayback = () => {
+      if (!loginFilm) return;
+      if (reducedMotion.matches || conserveData || document.hidden) {
+        loginFilm.pause();
+        loginFilmStage?.classList.add('is-static');
+        return;
+      }
+      loginFilmStage?.classList.remove('is-static');
+      loginFilm.play().catch(() => loginFilmStage?.classList.add('is-static'));
+    };
+    if (loginFilm) {
+      if (loginFilm.readyState >= 2) revealLoginFilm();
+      else loginFilm.addEventListener('loadeddata', revealLoginFilm, {once: true});
+      reducedMotion.addEventListener?.('change', syncLoginFilmPlayback);
+      document.addEventListener('visibilitychange', syncLoginFilmPlayback);
+      syncLoginFilmPlayback();
+    }
+
     const loginCharacter = new AutoDevOrb(document.querySelector('#login-orb-character'), {
       environment: 'light',
       mode: 'onboarding',

@@ -931,21 +931,80 @@ select { color-scheme: light; }
   background-size: 32px 32px;
 }
 .login-shell {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   width: min(1240px, 96vw);
   min-height: 700px;
-  grid-template-columns: 1.18fr .82fr;
+  grid-template-columns: 1.44fr .76fr;
   border: 2px solid var(--editorial-ink);
   background: #fbf8f0;
   box-shadow: 13px 13px 0 var(--editorial-ink);
 }
+.login-film {
+  position: absolute;
+  z-index: 0;
+  inset: 0 auto 0 0;
+  width: 65.46%;
+  overflow: hidden;
+  pointer-events: none;
+  background: #a8422e url("/static/media/login-delivery-line-poster.jpg") center/cover no-repeat;
+}
+.login-film::before,
+.login-film::after,
+.login-film-grid {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.login-film::before {
+  z-index: 2;
+  background:
+    linear-gradient(180deg, rgba(23,24,19,.38) 0, rgba(23,24,19,.05) 34%, rgba(23,24,19,.08) 64%, rgba(23,24,19,.48) 100%),
+    linear-gradient(90deg, rgba(23,24,19,.16), transparent 26%, transparent 78%, rgba(23,24,19,.2));
+}
+.login-film::after {
+  z-index: 3;
+  border: 10px solid rgba(255,250,241,.14);
+  box-shadow: inset 0 0 0 1px rgba(23,24,19,.34);
+}
+.login-film-video {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  filter: saturate(.94) contrast(1.03);
+  transition: opacity .7s ease;
+}
+.login-film.is-ready:not(.is-static) .login-film-video { opacity: 1; }
+.login-film-grid {
+  z-index: 4;
+  opacity: .18;
+  background-image:
+    linear-gradient(rgba(255,250,241,.28) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,250,241,.24) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mix-blend-mode: soft-light;
+}
+.login-film-index {
+  position: absolute;
+  z-index: 5;
+  right: 24px;
+  bottom: 20px;
+  color: rgba(255,250,241,.8);
+  font: 800 7px/1 Consolas, monospace;
+  letter-spacing: .16em;
+  text-shadow: 0 1px 8px rgba(23,24,19,.75);
+}
 .login-brand {
+  z-index: 1;
   padding: 48px 60px 50px;
   color: var(--editorial-ink);
-  background:
-    linear-gradient(rgba(23, 24, 19, .08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(23, 24, 19, .06) 1px, transparent 1px),
-    var(--editorial-orange);
-  background-size: 36px 36px;
+  background: transparent;
 }
 .login-brand::before {
   content: "AUTODEV / 01";
@@ -957,14 +1016,7 @@ select { color-scheme: light; }
   letter-spacing: .14em;
 }
 .login-brand::after {
-  content: "∞";
-  right: -92px;
-  bottom: -112px;
-  width: auto;
-  height: auto;
-  color: rgba(23, 24, 19, .08);
-  font: 400 520px/.8 "Segoe UI Symbol", Georgia, serif;
-  transform: rotate(-7deg);
+  display: none;
 }
 .login-logo-lockup {
   display: grid;
@@ -973,8 +1025,9 @@ select { color-scheme: light; }
   gap: 18px;
   padding: 18px 22px;
   border: 0;
-  background: var(--editorial-ink);
-  box-shadow: 8px 8px 0 rgba(23, 24, 19, .18);
+  background: rgba(23,24,19,.92);
+  box-shadow: 8px 8px 0 rgba(23,24,19,.28);
+  backdrop-filter: blur(10px) saturate(.9);
 }
 .login-logo-lockup::after { display: none; }
 .login-logo-symbol { width: 100%; min-width: 300px; height: 122px; filter: none; }
@@ -992,27 +1045,47 @@ select { color-scheme: light; }
   align-self: flex-start;
   margin-top: 12px;
   padding: 7px 9px;
-  border: 1px solid rgba(23, 24, 19, .65);
-  color: rgba(23, 24, 19, .76);
+  border: 1px solid rgba(255,250,241,.54);
+  color: rgba(255,250,241,.88);
+  background: rgba(23,24,19,.62);
+  backdrop-filter: blur(8px);
   font: 800 8px Consolas, monospace;
   letter-spacing: .12em;
 }
-.login-copy { margin-top: auto; }
-.login-copy .eyebrow { color: var(--editorial-ink); }
+.login-copy {
+  position: absolute;
+  left: 60px;
+  top: 250px;
+  align-self: flex-start;
+  margin: 0;
+  padding: 8px 13px 10px;
+  border: 1px solid rgba(255,250,241,.52);
+  color: var(--editorial-white);
+  background: rgba(23,24,19,.64);
+  box-shadow: 6px 6px 0 rgba(23,24,19,.24);
+  backdrop-filter: blur(10px) saturate(.9);
+}
+.login-copy .eyebrow { color: #ffc9b6; }
+.login-copy br { display: none; }
 .login-brand h1 {
-  margin: 9px 0 0;
-  color: var(--editorial-ink);
+  margin: 7px 0 0;
+  color: var(--editorial-white);
   font-family: "STZhongsong", "SimSun", serif;
-  font-size: clamp(68px, 6vw, 96px);
-  line-height: .94;
-  letter-spacing: -.09em;
+  font-size: clamp(30px, 2.2vw, 36px);
+  line-height: 1;
+  letter-spacing: -.075em;
+  white-space: nowrap;
+  text-shadow: 0 2px 16px rgba(23,24,19,.45);
 }
 .delivery-loop {
   position: relative;
   z-index: 2;
-  margin-top: 62px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(23, 24, 19, .72);
+  margin-top: auto;
+  padding: 13px 15px 12px;
+  border: 1px solid rgba(23,24,19,.68);
+  background: rgba(255,250,241,.86);
+  box-shadow: 6px 6px 0 rgba(23,24,19,.22);
+  backdrop-filter: blur(10px) saturate(.85);
 }
 .loop-head {
   display: flex;
@@ -1103,6 +1176,7 @@ select { color-scheme: light; }
 .loop-labels em { color: rgba(23,24,19,.58); font: 800 7px/1 Consolas, monospace; font-style: normal; letter-spacing: .12em; }
 .orbit { border-color: rgba(23, 24, 19, .18); }
 .login-panel {
+  z-index: 2;
   position: relative;
   padding: 70px 64px;
   border-left: 2px solid var(--editorial-ink);
@@ -1253,12 +1327,191 @@ select { color-scheme: light; }
   .sidebar { grid-template-columns: 90px minmax(0, 1fr); }
 }
 
+@media (max-width: 1000px) {
+  .login-film { display: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .login-film-video { display: none; }
   .loop-progress::after,
   .loop-rail i,
   .loop-rail b { animation: none !important; }
   .loop-progress::after { width: 100%; opacity: .22; }
   .loop-rail b { left: calc(100% - 18px); }
+}
+
+/* Full-bleed login film: preserve the delivery-line footage and keep all UI in its quiet right field. */
+.login-body {
+  display: block;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 0;
+  overflow: hidden;
+  background: #171813;
+}
+.login-shell {
+  display: flex;
+  justify-content: flex-end;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.login-film {
+  display: block;
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  background-color: #ebe7df;
+  background-position: left center;
+  background-size: cover;
+}
+.login-film::before,
+.login-film::after,
+.login-film-grid,
+.login-film-index { display: none; }
+.login-film-video {
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  object-fit: cover;
+  object-position: left center;
+  filter: none;
+}
+.login-panel {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: clamp(16px, 2vh, 24px);
+  width: clamp(400px, calc(100vw - 116.667vh), 680px);
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  padding: clamp(28px, 4vh, 48px) clamp(32px, 3vw, 54px);
+  overflow: auto;
+  border: 0;
+  border-left: 2px solid var(--editorial-ink);
+  color: var(--editorial-ink);
+  background: rgba(251,248,240,.985);
+  box-shadow: -12px 0 30px rgba(23,24,19,.12);
+  backdrop-filter: blur(8px) saturate(.78);
+}
+.login-panel::before {
+  content: "SECURE ENTRY / 01";
+  right: 18px;
+  top: 22px;
+  color: rgba(23,24,19,.48);
+}
+.login-panel > * {
+  width: 100%;
+  max-width: none !important;
+}
+.login-panel-brand {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  align-items: center;
+  gap: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(23,24,19,.32);
+}
+.login-panel-logo {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 12px;
+}
+.login-panel-logo img {
+  display: block;
+  width: clamp(82px, 6.5vw, 118px);
+  height: 48px;
+  object-fit: contain;
+}
+.login-panel-logo strong {
+  color: var(--editorial-ink);
+  font: 900 clamp(24px, 1.8vw, 34px)/1 Georgia, serif;
+  letter-spacing: -.065em;
+  white-space: nowrap;
+}
+.login-panel-logo strong span { color: var(--editorial-orange); }
+.login-panel-brand .login-character-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  pointer-events: none;
+}
+.login-panel-brand .autodev-orb,
+.login-panel-brand .autodev-orb-fallback {
+  width: 70px !important;
+  height: 70px !important;
+}
+.login-panel-slogan {
+  padding: 2px 0 2px 14px;
+  border-left: 4px solid var(--editorial-orange);
+}
+.login-panel-slogan .eyebrow { margin-bottom: 7px; color: var(--editorial-orange-ink); }
+.login-panel-slogan h1 {
+  margin: 0;
+  color: var(--editorial-ink);
+  font-family: "STZhongsong", "SimSun", serif;
+  font-size: clamp(28px, 2vw, 36px);
+  line-height: 1.05;
+  letter-spacing: -.07em;
+  white-space: nowrap;
+}
+.login-panel .delivery-loop {
+  margin: 0;
+  padding: 11px 12px 9px;
+  border: 1px solid rgba(23,24,19,.46);
+  background: rgba(238,233,223,.78);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.login-panel .loop-rail { height: 27px; margin-top: 5px; }
+.login-panel .loop-labels { margin-top: 3px; font-size: 8px; }
+.login-panel .form-stack {
+  margin-top: 4px;
+  padding-top: clamp(14px, 2vh, 22px);
+  border-top: 1px solid rgba(23,24,19,.32);
+}
+.login-panel input { min-height: 50px; }
+.login-panel .btn-primary { min-height: 54px; }
+
+@media (max-width: 1100px) {
+  .login-panel {
+    width: clamp(400px, 38vw, 500px);
+    background: rgba(251,248,240,.97);
+  }
+  .login-panel-logo img { width: 82px; }
+  .login-panel-logo strong { font-size: 24px; }
+  .login-panel-slogan h1 { font-size: 28px; }
+}
+
+@media (max-width: 620px) {
+  .login-panel {
+    width: 100vw;
+    padding: 24px;
+    border-left: 0;
+    background: rgba(251,248,240,.955);
+  }
+  .login-panel::before { display: none; }
+  .login-panel-brand { grid-template-columns: minmax(0,1fr) 68px; }
+  .login-panel-brand .login-character-stage { width: 68px; height: 68px; }
+  .login-panel-brand .autodev-orb,
+  .login-panel-brand .autodev-orb-fallback { width: 66px !important; height: 66px !important; }
+  .login-panel-logo img { width: 92px; height: 42px; }
+  .login-panel-logo strong { font-size: 25px; }
+  .login-panel-slogan h1 { font-size: 28px; }
+  .login-panel .delivery-loop { padding-left: 9px; padding-right: 9px; }
 }
 
 /* Problem analysis: a read-only evidence desk inside the operational system. */

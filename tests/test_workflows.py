@@ -2104,7 +2104,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.28"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.29"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -2178,7 +2178,7 @@ else:
         self.assertNotIn("project-guide-trigger')?.addEventListener('click'", script)
 
         login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
-        self.assertIn("login-logo-lockup", login_template)
+        self.assertIn("login-panel-logo", login_template)
         self.assertIn("autodev-sidebar-mark.png", login_template)
         self.assertIn("Auto<span>Dev</span>", login_template)
         self.assertIn('id="login-orb-character"', login_template)
@@ -2392,15 +2392,15 @@ else:
         self.assertIn("<span>自主项目</span>", admin_page.text)
         self.client.post("/api/auth/logout")
         login_page = self.client.get("/login")
-        self.assertIn("editorial-ui.css?v=1.0-Alpha.28-login", login_page.text)
-        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.28", login_page.text)
+        self.assertIn("editorial-ui.css?v=1.0-Alpha.29-login", login_page.text)
+        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.29", login_page.text)
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("<span>自主项目</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.28"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.29"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
 
@@ -2480,6 +2480,30 @@ else:
         self.assertIn(".orb-delivery-token", editorial_styles)
         self.assertIn("timeline-energy-transfer", editorial_styles)
         self.assertIn("prefers-reduced-motion: reduce", editorial_styles)
+
+    def test_login_uses_optimized_delivery_line_background_video(self) -> None:
+        login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
+        self.assertIn('class="login-film-video"', login_template)
+        for attribute in ("autoplay", "muted", "loop", "playsinline", 'preload="metadata"'):
+            self.assertIn(attribute, login_template)
+        self.assertIn("login-delivery-line.webm?v={{ app_version }}", login_template)
+        self.assertIn("login-delivery-line.mp4?v={{ app_version }}", login_template)
+        self.assertIn("login-delivery-line-poster.jpg?v={{ app_version }}", login_template)
+        self.assertIn("prefers-reduced-motion: reduce", login_template)
+        self.assertIn("navigator.connection?.saveData", login_template)
+        self.assertNotIn("demo-credential", login_template)
+        self.assertNotIn("login-entry-heading", login_template)
+        self.assertIn("进入工作台", login_template)
+
+        media_root = Path("app/static/media")
+        for name in (
+            "login-delivery-line.webm",
+            "login-delivery-line.mp4",
+            "login-delivery-line-poster.jpg",
+        ):
+            asset = media_root / name
+            self.assertTrue(asset.is_file(), name)
+            self.assertGreater(asset.stat().st_size, 50_000, name)
 
     def test_pipeline_step_keeps_first_start_and_exposes_duration(self) -> None:
         project_id = self.create_project("test-step-timing", "local_package")
