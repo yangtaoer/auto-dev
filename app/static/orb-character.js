@@ -571,7 +571,9 @@
       }
       this.root.dataset.state = state;
       const label = STATE_LABELS[state] || STATE_LABELS.curious;
-      const caption = this.root.parentElement?.querySelector('.orb-presence b');
+      const activityConsole = this.root.parentElement?.querySelector('.orb-activity-console');
+      const caption = activityConsole?.querySelector('.orb-presence b');
+      if (activityConsole) activityConsole.dataset.state = state;
       if (caption) caption.textContent = label;
       if (this.options.interactive) this.root.setAttribute('aria-label', `AutoDev 动态角色，当前状态：${label}。按回车可互动。`);
       this._schedule();
@@ -636,6 +638,10 @@
       this.manualPaused = Boolean(paused);
       if (this.fallbackCharacter) this.fallbackCharacter.setPaused(this.manualPaused || this.reducedMotion);
       this._schedule(this.manualPaused);
+    }
+
+    setRunning(running) {
+      this.root.classList.toggle('is-running', Boolean(running));
     }
 
     spinOnce(turns = 1) { this.motionDriver?.spinOnce(turns); }

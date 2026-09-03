@@ -1496,14 +1496,22 @@ class Worker:
 
         if not project.get("simulation_mode"):
             manifest = self._analysis_manifest_html(detail, result)
-            TfsClient(project["tfs_collection_url"]).update_delivery_artifacts(
-                int(detail["work_item_id"]), manifest
-            )
-            self.store.add_event(
-                request_id,
-                "tfs.analysis_updated",
-                "问题分析结论与报告获取路径已写入 TFS，需求状态保持不变",
-            )
+            tfs_client = TfsClient(project["tfs_collection_url"])
+            if detail.get("joint_group_id") and self.store.remote:
+                tfs_client.update_delivery_artifacts(int(detail["work_item_id"]), manifest)
+                self.store.add_event(
+                    request_id,
+                    "tfs.analysis_updated",
+                    "本项目问题分析结论已写入 TFS，等待联合分析全部完成后统一更新为已解决",
+                )
+            else:
+                tfs_result = tfs_client.complete_analysis(int(detail["work_item_id"]), manifest)
+                self.store.add_event(
+                    request_id,
+                    "tfs.analysis_resolved",
+                    "问题分析结论与报告获取路径已写入 TFS，需求状态已更新为已解决",
+                    metadata={"tfs": tfs_result},
+                )
 
         completed_at = utc_now()
         self.store.update_request(request_id, completed_at=completed_at)
@@ -1527,7 +1535,7 @@ class Worker:
             current_step="deliver",
             progress=100,
         )
-        self.store.update_step(request_id, "deliver", "completed", "分析报告已生成，TFS 与通知邮件已更新")
+        self.store.update_step(request_id, "deliver", "completed", "分析报告已生成，TFS 已解决并完成邮件通知")
         self.store.add_event(request_id, "analysis.delivered", "问题分析报告交付完成")
 
     def _analysis_report_markdown(self, detail: dict, result: dict) -> str:

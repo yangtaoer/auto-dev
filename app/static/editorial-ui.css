@@ -120,10 +120,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .sidebar nav { gap: 5px; }
 .sidebar-character-stage {
   position: relative;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
-  place-items: center;
-  min-height: 150px;
+  align-items: center;
+  justify-content: center;
+  gap: 13px;
+  min-height: 218px;
+  padding: 12px 2px 10px;
   overflow: hidden;
   pointer-events: none;
 }
@@ -146,47 +150,91 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   pointer-events: none;
   border: 1px solid rgba(255,250,241,.18);
   border-radius: 50%;
+  opacity: 0;
   transition: border-color .4s ease, opacity .4s ease, transform .4s ease;
 }
-.autodev-orb::before { inset: 5px; border-style: dashed; animation: orb-mechanical-orbit 13s linear infinite; }
-.autodev-orb::after { inset: -5px; border-color: transparent; border-top-color: rgba(240,82,45,.74); border-bottom-color: rgba(240,82,45,.28); animation: orb-mechanical-orbit 8s linear infinite reverse; }
-.autodev-orb[data-state="reading"]::before,
-.autodev-orb[data-state="thinking"]::before { border-color: rgba(255,250,241,.38); animation-duration: 5.5s; }
-.autodev-orb[data-state="working"]::after,
-.autodev-orb[data-state="building"]::after,
-.autodev-orb[data-state="delivering"]::after { border-top-color: #ff7952; border-bottom-color: rgba(255,121,82,.66); animation-duration: 2.4s; }
-.autodev-orb[data-state="blocked"]::before { border-color: rgba(255,116,102,.75); animation: orb-blocked-jitter .82s steps(2,end) infinite; }
-.autodev-orb[data-state="blocked"]::after { border-top-color: #ff7466; border-bottom-color: transparent; animation-duration: 8s; }
-.autodev-orb[data-state="sleeping"]::before,
-.autodev-orb[data-state="sleeping"]::after { opacity: .24; animation-duration: 22s; }
+.autodev-orb::before { inset: 5px; border-style: dashed; }
+.autodev-orb::after { inset: -5px; border-color: transparent; border-top-color: rgba(240,82,45,.74); border-bottom-color: rgba(240,82,45,.28); }
+.autodev-orb.is-running::before { opacity: 1; animation: orb-mechanical-orbit 13s linear infinite; }
+.autodev-orb.is-running::after { opacity: 1; animation: orb-mechanical-orbit 8s linear infinite reverse; }
+.autodev-orb.is-running[data-state="reading"]::before,
+.autodev-orb.is-running[data-state="thinking"]::before { border-color: rgba(255,250,241,.38); animation-duration: 5.5s; }
+.autodev-orb.is-running[data-state="working"]::after,
+.autodev-orb.is-running[data-state="building"]::after,
+.autodev-orb.is-running[data-state="delivering"]::after { border-top-color: #ff7952; border-bottom-color: rgba(255,121,82,.66); animation-duration: 2.4s; }
+.autodev-orb.is-running[data-state="blocked"]::before { border-color: rgba(255,116,102,.75); animation: orb-blocked-jitter .82s steps(2,end) infinite; }
+.autodev-orb.is-running[data-state="blocked"]::after { border-top-color: #ff7466; border-bottom-color: transparent; animation-duration: 8s; }
 .autodev-orb[data-reaction="dispatch"] { animation: orb-dispatch .84s cubic-bezier(.2,.8,.22,1); }
 .autodev-orb[data-reaction="progress"] { animation: orb-progress .7s ease; }
 .autodev-orb[data-reaction="success"] { animation: orb-celebrate 1.35s cubic-bezier(.16,.86,.24,1); }
 .autodev-orb[data-reaction="blocked"] { animation: orb-alert .72s ease; }
 .autodev-orb[data-reaction="tap"] { animation: orb-tap .55s cubic-bezier(.2,.9,.2,1); }
 .orb-presence {
-  position: absolute;
-  z-index: 4;
-  left: 50%;
-  bottom: -24px;
   display: flex;
   align-items: center;
   gap: 7px;
-  min-width: 118px;
-  padding: 5px 8px;
-  border: 1px solid #42433c;
-  background: rgba(23,24,19,.88);
-  color: #aaa59a;
-  transform: translateX(-50%);
-  font: 700 8px Consolas, monospace;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  pointer-events: none;
+  min-width: 0;
 }
 .orb-presence i { width: 5px; height: 5px; background: #ff7952; animation: orb-presence-pulse 1.8s ease-in-out infinite; }
-.autodev-orb[data-state="blocked"] .orb-presence i { background: #ff7466; animation-duration: .72s; }
-.autodev-orb[data-state="sleeping"] .orb-presence i { background: #716d64; animation: none; }
-.orb-presence b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orb-activity-console[data-state="blocked"] .orb-presence i { background: #ff7466; animation-duration: .72s; }
+.orb-activity-console[data-state="sleeping"] .orb-presence i { background: #716d64; animation: none; }
+.orb-presence b {
+  min-width: 0;
+  overflow: hidden;
+  color: #f4eee2;
+  font: 800 12px/1.2 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  letter-spacing: .055em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orb-presence > span {
+  flex: none;
+  margin-left: auto;
+  color: #8f8b82;
+  font: 700 9px/1 Consolas, monospace;
+  letter-spacing: .04em;
+}
+.orb-activity-console {
+  z-index: 4;
+  width: 174px;
+  max-width: calc(100% - 4px);
+  padding: 8px 9px 9px;
+  border: 1px solid #44453e;
+  background: rgba(23,24,19,.92);
+  color: #aaa59a;
+  box-shadow: 3px 3px 0 rgba(240,82,45,.12);
+  pointer-events: none;
+}
+.orb-activity-console > p {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  margin: 7px 0 0;
+  padding-top: 7px;
+  border-top: 1px solid #34352f;
+}
+.orb-activity-console > p small {
+  overflow: hidden;
+  color: #77746c;
+  font: 700 9px/1.3 Consolas, monospace;
+  letter-spacing: .04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orb-activity-console > p > span {
+  display: -webkit-box;
+  max-width: 100%;
+  min-height: 27px;
+  overflow: hidden;
+  color: #c9c4ba;
+  font: 500 11px/1.42 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.orb-activity-console[data-active="true"] { border-left-color: var(--editorial-orange); }
+.orb-activity-console[data-active="true"] .orb-presence i { animation-duration: .85s; }
+.orb-activity-console.is-switching > p { animation: orb-activity-switch .34s cubic-bezier(.2,.75,.25,1); }
 .orb-whisper {
   position: absolute;
   z-index: 5;
@@ -855,6 +903,7 @@ select { color-scheme: light; }
 @keyframes orb-mechanical-orbit { to { transform:rotate(360deg); } }
 @keyframes orb-blocked-jitter { 50% { transform:rotate(4deg) scale(.97); } }
 @keyframes orb-presence-pulse { 50% { opacity:.35; transform:scale(.72); } }
+@keyframes orb-activity-switch { 0%{opacity:.3;transform:translateY(3px)} 100%{opacity:1;transform:none} }
 @keyframes orb-dispatch { 0%{transform:scale(1)} 24%{transform:translateX(-5px) scale(.88,1.06)} 58%{transform:translateX(8px) scale(1.08,.94)} 100%{transform:none} }
 @keyframes orb-progress { 45%{transform:translateY(-5px) rotate(4deg)} 100%{transform:none} }
 @keyframes orb-celebrate { 0%,100%{transform:none} 30%{transform:translateY(-12px) scale(1.07)} 58%{transform:translateY(2px) scale(.96,1.04)} }
@@ -867,7 +916,7 @@ select { color-scheme: light; }
 @keyframes login-orb-departure { 0%{transform:none} 44%{transform:translateX(-8px) scale(.9,1.06)} 100%{transform:translateX(16px) scale(.94);opacity:.72} }
 
 @media (prefers-reduced-motion: reduce) {
-  .autodev-orb::before,.autodev-orb::after,.orb-presence i,.timeline-item.feeds-next .timeline-mark::before { animation:none !important; }
+  .autodev-orb::before,.autodev-orb::after,.orb-presence i,.orb-activity-console.is-switching>p,.timeline-item.feeds-next .timeline-mark::before { animation:none !important; }
   .autodev-orb[data-reaction],.run-card.orb-impact,#recent-table tr.orb-impact>td,.login-shell.is-authenticating .login-character-stage { animation:none !important; }
   .orb-whisper { transition:none; }
 }

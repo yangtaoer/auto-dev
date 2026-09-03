@@ -792,6 +792,27 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(result["state"], "已解决")
         self.assertEqual(result["actual_version"], "V1.0")
 
+    def test_tfs_analysis_completion_sets_resolved_state_without_release_version(self) -> None:
+        client = TfsClient("https://tfs.test/DefaultCollection", pat="test-pat")
+        updated = {"fields": {"System.State": "已解决"}}
+        with patch.object(client, "get_work_item", return_value={"state": "已评审"}), patch.object(
+            client, "_request", return_value=updated
+        ) as request:
+            result = client.complete_analysis(910019, "<p>问题分析报告</p>")
+        patch_body = request.call_args.kwargs["json"]
+        self.assertIn(
+            {"op": "add", "path": f"/fields/{DELIVERY_ARTIFACTS_FIELD}", "value": "<p>问题分析报告</p>"},
+            patch_body,
+        )
+        self.assertIn({"op": "replace", "path": "/fields/System.State", "value": "已解决"}, patch_body)
+        self.assertFalse(any(item["path"] == f"/fields/{ACTUAL_DELIVERY_VERSION_FIELD}" for item in patch_body))
+        self.assertEqual(result, {"previous_state": "已评审", "state": "已解决"})
+        orchestrator_source = Path("app/orchestrator.py").read_text(encoding="utf-8")
+        main_source = Path("app/main.py").read_text(encoding="utf-8")
+        self.assertIn("tfs_client.complete_analysis", orchestrator_source)
+        self.assertIn(").complete_analysis", main_source)
+        self.assertNotIn("需求状态保持不变", orchestrator_source)
+
     def test_favicon_is_transparent_symbol_without_square_plate(self) -> None:
         with Image.open(Path("app/static/brand/favicon.ico")) as source:
             icon = source.convert("RGBA")
@@ -2083,7 +2104,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.27"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.28"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -2102,6 +2123,8 @@ else:
         self.assertIn("ambient: true", page.text)
         self.assertIn("window.sidebarCharacter = sidebarCharacter", page.text)
         self.assertIn("orb-presence", page.text)
+        self.assertIn('id="orb-current-output"', page.text)
+        self.assertIn('id="orb-task-index"', page.text)
         self.assertIn("interactive: true", page.text)
         self.assertIn('data-filter-select="task_type"', page.text)
         self.assertIn('data-filter-date="date_from"', page.text)
@@ -2135,6 +2158,10 @@ else:
         self.assertIn("/continue", script)
         self.assertIn("继续执行并保留现场", script)
         self.assertIn("syncSidebarOrbState", script)
+        self.assertIn("renderSidebarOrbActivity", script)
+        self.assertIn("ORB_RUNNING_STATUSES", script)
+        self.assertIn("character.setRunning", script)
+        self.assertIn("任务 ${index+1}/${runs.length}", script)
         self.assertIn("characterState='working'", script)
         self.assertIn("characterState='sleeping'", script)
         self.assertIn("characterState='blocked'", script)
@@ -2365,15 +2392,15 @@ else:
         self.assertIn("<span>自主项目</span>", admin_page.text)
         self.client.post("/api/auth/logout")
         login_page = self.client.get("/login")
-        self.assertIn("editorial-ui.css?v=1.0-Alpha.27-login", login_page.text)
-        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.27", login_page.text)
+        self.assertIn("editorial-ui.css?v=1.0-Alpha.28-login", login_page.text)
+        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.28", login_page.text)
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("<span>自主项目</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.27"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.28"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
 
@@ -2445,7 +2472,10 @@ else:
         self.assertIn(".autodev-orb.is-webgl .orb-driver-body { opacity: 0; }", editorial_styles)
         self.assertIn(".autodev-orb-depth-back { z-index: 0", editorial_styles)
         self.assertIn(".autodev-orb.is-webgl .orb-driver-eyes > path", editorial_styles)
-        self.assertIn('.autodev-orb[data-state="blocked"]::before', editorial_styles)
+        self.assertIn(".autodev-orb.is-running::before", editorial_styles)
+        self.assertIn('.autodev-orb.is-running[data-state="blocked"]::before', editorial_styles)
+        self.assertIn(".orb-activity-console", editorial_styles)
+        self.assertIn("-webkit-line-clamp: 2", editorial_styles)
         self.assertIn(".orb-flight-signal", editorial_styles)
         self.assertIn(".orb-delivery-token", editorial_styles)
         self.assertIn("timeline-energy-transfer", editorial_styles)
@@ -2857,6 +2887,9 @@ else:
         self.assertIn("_sccd", project["development_instructions"])
         self.assertIn("serviceIdMap", project["development_instructions"])
         self.assertIn("不单独交付", project["development_instructions"])
+        self.assertIn("必须坚持精确开发", project["development_instructions"])
+        self.assertIn("禁止顺手重构", project["development_instructions"])
+        self.assertIn("未触碰范围行为保持不变的证据", project["development_instructions"])
         self.assertIsInstance(project["repository_tfs_paths"], dict)
         self.assertEqual(project["repository_expectations"]["dcsd-app-ui"], "dcsd-app-ui-sichuan")
         script = (

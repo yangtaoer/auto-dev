@@ -27,7 +27,10 @@
         <div id="sidebar-orb-character" class="autodev-orb" role="button" tabindex="0" aria-label="AutoDev 动态角色">
           <canvas class="autodev-orb-canvas" aria-hidden="true"></canvas>
           <svg class="autodev-orb-fallback" aria-hidden="true"></svg>
-          <span class="orb-presence" aria-hidden="true"><i></i><b>观察流水线</b></span>
+        </div>
+        <div class="orb-activity-console" id="orb-activity-console" aria-live="polite">
+          <div class="orb-presence"><i aria-hidden="true"></i><b>观察流水线</b><span id="orb-task-index">暂无任务</span></div>
+          <p><small id="orb-current-task">当前输出</small><span id="orb-current-output">等待新的研发或问题分析任务</span></p>
         </div>
       </div>
       <div class="sidebar-foot">

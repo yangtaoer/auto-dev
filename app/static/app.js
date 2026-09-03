@@ -1,5 +1,5 @@
 const USER = window.__USER__;
-const state = { projects: [], projectGuideSignature:'', users: [], notificationUsers:[], analytics:null, dashboard: {active:[],recent:[],counts:{},runners:[],stats:{},capacity:{limit:5,active:0,queued:0,available:5}}, records:{items:[],page:1,pageSize:10,total:0,totalPages:1,filters:{keyword:'',task_type:'',project_key:'',status:'',requester_id:'',date_from:'',date_to:''}}, selectedRequest:null, selectedTerminal:false, selectedIntake:null, routingGeneration:0, orbExperience:{initialized:false,runs:new Map(),pending:[],detailSteps:new Map()}, live:{requestId:null,taskType:'development',watcherId:null,cursor:0,generation:0,timer:null,lastGroup:'',lastKind:'',lastBubble:null} };
+const state = { projects: [], projectGuideSignature:'', users: [], notificationUsers:[], analytics:null, dashboard: {active:[],recent:[],counts:{},runners:[],stats:{},capacity:{limit:5,active:0,queued:0,available:5}}, records:{items:[],page:1,pageSize:10,total:0,totalPages:1,filters:{keyword:'',task_type:'',project_key:'',status:'',requester_id:'',date_from:'',date_to:''}}, selectedRequest:null, selectedTerminal:false, selectedIntake:null, routingGeneration:0, orbExperience:{initialized:false,runs:new Map(),pending:[],detailSteps:new Map(),activitySignature:'',activityIndex:0,activityTimer:null}, live:{requestId:null,taskType:'development',watcherId:null,cursor:0,generation:0,timer:null,lastGroup:'',lastKind:'',lastBubble:null} };
 const MODE = {
   routing:['自动识别中','正在读取 TFS 需求并识别项目与交付策略。'],
   local_package:['本地打包交付','提交到最新目标分支后在本机执行构建，交付安装包、SQL、配置和说明。'],
@@ -76,6 +76,17 @@ async function refresh(){
   Object.assign(USER,me.user);state.dashboard=dashboard;state.projects=projects.projects;state.users=users.users||[];state.notificationUsers=recipients.users||[];state.analytics=analytics;applyDeliveryRecords(records);renderDashboard();renderProjects();renderProjectGuide();renderAnalytics();renderUsers();renderRequestEmailOptions(false);renderRecordFilterOptions();renderAllTable();
   if(state.selectedRequest&&!state.selectedTerminal) refreshDetail(state.selectedRequest,true);
 }
+const ORB_RUNNING_STATUSES=new Set(['routing','validating','developing','submitting','building','releasing','capturing','delivering']);
+function renderSidebarOrbActivity(activeRuns){
+  const panel=document.querySelector('#orb-activity-console'),task=document.querySelector('#orb-current-task'),output=document.querySelector('#orb-current-output'),counter=document.querySelector('#orb-task-index');if(!panel||!task||!output||!counter)return;
+  const runs=(activeRuns||[]).filter(Boolean),experience=state.orbExperience,signature=runs.map(activeRunKey).join('|');
+  if(signature!==experience.activitySignature){experience.activitySignature=signature;experience.activityIndex=0}else if(runs.length>1)experience.activityIndex=(experience.activityIndex+1)%runs.length;
+  panel.dataset.active=String(runs.length>0);
+  if(!runs.length){counter.textContent='暂无任务';task.textContent='当前输出';output.textContent='等待新的研发或问题分析任务';return}
+  const index=Math.min(experience.activityIndex,runs.length-1),run=runs[index],workItem=run.work_item_id?`TFS #${run.work_item_id}`:'运行任务',project=String(run.project_name||'项目识别中').trim();
+  counter.textContent=`任务 ${index+1}/${runs.length}`;task.textContent=`${workItem} · ${project}`;output.textContent=engineText(String(run.current_activity||taskStatus(run,runVisualStatus(run))||'等待执行器反馈').trim());
+  panel.classList.remove('is-switching');void panel.offsetWidth;panel.classList.add('is-switching');if(experience.activityTimer)clearTimeout(experience.activityTimer);experience.activityTimer=setTimeout(()=>panel.classList.remove('is-switching'),380);
+}
 function syncSidebarOrbState(activeRuns,runners){
   const character=window.sidebarCharacter;if(!character)return;
   const runs=activeRuns||[],statuses=runs.map(runVisualStatus);
@@ -89,7 +100,9 @@ function syncSidebarOrbState(activeRuns,runners){
   else if(statuses.includes('building'))characterState='building';
   else if(runs.length)characterState='working';
   else if(!(runners||[]).some(runner=>runner.online))characterState='sleeping';
+  character.setRunning(statuses.some(status=>ORB_RUNNING_STATUSES.has(status)));
   character.setState(characterState);
+  renderSidebarOrbActivity(runs);
 }
 function orbMotionReduced(){return window.matchMedia('(prefers-reduced-motion: reduce)').matches}
 function orbSignalLayer(){let layer=document.querySelector('#orb-signal-layer');if(!layer){layer=document.createElement('div');layer.id='orb-signal-layer';layer.className='orb-signal-layer';layer.setAttribute('aria-hidden','true');document.body.appendChild(layer)}return layer}

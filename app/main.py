@@ -76,7 +76,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.27",
+    version="1.0-Alpha.28",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -2179,10 +2179,10 @@ def runner_finalize_joint(request_id: str) -> dict:
                     f'<a href="{html.escape(str(report_url), quote=True)}">下载报告</a></li>'
                 )
             manifest = "<div><p><strong>AutoDev 联合问题分析完成</strong></p><ul>" + "".join(report_rows) + "</ul></div>"
-            TfsClient(aggregate["policy_snapshot"]["tfs_collection_url"]).update_delivery_artifacts(
-                aggregate["work_item_id"], manifest
-            )
-            tfs_result = {"state": "保持不变", "task_type": TaskType.ANALYSIS.value}
+            tfs_result = TfsClient(
+                aggregate["policy_snapshot"]["tfs_collection_url"]
+            ).complete_analysis(aggregate["work_item_id"], manifest)
+            tfs_result["task_type"] = TaskType.ANALYSIS.value
         else:
             manifest = ArtifactService().delivery_manifest_html(aggregate)
             tfs_result = TfsClient(aggregate["policy_snapshot"]["tfs_collection_url"]).complete_delivery(
@@ -2214,7 +2214,7 @@ def runner_finalize_joint(request_id: str) -> dict:
             item["id"],
             "joint.delivery_completed",
             (
-                "全部联合项目问题分析均已完成，分析报告已统一写入 TFS"
+                "全部联合项目问题分析均已完成，分析报告已统一写入 TFS，需求状态已更新为已解决"
                 if aggregate.get("task_type") == TaskType.ANALYSIS.value
                 else "全部联合项目均已交付，TFS 状态和交付产物已统一更新"
             ),

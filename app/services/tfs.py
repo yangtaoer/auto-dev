@@ -201,6 +201,35 @@ class TfsClient:
             headers={"Content-Type": "application/json-patch+json"},
         )
 
+    def complete_analysis(
+        self,
+        work_item_id: int,
+        html_value: str,
+        *,
+        resolved_state: str = "已解决",
+    ) -> dict:
+        """Publish an analysis report and resolve the TFS item without inventing a release version."""
+        work_item = self.get_work_item(work_item_id)
+        previous_state = str(work_item.get("state") or "")
+        patch = [
+            {"op": "add", "path": f"/fields/{DELIVERY_ARTIFACTS_FIELD}", "value": html_value}
+        ]
+        if previous_state != resolved_state:
+            patch.append(
+                {"op": "replace", "path": "/fields/System.State", "value": resolved_state}
+            )
+        updated = self._request(
+            "PATCH",
+            f"{self.base_url}/_apis/wit/workitems/{work_item_id}?api-version=2.0",
+            json=patch,
+            headers={"Content-Type": "application/json-patch+json"},
+        )
+        fields = updated.get("fields", {})
+        return {
+            "previous_state": previous_state,
+            "state": fields.get("System.State", resolved_state),
+        }
+
     def complete_delivery(
         self,
         work_item_id: int,
