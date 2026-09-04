@@ -1,0 +1,60 @@
+{
+  "project_key": "luzhou-network-command",
+  "name": "泸州网络发令",
+  "enabled": true,
+  "simulation_mode": false,
+  "delivery_mode": "sichuan_auto_review",
+  "allow_requirement_override": false,
+  "tfs_collection_url": "http://dev.tellhowsoft.com/DefaultCollection",
+  "tfs_project": "XiNanArea-New",
+  "tfs_area_path": "XiNanArea-New\\四川省区团队",
+  "reviewer_name": "朱星舟",
+  "routing_title_keywords": [
+    "泸州网络发令",
+    "泸州网络下令",
+    "四川泸州网络发令"
+  ],
+  "allowed_work_item_types": [
+    "用户情景"
+  ],
+  "allowed_states": [
+    "新建",
+    "已评审"
+  ],
+  "repository_path": "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuanlz\\dcsd-direct-ui-sichuanlz-dm",
+  "repository_paths": [
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuanlz\\dcsd-notice-srv-sichuancd-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuanlz\\dcsd-notice-ui-sichuancd-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuanlz\\dcsd-direct-ui-sichuanlz-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuanlz\\dcsd-homepage-ui-sichuanlz-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuanlz\\dcsd-certify-ui-sichuancd-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuanlz\\dcsd-report-ui-sichuancd-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuanlz\\dcsd-permit-ui-sichuancd-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuanlz\\dcsd-extrawork-ui-sichuancd-dm",
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuanlz\\dcsd-springboot-starter"
+  ],
+  "base_branch": "dev",
+  "repository_base_branches": {},
+  "build_command": "pwsh.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\yangt\\Documents\\全自助需求研发交付\\local-runner\\project-scripts\\network-command-review.ps1\"",
+  "package_patterns": [],
+  "sql_patterns": [
+    "**/*.sql"
+  ],
+  "config_patterns": [
+    "**/*.yml",
+    "**/*.yaml",
+    "**/*.properties",
+    "**/*.xml",
+    "**/config/*.js",
+    "deploy/*.conf",
+    "deploy/*.sh"
+  ],
+  "protected_patterns": [
+    "**/production/**",
+    "**/*prod*.yml",
+    "**/*prod*.yaml",
+    "**/*prod*.properties"
+  ],
+  "notification_cc": "",
+  "runner_id": "yangtao-pc"
+}
