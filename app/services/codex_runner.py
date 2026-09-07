@@ -412,6 +412,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
 
 约束：
 1. 只修改当前工作区，不执行 git commit、git push、创建 PR 或发送通知。
+   所有项目的测试 Python 脚本（test/、tests/ 下的 *.py、test*.py、*_test.py、conftest.py）和任何 docs/ 下的 *.json 都是本地验证材料，不得提交。临时文件优先放在仓库外；保留检查结果于结构化输出，不删除既有文件，不通过改名规避规则。
 2. {repository_rule}
 3. 不修改受保护路径：{protected}。
 4. 优先使用项目/区域专属扩展点，不改变其他区域的现有行为。

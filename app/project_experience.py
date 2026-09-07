@@ -150,13 +150,14 @@ def apply_project_experience(project: dict[str, Any]) -> dict[str, Any]:
     visual_profile["require_when_requirement_mentions"] = []
     result["quality_profile"] = quality_profile
 
-    instructions = []
+    from .services.commit_policy import COMMIT_POLICY_INSTRUCTIONS
+    instructions = [COMMIT_POLICY_INSTRUCTIONS]
     if key not in {"network-command-app", "bazhong-self-developed"}:
         instructions.append(NETWORK_COMMON_INSTRUCTIONS)
     if PROJECT_SPECIFIC_INSTRUCTIONS.get(key):
         instructions.append(PROJECT_SPECIFIC_INSTRUCTIONS[key])
     if str(result.get("development_instructions") or "").strip():
-        instructions.append(str(result["development_instructions"]).strip())
+        instructions.append(str(result["development_instructions"]).replace(COMMIT_POLICY_INSTRUCTIONS, "").strip())
     result["development_instructions"] = "\n\n".join(dict.fromkeys(instructions))
     if not str(result.get("verification_command") or "").strip() and str(result.get("build_command") or "").strip():
         result["verification_command"] = result["build_command"]

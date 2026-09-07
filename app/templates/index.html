@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="/static/editorial-ui.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/learning-ui.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/task-dialog.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/dashboard-compact.css?v={{ app_version }}">
 </head>
 <body>
   <div class="app-shell">
@@ -68,7 +69,7 @@
           <div class="run-grid" id="active-runs"></div>
         </section>
         <div class="section-heading compact"><div><p class="eyebrow">最近动态 / RECENT SIGNALS</p><h2>最近任务</h2></div><button class="text-button" data-view-link="requests">查看全部 →</button></div>
-        <div class="table-card"><table><thead><tr><th>需求</th><th>项目</th><th>交付方式</th><th>状态</th><th>最新动态</th><th>总耗时</th><th>更新时间</th></tr></thead><tbody id="recent-table"></tbody></table></div>
+        <div class="table-card recent-task-table"><table><thead><tr><th>需求</th><th>项目</th><th>交付方式</th><th>状态</th><th>最新动态</th><th>总耗时</th><th>更新时间</th></tr></thead><tbody id="recent-table"></tbody></table></div>
       </section>
 
       <section class="view" id="view-requests">

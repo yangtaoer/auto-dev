@@ -25,6 +25,9 @@ from .domain import (
     TaskType,
 )
 from .services.codex_runner import CodexRunner
+from .services.commit_policy import (
+    assert_delivery_history, committable_changes, stage_delivery_changes, preserve_validation_before_sync,
+)
 from .services.delivery import (
     ArtifactService,
     Mailer,
@@ -309,7 +312,7 @@ class Worker:
                     live_publisher.close()
                 result, codex_thread_id = run.result, run.thread_id
                 for state in repository_states:
-                    state["changed_files"] = changed_files(Path(state["worktree_path"]), state["base_commit"])
+                    state["changed_files"] = (changed_files if analysis_task else committable_changes)(Path(state["worktree_path"]), state["base_commit"])
                 changed_states = [state for state in repository_states if state["changed_files"]]
                 paths = [
                     f"{state['name']}/{relative}"
@@ -526,7 +529,7 @@ class Worker:
                 for state in changed_states:
                     state_worktree = Path(state["worktree_path"])
                     commit_hash = self._commit_and_push(
-                        state_worktree, detail, work_item, project, state["branch"]
+                        state_worktree, detail, work_item, project, state["branch"], base_commit=state["base_commit"]
                     )
                     state["commit_hash"] = commit_hash
                     state["status"] = "pushed"
@@ -661,7 +664,7 @@ class Worker:
             if kwargs.get("task_type") == "analysis":
                 return run
             for state in repository_states:
-                state["changed_files"] = changed_files(Path(state["worktree_path"]), state["base_commit"])
+                state["changed_files"] = committable_changes(Path(state["worktree_path"]), state["base_commit"])
             frozen = (kwargs.get("acceptance_context") or {}).get("items") or []
             if frozen:
                 mapped = {str(item.get("id")): item for item in normalize_acceptance_ledger(run.result)}
@@ -1162,13 +1165,19 @@ class Worker:
             # 只移除本次创建后已为空的任务根目录，绝不清理预先存在的未知内容。
             pass
 
-    def _commit_and_push(self, worktree: Path, detail: dict, work_item: dict, project: dict, branch: str) -> str:
+    def _commit_and_push(self, worktree: Path, detail: dict, work_item: dict, project: dict, branch: str, *, base_commit: str | None = None) -> str:
         title = re.sub(r"[\r\n]+", " ", work_item["title"]).strip()[:72]
         area = work_item.get("area_path", "").split("\\")[-1] or project.get("name", "项目")
         subject = f"feat(#{work_item['id']}):{area}-{title}"
         git(worktree, "config", "user.name", os.getenv("AUTODEV_GIT_NAME", "AutoDev Codex"))
         git(worktree, "config", "user.email", os.getenv("AUTODEV_GIT_EMAIL", "autodev@localhost"))
-        git(worktree, "add", "--all")
+        if base_commit:
+            assert_delivery_history(worktree, base_commit)
+        included, excluded = stage_delivery_changes(worktree)
+        if excluded:
+            self.store.add_event(detail["id"], "git.validation_excluded", "本地验证文件不进入代码提交：" + "、".join(excluded[:20]), metadata={"paths": excluded, "preserved_locally": True})
+        if not included:
+            raise RuntimeError("排除测试 Python 脚本和 docs JSON 后，没有可提交的业务代码变更；本地验证材料已保留")
         result = subprocess.run(
             ["git", "-C", str(worktree), "diff", "--cached", "--quiet"],
             env=sanitized_process_env(),
@@ -1200,6 +1209,11 @@ class Worker:
             target_branch = str(state.get("base_branch") or project.get("base_branch") or "dev")
             feature_branch = str(state["branch"])
             changed = repository_name in changed_names
+
+            stash = preserve_validation_before_sync(worktree)
+            if stash:
+                state["local_validation_stash"] = stash
+                self.store.add_event(request_id, "git.validation_preserved", f"{repository_name} 的本地验证材料已保存至 Git stash，不随目标分支推送", metadata={"repository": repository_name, "stash": stash})
 
             final_commit = self._sync_local_package_repository(
                 worktree,
