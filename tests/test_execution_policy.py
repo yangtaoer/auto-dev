@@ -246,6 +246,21 @@ class ExecutionPolicyTests(unittest.TestCase):
         self.assertTrue(gate['warnings'])
         self.assertTrue(development_risks({'blocking_risks':['截图不可用，接口未实现']})[1])
 
+    def test_post_delivery_acceptance_stays_unverified_without_gating_development(self):
+        from app.services.quality_gates import evaluate_development_quality, is_post_delivery_acceptance
+        for text in ('2、配合现场测试无误。', '用户验收通过', '协助客户验收确认'):
+            self.assertTrue(is_post_delivery_acceptance(text))
+        for text in ('现场测试按钮未实现', '配合现场测试并修复查询功能', '2、实现现场测试入口', '新增接口'):
+            self.assertFalse(is_post_delivery_acceptance(text))
+        result = {'acceptance_ledger':[{'id':'AC-02','criterion':'2、配合现场测试无误。','status':'partial','evidence':['本机自动测试通过；未操作现场']} ]}
+        profile = {'quality_profile':{'require_acceptance_ledger':True}}
+        gate = evaluate_development_quality(profile, [], result)
+        self.assertEqual(gate['blockers'], [])
+        self.assertTrue(gate['warnings'])
+        self.assertEqual(result['acceptance_ledger'][0]['status'], 'partial')
+        result['acceptance_ledger'][0]['criterion'] = '新增签收接口'
+        self.assertIn('未完成验收项', '；'.join(evaluate_development_quality(profile, [], result)['blockers']))
+
     def test_manifest_never_appears_in_delivery_or_mail_but_business_json_survives(self):
         from app.domain import visible_delivery_artifacts
         from app.services.delivery import Mailer

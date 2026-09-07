@@ -40,6 +40,13 @@ def _requirement_requests_visual_evidence(profile: dict[str, Any], requirement_t
     return False
 
 
+def is_post_delivery_acceptance(criterion: str) -> bool:
+    """Only a standalone human/site acceptance step, never a feature mentioning a site."""
+    text = re.sub(r"^\s*(?:AC[-_]?\d+\s*[:：]?|\d+\s*[、.．)）:：])\s*", "", str(criterion)).strip()
+    text = text.rstrip("。.!！；; ")
+    return bool(re.fullmatch(r"(?:配合|协助)?(?:现场|用户|客户)(?:测试|验收)(?:无误|通过|确认)?", text))
+
+
 def normalize_acceptance_ledger(result: dict[str, Any]) -> list[dict[str, Any]]:
     """Convert legacy string mappings while preserving the richer new contract."""
     value = result.get("acceptance_ledger")
@@ -111,7 +118,11 @@ def evaluate_development_quality(
     if profile.get("require_acceptance_ledger"):
         if not result.get("acceptance_ledger"):
             blockers.append("缺少结构化验收项账本，不能建立验收项与文件、测试之间的映射")
-        incomplete = [item["id"] for item in ledger if item.get("status") not in {"completed", "not_applicable"}]
+        deferred = [item for item in ledger if item.get("status") not in {"completed", "not_applicable"}
+                    and is_post_delivery_acceptance(item.get("criterion", ""))]
+        if deferred:
+            warnings.append("交付后现场/用户验收待验证（保留原状态，不阻塞研发交付）：" + "、".join(item["id"] for item in deferred))
+        incomplete = [item["id"] for item in ledger if item.get("status") not in {"completed", "not_applicable"} and item not in deferred]
         if incomplete:
             blockers.append("存在未完成验收项：" + "、".join(incomplete))
         mapped_files = {_normalized_path(path) for item in ledger for path in item.get("files") or []}
@@ -128,8 +139,8 @@ def evaluate_development_quality(
             checks,
             "acceptance-ledger",
             "验收项变更账本",
-            "blocked" if any("验收项" in item or "变更文件" in item for item in blockers) else "passed",
-            f"已登记 {len(ledger)} 个验收项、{len(changed_paths)} 个实际变更文件",
+            "blocked" if any("验收项" in item or "变更文件" in item for item in blockers) else ("warning" if deferred else "passed"),
+            f"已登记 {len(ledger)} 个验收项、{len(changed_paths)} 个实际变更文件；交付后待验收 {len(deferred)} 项",
         )
 
     invariant_profile = profile.get("business_invariants") or {}
