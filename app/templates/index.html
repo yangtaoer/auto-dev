@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/static/styles.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/brand-ui.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/editorial-ui.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/learning-ui.css?v={{ app_version }}">
 </head>
 <body>
   <div class="app-shell">
@@ -21,7 +22,8 @@
         <button class="nav-item" data-view="requests"><span class="nav-index">02</span><span>交付记录</span></button>
         {% if user.role == 'admin' %}<button class="nav-item" data-view="projects"><span class="nav-index">03</span><span>自主项目</span></button>
         <button class="nav-item" data-view="analytics"><span class="nav-index">04</span><span>统计看板</span></button>
-        <button class="nav-item" data-view="users"><span class="nav-index">05</span><span>账号管理</span></button>{% endif %}
+        <button class="nav-item" data-view="users"><span class="nav-index">05</span><span>账号管理</span></button>
+        <button class="nav-item" data-view="experiences"><span class="nav-index">06</span><span>项目经验</span></button>{% endif %}
       </nav>
       <div class="sidebar-character-stage">
         <div id="sidebar-orb-character" class="autodev-orb" role="button" tabindex="0" aria-label="AutoDev 动态角色">
@@ -89,6 +91,18 @@
         <div class="project-grid" id="project-grid"></div>
       </section>{% endif %}
       {% if user.role == 'admin' %}
+      <section class="view" id="view-experiences">
+        <div class="section-heading ledger-heading"><div><p class="eyebrow">从交付到积累 / PROJECT MEMORY</p><h2>每一次交付，都有所积累</h2></div><span class="catalog-source" id="experience-total">共 0 条经验</span></div>
+        <p class="learning-note">保留需求的修改范围、实现方式与验收反馈。已验证经验供后续研发参考，候选结论仍需核实。</p>
+        <form class="record-filters experience-filters" id="experience-filters">
+          <label class="record-search"><span>查找相似需求</span><input type="search" name="q" placeholder="需求、功能、模块、表字段或接口" maxlength="200"></label>
+          <label><span>项目</span><div class="ledger-select" id="experience-project-filter"><input type="hidden" name="project_id"><button type="button" aria-haspopup="listbox" aria-expanded="false"><b>全部项目</b><i></i></button><div class="ledger-select-menu" role="listbox" hidden></div></div></label>
+          <label><span>经验状态</span><div class="ledger-select" id="experience-status-filter"><input type="hidden" name="status"><button type="button" aria-haspopup="listbox" aria-expanded="false"><b>全部状态</b><i></i></button><div class="ledger-select-menu" role="listbox" hidden></div></div></label>
+          <div class="record-filter-actions"><button type="button" class="btn btn-ghost" id="experience-reset">重置</button><button type="submit" class="btn btn-secondary">查找</button></div>
+        </form>
+        <div class="experience-list-scroll" id="experience-list" aria-live="polite"><div class="learning-empty">打开项目经验后读取记录</div></div>
+        <nav class="record-pagination" id="experience-pagination" aria-label="项目经验分页"></nav>
+      </section>
       <section class="view" id="view-analytics">
         <div class="section-heading"><div><p class="eyebrow">运行洞察 / PLATFORM ANALYTICS</p><h2>统计看板</h2></div><span class="catalog-source">全平台实时数据</span></div>
         <div class="analytics-kpis" id="analytics-kpis"></div>
@@ -179,6 +193,9 @@
   </div>
 
   <div class="toast" id="toast"></div>
+  {% if user.role == 'admin' %}<div class="modal-backdrop" id="experience-modal" hidden>
+    <section class="modal experience-modal" role="dialog" aria-modal="true" aria-labelledby="experience-detail-title"><button class="modal-close" id="close-experience" aria-label="关闭项目经验">×</button><div id="experience-detail-content"></div></section>
+  </div>{% endif %}
   <script>window.__USER__ = {{ user | tojson }};</script>
   <script src="/static/grok-character/geometry-data.js?v={{ app_version }}"></script>
   <script src="/static/grok-character/src/math.js?v={{ app_version }}"></script>
@@ -210,5 +227,6 @@
     }, {once: true});
   </script>
   <script src="/static/app.js?v={{ app_version }}"></script>
+  <script src="/static/learning-ui.js?v={{ app_version }}"></script>
 </body>
 </html>

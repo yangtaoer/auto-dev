@@ -48,6 +48,7 @@ from .domain import (
     DEFAULT_DELIVERY_OPTIONS,
     DELIVERY_MODE_LABELS,
     DeliveryMode,
+    PIPELINE_STEPS,
     TERMINAL_STATUSES,
     RunStatus,
     TaskType,
@@ -61,6 +62,7 @@ from .security import hash_password, verify_password
 from .services.delivery import ArtifactService, Mailer
 from .services.blocker_summary import summarize_blocker
 from .services.tfs import TfsClient
+from .services import project_learning
 
 
 @asynccontextmanager
@@ -76,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.33",
+    version="1.0-Alpha.34",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -179,6 +181,55 @@ class SupplementInput(BaseModel):
 
 class ContinueRequestInput(BaseModel):
     prompt: str = Field(default="", max_length=6000)
+
+
+class AcceptancePreviewInput(BaseModel):
+    text: str = Field(min_length=1, max_length=12000)
+
+
+class AcceptanceItemInput(BaseModel):
+    id: str = Field(min_length=1, max_length=80)
+    status: Literal["passed", "failed", "unverified"]
+    actual: str = Field(default="", max_length=4000)
+    expected: str = Field(default="", max_length=4000)
+    note: str = Field(default="", max_length=4000)
+
+
+class AcceptanceFeedbackInput(BaseModel):
+    items: list[AcceptanceItemInput] = Field(min_length=1, max_length=200)
+    raw_feedback: str = Field(default="", max_length=12000)
+    tested_version: str = Field(default="", max_length=300)
+    environment: str = Field(default="", max_length=1000)
+    idempotency_key: str = Field(min_length=8, max_length=120)
+    expected_latest_feedback_id: int = Field(ge=0)
+
+
+class AcceptanceRepairInput(BaseModel):
+    feedback_id: int | None = Field(default=None, gt=0)
+    idempotency_key: str = Field(min_length=8, max_length=120)
+
+
+class AcceptanceAssigneeInput(BaseModel):
+    user_id: int = Field(gt=0)
+
+
+class ExperienceStatusInput(BaseModel):
+    status: Literal["candidate", "verified", "deprecated"]
+    reason: str = Field(min_length=1, max_length=4000)
+
+
+class RunnerAcceptanceInput(BaseModel):
+    criteria: str | list[dict[str, Any]] = Field(default="")
+    revision: int | None = Field(default=None, ge=0)
+    source: str = Field(default="requirement", max_length=80)
+
+
+class RunnerExperienceSearchInput(BaseModel):
+    project_key: str = Field(min_length=1, max_length=80)
+    work_item_id: int = Field(gt=0)
+    query: str = Field(default="", max_length=12000)
+    request_id: str = Field(default="", max_length=80)
+    limit: int = Field(default=5, ge=1, le=10)
 
 
 class RunnerProjectSync(BaseModel):
@@ -617,13 +668,38 @@ def send_joint_email(
     return True
 
 
-def can_access_request(user: dict, request_id: str) -> dict:
+def can_access_request(user: dict, request_id: str, *, allow_acceptance_owner: bool = False) -> dict:
     detail = request_detail(request_id)
     if not detail:
         raise HTTPException(status_code=404, detail="任务不存在")
-    if user["role"] != "admin" and detail["requester_id"] != user["id"]:
+    assigned = allow_acceptance_owner and detail.get("acceptance_owner_id") == user["id"]
+    if user["role"] != "admin" and detail["requester_id"] != user["id"] and not assigned:
         raise HTTPException(status_code=403, detail="无权访问该任务")
     return detail
+
+
+def learning_call(function, *args, **kwargs):
+    """Keep domain validation and concurrency conflicts consistent across both adapters."""
+    try:
+        return function(*args, **kwargs)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (RuntimeError, sqlite3.IntegrityError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def acceptance_permissions(detail: dict, user: dict) -> dict:
+    owner = user["role"] == "admin" or detail["requester_id"] == user["id"]
+    authorized = owner or detail.get("acceptance_owner_id") == user["id"]
+    return {
+        "can_accept": authorized and detail["status"] == RunStatus.DELIVERED.value,
+        "can_assign": owner,
+        "can_manage_request": owner,
+    }
 
 
 @app.get("/healthz")
@@ -631,10 +707,19 @@ def health() -> dict:
     return {"status": "ok", "mode": "standalone" if settings.worker_enabled else "cloud-control-plane"}
 
 
+def request_deep_link(request: Request) -> str:
+    """Forward only an actual task UUID, never an arbitrary external return URL."""
+    try:
+        request_id = str(uuid.UUID(request.query_params.get("request", "")))
+    except (ValueError, TypeError, AttributeError):
+        return ""
+    return f"?request={request_id}" + ("&acceptance=1" if request.query_params.get("acceptance") == "1" else "")
+
+
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
     if get_session_user(request.cookies.get("autodev_session")):
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/" + request_deep_link(request), status_code=303)
     return templates.TemplateResponse(
         request,
         "login.html",
@@ -646,7 +731,7 @@ def login_page(request: Request):
 def home(request: Request):
     user = get_session_user(request.cookies.get("autodev_session"))
     if not user:
-        return RedirectResponse("/login", status_code=303)
+        return RedirectResponse("/login" + request_deep_link(request), status_code=303)
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -953,8 +1038,8 @@ def delivery_records(
     conditions: list[str] = []
     params: list[Any] = []
     if user["role"] != "admin":
-        conditions.append("r.requester_id=?")
-        params.append(user["id"])
+        conditions.append("(r.requester_id=? OR r.acceptance_owner_id=?)")
+        params.extend((user["id"], user["id"]))
     elif requester_id is not None:
         conditions.append("r.requester_id=?")
         params.append(requester_id)
@@ -1438,7 +1523,10 @@ def get_request_intake(intake_id: str, user: Annotated[dict, Depends(current_use
 
 @app.get("/api/requests/{request_id}")
 def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
-    detail = public_request_payload(add_runner_display_state(can_access_request(user, request_id)))
+    detail = public_request_payload(add_runner_display_state(
+        can_access_request(user, request_id, allow_acceptance_owner=True)
+    ))
+    detail.update(acceptance_permissions(detail, user))
     display_status = detail.get("display_status") or detail["status"]
     detail["status_label"] = (
         "等待执行器上线"
@@ -1451,6 +1539,8 @@ def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -
     if joint_group_id:
         intake = request_intake_detail(joint_group_id) or {}
         siblings = joint_group_children(joint_group_id)
+        if not detail["can_manage_request"]:
+            siblings = [child for child in siblings if child["requester_id"] == user["id"] or child.get("acceptance_owner_id") == user["id"]]
         detail["joint_children"] = [joint_child_summary(child) for child in siblings]
         detail["joint_status"] = intake.get("status") or "routed"
         detail["joint_title"] = intake.get("title") or detail.get("title")
@@ -1460,6 +1550,99 @@ def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -
         }:
             detail["status_label"] = "本项目已完成，等待联合项目"
     return {"request": detail}
+
+
+@app.get("/api/requests/{request_id}/acceptance")
+def get_request_acceptance(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
+    detail = can_access_request(user, request_id, allow_acceptance_owner=True)
+    permissions = acceptance_permissions(detail, user)
+    candidates = rows("SELECT id,username,display_name FROM users WHERE active=1 ORDER BY display_name,id") if permissions["can_assign"] else []
+    return {
+        "acceptance": learning_call(project_learning.get_acceptance, request_id),
+        **permissions,
+        "can_submit": permissions["can_accept"],
+        "users": candidates,
+    }
+
+
+@app.post("/api/requests/{request_id}/acceptance/preview")
+def preview_request_acceptance(
+    request_id: str, payload: AcceptancePreviewInput, user: Annotated[dict, Depends(current_user)]
+) -> dict:
+    detail = can_access_request(user, request_id, allow_acceptance_owner=True)
+    if not acceptance_permissions(detail, user)["can_accept"]:
+        raise HTTPException(status_code=409, detail="任务交付后才能提交验收反馈")
+    return learning_call(project_learning.preview_feedback, request_id, payload.text)
+
+
+@app.post("/api/requests/{request_id}/acceptance/feedback")
+def submit_request_acceptance(
+    request_id: str, payload: AcceptanceFeedbackInput, user: Annotated[dict, Depends(current_user)]
+) -> dict:
+    detail = can_access_request(user, request_id, allow_acceptance_owner=True)
+    if detail["status"] != RunStatus.DELIVERED.value:
+        raise HTTPException(status_code=409, detail="任务交付后才能提交验收反馈")
+    feedback = learning_call(
+        project_learning.submit_feedback, request_id, user,
+        [item.model_dump() for item in payload.items],
+        raw_feedback=payload.raw_feedback, tested_version=payload.tested_version,
+        environment=payload.environment, idempotency_key=payload.idempotency_key,
+        expected_latest_feedback_id=payload.expected_latest_feedback_id,
+    )
+    return {"feedback": feedback, "acceptance": learning_call(project_learning.get_acceptance, request_id)}
+
+
+@app.post("/api/requests/{request_id}/acceptance/repair")
+def repair_request_acceptance(
+    request_id: str, payload: AcceptanceRepairInput, user: Annotated[dict, Depends(current_user)]
+) -> dict:
+    can_access_request(user, request_id, allow_acceptance_owner=True)
+    repair = learning_call(
+        project_learning.create_repair, request_id, user,
+        feedback_id=payload.feedback_id, idempotency_key=payload.idempotency_key,
+    )
+    return {"request": public_request_payload(add_runner_display_state(repair))}
+
+
+@app.put("/api/requests/{request_id}/acceptance/assignee")
+def assign_request_acceptance(
+    request_id: str, payload: AcceptanceAssigneeInput, user: Annotated[dict, Depends(current_user)]
+) -> dict:
+    can_access_request(user, request_id)
+    candidate = row("SELECT id FROM users WHERE id=? AND active=1", (payload.user_id,))
+    if not candidate:
+        raise HTTPException(status_code=422, detail="请选择一个已启用的验收账号")
+    return {"acceptance": learning_call(
+        project_learning.assign_acceptance_owner, request_id, payload.user_id, user["id"]
+    )}
+
+
+@app.get("/api/admin/project-experiences")
+def list_project_experiences(
+    _: Annotated[dict, Depends(admin_user)], project_id: int | None = None,
+    q: str = "", status: str = "", limit: int = 30, offset: int = 0,
+) -> dict:
+    return learning_call(
+        project_learning.list_experiences, project_id=project_id,
+        query=q[:300], status=status, limit=max(1, min(100, limit)), offset=max(0, offset),
+    )
+
+
+@app.get("/api/admin/project-experiences/{experience_id}")
+def get_project_experience(experience_id: int, _: Annotated[dict, Depends(admin_user)]) -> dict:
+    experience = learning_call(project_learning.get_experience, experience_id)
+    if not experience:
+        raise HTTPException(status_code=404, detail="项目经验不存在")
+    return {"experience": experience}
+
+
+@app.patch("/api/admin/project-experiences/{experience_id}")
+def update_project_experience(
+    experience_id: int, payload: ExperienceStatusInput, user: Annotated[dict, Depends(admin_user)]
+) -> dict:
+    return {"experience": learning_call(
+        project_learning.set_experience_status, experience_id, payload.status, user["id"], payload.reason
+    )}
 
 
 @app.post("/api/requests/{request_id}/codex-watch/start", include_in_schema=False)
@@ -1512,6 +1695,9 @@ def retry_request(request_id: str, user: Annotated[dict, Depends(current_user)])
         raise HTTPException(status_code=409, detail="联合研发任务需要按原 TFS 编号整体重新发起，不能只重试其中一个项目")
     if original["status"] != RunStatus.FAILED.value:
         raise HTTPException(status_code=409, detail="只有执行失败的任务可以重新发起")
+    if original.get("parent_request_id"):
+        new_request_id = learning_call(retry_linked_repair, request_id, user)
+        return {"id": new_request_id, "status": RunStatus.QUEUED.value, "work_item_id": original["work_item_id"]}
     project = row("SELECT * FROM projects WHERE id=? AND enabled=1", (original["project_id"],))
     if not project:
         raise HTTPException(status_code=409, detail="原任务所属项目已停用，暂时无法重新发起")
@@ -1538,6 +1724,97 @@ def retry_request(request_id: str, user: Annotated[dict, Depends(current_user)])
             ),
         )
     return {"id": new_request_id, "status": RunStatus.QUEUED.value, "work_item_id": original["work_item_id"]}
+
+
+def retry_linked_repair(request_id: str, user: dict) -> str:
+    """Queue a fresh repair attempt with its frozen scope in the same transaction."""
+    with transaction() as conn:
+        # Serialize across processes as well as the in-process store lock. The runner
+        # must never observe a queued row before its repair context/items are copied.
+        conn.execute("BEGIN IMMEDIATE")
+        source_row = conn.execute("SELECT * FROM delivery_requests WHERE id=?", (request_id,)).fetchone()
+        if not source_row:
+            raise LookupError("原返修任务不存在")
+        original = dict(source_row)
+        if user["role"] != "admin" and original["requester_id"] != user["id"]:
+            raise PermissionError("无权重试该任务")
+        if original["status"] != RunStatus.FAILED.value or not original.get("parent_request_id"):
+            raise RuntimeError("仅执行失败的关联返修可按此方式重试")
+        context = json_value(original.get("repair_context"), {})
+        feedback_id = context.get("feedback_id")
+        link = conn.execute("SELECT * FROM acceptance_repairs WHERE feedback_id=?", (feedback_id,)).fetchone()
+        if not link:
+            raise RuntimeError("返修缺少原始验收反馈关联，无法安全重试")
+        if link["request_id"] != request_id:
+            latest = conn.execute("SELECT repair_context FROM delivery_requests WHERE id=?", (link["request_id"],)).fetchone()
+            latest_context = json_value(latest["repair_context"], {}) if latest else {}
+            if latest_context.get("retry_of_request_id") == request_id:
+                return link["request_id"]
+            raise RuntimeError("该返修已有后续尝试，请在最新任务上继续操作")
+        parent = conn.execute("SELECT * FROM delivery_requests WHERE id=?", (original["parent_request_id"],)).fetchone()
+        if not parent or parent["status"] != RunStatus.DELIVERED.value or (
+            parent["project_id"] != original["project_id"] or parent["work_item_id"] != original["work_item_id"]
+        ):
+            raise RuntimeError("返修缺少同项目、同需求的已交付原任务")
+        project_row = conn.execute("SELECT * FROM projects WHERE id=? AND enabled=1", (original["project_id"],)).fetchone()
+        if not project_row:
+            raise RuntimeError("原任务所属项目已停用，暂时无法重新发起")
+        if conn.execute(
+            """SELECT 1 FROM delivery_requests WHERE project_id=? AND work_item_id=?
+               AND status NOT IN ('delivered','failed','rejected','cancelled')""",
+            (original["project_id"], original["work_item_id"]),
+        ).fetchone():
+            raise RuntimeError("该需求已有正在执行的研发任务")
+        if not json_value(original.get("failed_item_ids"), []) or not conn.execute(
+            "SELECT 1 FROM acceptance_items WHERE request_id=?", (request_id,),
+        ).fetchone():
+            raise RuntimeError("返修缺少未通过项或冻结验收清单，无法安全重试")
+        project = dict(project_row)
+        now = utc_now()
+        new_request_id = str(uuid.uuid4())
+        context.update({
+            "retry_of_request_id": request_id,
+            "retry_attempt": int(context.get("retry_attempt") or 0) + 1,
+        })
+        fields = {name: original.get(name) for name in (
+            "work_item_id", "work_item_revision", "project_id", "requester_id", "acceptance_owner_id",
+            "delivery_mode", "title", "requirement_summary", "notification_emails", "delivery_options", "task_type",
+            "parent_request_id", "root_request_id", "repair_round", "failed_item_ids", "protected_item_ids",
+        )}
+        fields.update({
+            "id": new_request_id, "runner_id": project.get("runner_id") or original["runner_id"],
+            "status": RunStatus.QUEUED.value, "current_step": "validate", "progress": 0,
+            "policy_snapshot": json.dumps(project_for_api(project), ensure_ascii=False),
+            "repair_context": json.dumps(context, ensure_ascii=False), "created_at": now, "updated_at": now,
+        })
+        conn.execute(
+            f"INSERT INTO delivery_requests({','.join(fields)}) VALUES({','.join('?' for _ in fields)})",
+            tuple(fields.values()),
+        )
+        conn.executemany(
+            "INSERT INTO delivery_steps(request_id,step_code,name,status) VALUES(?,?,?,'pending')",
+            [(new_request_id, code, name) for code, name in PIPELINE_STEPS],
+        )
+        conn.execute(
+            """INSERT INTO acceptance_items(request_id,item_id,position,criterion,requirement_revision,source,created_at)
+               SELECT ?,item_id,position,criterion,requirement_revision,source,? FROM acceptance_items WHERE request_id=?""",
+            (new_request_id, now, request_id),
+        )
+        conn.execute("UPDATE acceptance_repairs SET request_id=? WHERE feedback_id=?", (new_request_id, feedback_id))
+        for target_id, event_type, message in (
+            (request_id, "request.retried", f"{user['display_name']} 保留验收范围重新发起返修，新任务 {new_request_id[:8].upper()}"),
+            (new_request_id, "request.retry_created", f"由失败返修 {request_id[:8].upper()} 重新发起，保留原验收反馈和已通过功能保护范围"),
+        ):
+            conn.execute(
+                "INSERT INTO delivery_events(request_id,level,event_type,message,metadata,created_at) VALUES(?,?,?,?,?,?)",
+                (target_id, "info", event_type, message, json.dumps({"source_request_id": request_id, "feedback_id": feedback_id}), now),
+            )
+        conn.execute(
+            "INSERT INTO audit_logs(actor_id,action,target_type,target_id,detail,created_at) VALUES(?,?,?,?,?,?)",
+            (user["id"], "request.retry", "delivery_request", new_request_id,
+             json.dumps({"source_request_id": request_id, "parent_request_id": original["parent_request_id"], "feedback_id": feedback_id}), now),
+        )
+        return new_request_id
 
 
 @app.post("/api/requests/{request_id}/supplement")
@@ -1955,6 +2232,44 @@ def runner_get_request(request_id: str) -> dict:
     return {"request": runner_request(request_id)}
 
 
+@app.post("/api/runner/requests/{request_id}/acceptance", dependencies=[Depends(runner_auth)])
+def runner_ensure_acceptance(request_id: str, payload: RunnerAcceptanceInput) -> dict:
+    runner_request(request_id)
+    return {"acceptance": learning_call(
+        project_learning.ensure_acceptance, request_id, payload.criteria,
+        revision=payload.revision, source=payload.source,
+    )}
+
+
+@app.get("/api/runner/project-experiences", dependencies=[Depends(runner_auth)])
+def runner_relevant_experiences(
+    project_key: str, work_item_id: int, q: str = "", request_id: str = "", limit: int = 5,
+) -> dict:
+    if not row("SELECT 1 FROM projects WHERE project_key=?", (project_key,)):
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if request_id:
+        detail = runner_request(request_id)
+        if detail["project_key"] != project_key or detail["work_item_id"] != work_item_id:
+            raise HTTPException(status_code=422, detail="经验检索必须与当前任务的项目和需求一致")
+    return {"lessons": learning_call(
+        project_learning.retrieve_lessons, project_key, work_item_id, q[:12000],
+        request_id=request_id, limit=max(1, min(10, limit)),
+    )}
+
+
+@app.post("/api/runner/project-experiences/search", dependencies=[Depends(runner_auth)])
+def runner_search_experiences(payload: RunnerExperienceSearchInput) -> dict:
+    return runner_relevant_experiences(
+        payload.project_key, payload.work_item_id, payload.query, payload.request_id, payload.limit,
+    )
+
+
+@app.post("/api/runner/requests/{request_id}/experience", dependencies=[Depends(runner_auth)])
+def runner_sync_experience(request_id: str) -> dict:
+    runner_request(request_id)
+    return {"experience": learning_call(project_learning.sync_experience, request_id)}
+
+
 @app.get("/api/runner/requests/{request_id}/codex-watch/active", dependencies=[Depends(runner_auth)])
 def runner_codex_watch_active(request_id: str) -> dict:
     runner_request(request_id)
@@ -1977,6 +2292,7 @@ RUNNER_MUTABLE_FIELDS = {
     "result_summary", "error_message", "repository_states", "started_at", "completed_at", "next_poll_at", "email_sent_at",
     "supplement_requests", "supplement_answers", "supplement_requested_at", "supplemented_at",
     "analysis_result", "history_context", "acceptance_ledger", "quality_gate_result",
+    "project_retrospective", "lesson_usage", "project_lesson_context",
 }
 
 
@@ -2253,13 +2569,13 @@ def download_artifact(
     preview: bool = False,
 ):
     artifact = row(
-        """SELECT a.*,r.requester_id FROM delivery_artifacts a
+        """SELECT a.*,r.requester_id,r.acceptance_owner_id FROM delivery_artifacts a
            JOIN delivery_requests r ON r.id=a.request_id WHERE a.id=?""",
         (artifact_id,),
     )
     if not artifact:
         raise HTTPException(status_code=404, detail="产物不存在")
-    if user["role"] != "admin" and artifact["requester_id"] != user["id"]:
+    if user["role"] != "admin" and user["id"] not in {artifact["requester_id"], artifact.get("acceptance_owner_id")}:
         raise HTTPException(status_code=403, detail="无权下载该产物")
     if artifact["external_url"]:
         return RedirectResponse(artifact["external_url"])

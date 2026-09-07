@@ -15,6 +15,7 @@ from .db import (
     update_request, update_step, utc_now,
 )
 from .services.oss_storage import OssArtifactStorage, cleanup_local_deliveries
+from .services import project_learning
 
 
 logger = logging.getLogger("autodev.remote_store")
@@ -90,6 +91,23 @@ class LocalStore:
     @staticmethod
     def prior_requests(project_key: str, work_item_id: int, request_id: str, limit: int = 8) -> list[dict[str, Any]]:
         return prior_request_history(project_key, work_item_id, exclude_request_id=request_id, limit=limit)
+
+    @staticmethod
+    def ensure_acceptance(
+        request_id: str, criteria: str | list[dict[str, Any]], revision: int | None = None,
+        source: str = "requirement",
+    ) -> dict[str, Any]:
+        return project_learning.ensure_acceptance(request_id, criteria, revision=revision, source=source)
+
+    @staticmethod
+    def relevant_experiences(
+        project_key: str, work_item_id: int, query: str, request_id: str = "", limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        return project_learning.retrieve_lessons(project_key, work_item_id, query, request_id=request_id, limit=limit)
+
+    @staticmethod
+    def sync_experience(request_id: str) -> Any:
+        return project_learning.sync_experience(request_id)
 
     def notify(self, request_id: str, *, action_required: bool, terminal: bool = False) -> None:
         raise RuntimeError("本地存储不使用远程通知接口")
@@ -245,6 +263,30 @@ class RemoteStore:
     def codex_watch_active(self, request_id: str) -> bool:
         data = self._json(self._request("GET", f"/api/runner/requests/{request_id}/codex-watch/active"))
         return bool(data.get("active"))
+
+    def ensure_acceptance(
+        self, request_id: str, criteria: str | list[dict[str, Any]], revision: int | None = None,
+        source: str = "requirement",
+    ) -> dict[str, Any]:
+        data = self._json(self._request(
+            "POST", f"/api/runner/requests/{request_id}/acceptance",
+            json={"criteria": criteria, "revision": revision, "source": source},
+        ))
+        return data["acceptance"]
+
+    def relevant_experiences(
+        self, project_key: str, work_item_id: int, query: str, request_id: str = "", limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        data = self._json(self._request(
+            "POST", "/api/runner/project-experiences/search",
+            json={"project_key": project_key, "work_item_id": work_item_id,
+                  "query": query[:12000], "request_id": request_id, "limit": max(1, min(10, limit))},
+        ))
+        return list(data.get("lessons") or [])
+
+    def sync_experience(self, request_id: str) -> Any:
+        data = self._json(self._request("POST", f"/api/runner/requests/{request_id}/experience", json={}))
+        return data.get("experience")
 
     def publish_codex_events(self, request_id: str, events: list[dict[str, Any]]) -> None:
         if not events:

@@ -61,9 +61,11 @@ function toast(message){const el=document.querySelector('#toast');el.textContent
 function switchView(name){
   document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===`view-${name}`));
   document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.view===name));
-  document.body.classList.toggle('ledger-lock',name==='requests');
+  document.body.classList.toggle('ledger-lock',name==='requests'||name==='experiences');
   const titles={dashboard:['控制室 / CONTROL ROOM / 01','任务总览'],requests:['交付台账 / DELIVERY LEDGER / 02','交付记录'],projects:['支持项目 / SUPPORTED PROJECTS / 03','自主项目'],analytics:['运行洞察 / PLATFORM ANALYTICS / 04','统计看板'],users:['账号管理 / ACCESS REGISTRY / 05','账号管理']};
+  titles.experiences=['项目记忆 / PROJECT MEMORY / 06','项目经验'];
   document.querySelector('#view-code').textContent=titles[name][0];document.querySelector('#view-title').textContent=titles[name][1];
+  if(name==='experiences')window.ProjectLearning?.open();
 }
 
 async function refresh(){
@@ -74,6 +76,7 @@ async function refresh(){
   const recordsRequest=api(deliveryRecordsUrl());
   const [dashboard,projects,me,users,analytics,recipients,records]=await Promise.all([api('/api/dashboard'),projectRequest,api('/api/me'),userRequest,analyticsRequest,recipientRequest,recordsRequest]);
   Object.assign(USER,me.user);state.dashboard=dashboard;state.projects=projects.projects;state.users=users.users||[];state.notificationUsers=recipients.users||[];state.analytics=analytics;applyDeliveryRecords(records);renderDashboard();renderProjects();renderProjectGuide();renderAnalytics();renderUsers();renderRequestEmailOptions(false);renderRecordFilterOptions();renderAllTable();
+  window.ProjectLearning?.syncProjects();
   if(state.selectedRequest&&!state.selectedTerminal) refreshDetail(state.selectedRequest,true);
 }
 const ORB_RUNNING_STATUSES=new Set(['routing','validating','developing','submitting','building','releasing','capturing','delivering']);
@@ -261,11 +264,23 @@ async function openRoutingDetail(intakeId,workItemId,initialStatus='routing',tas
     document.querySelector('#retry-new-run')?.addEventListener('click',()=>{closeDetail();openRequestModal(taskType)});
   }
 }
-async function openDetail(id){state.selectedIntake=null;state.selectedRequest=id;state.selectedTerminal=false;showDetailDrawer();await refreshDetail(id)}
+async function openDetail(id){window.ProjectLearning?.willOpenRequest(id);state.selectedIntake=null;state.selectedRequest=id;state.selectedTerminal=false;showDetailDrawer();await refreshDetail(id)}
 async function refreshDetail(id,silent=false){
   const drawer=document.querySelector('#detail-drawer'),eventList=document.querySelector('#detail-content .event-list');
   const drawerScroll=silent?drawer.scrollTop:0,eventScroll=silent&&eventList?eventList.scrollTop:0;
-  try{const d=(await api(`/api/requests/${id}`)).request;if(state.selectedRequest!==id)return;const active=document.activeElement,continuationFocused=silent&&active?.id==='continuation-prompt',selectionStart=continuationFocused?active.selectionStart:null,selectionEnd=continuationFocused?active.selectionEnd:null,textareaScroll=continuationFocused?active.scrollTop:0;renderDetail(d);if(silent)requestAnimationFrame(()=>{drawer.scrollTop=drawerScroll;const refreshedEvents=document.querySelector('#detail-content .event-list');if(refreshedEvents)refreshedEvents.scrollTop=eventScroll;if(continuationFocused){const prompt=document.querySelector('#continuation-prompt');if(prompt){prompt.focus({preventScroll:true});prompt.setSelectionRange(selectionStart,selectionEnd);prompt.scrollTop=textareaScroll}}})}catch(e){if(!silent)toast(e.message)}
+  try{
+    const d=(await api(`/api/requests/${id}`)).request;if(state.selectedRequest!==id)return;
+    const active=document.activeElement,continuationFocused=silent&&active?.id==='continuation-prompt';
+    const learningFocused=silent&&active?.closest?.('.request-learning-panel');
+    const selectionStart=continuationFocused||learningFocused?active.selectionStart:null,selectionEnd=continuationFocused||learningFocused?active.selectionEnd:null,textareaScroll=continuationFocused||learningFocused?active.scrollTop:0;
+    renderDetail(d);
+    if(silent)requestAnimationFrame(()=>{
+      drawer.scrollTop=drawerScroll;
+      const refreshedEvents=document.querySelector('#detail-content .event-list');if(refreshedEvents)refreshedEvents.scrollTop=eventScroll;
+      const prompt=continuationFocused?document.querySelector('#continuation-prompt'):learningFocused&&active.isConnected?active:null;
+      if(prompt){prompt.focus({preventScroll:true});if(selectionStart!==null&&typeof prompt.setSelectionRange==='function')prompt.setSelectionRange(selectionStart,selectionEnd);prompt.scrollTop=textareaScroll;}
+    });
+  }catch(e){if(!silent)toast(e.message)}
 }
 function renderAnalysisPanel(d){
   const result=d.analysis_result&&typeof d.analysis_result==='object'?d.analysis_result:{},hasResult=Object.keys(result).length>0;
@@ -298,20 +313,21 @@ function renderDetail(d){
   const steps=d.steps.map((s,index)=>`<div class="timeline-item ${s.status} ${index===runningStepIndex-1?'feeds-next':''}" data-step-code="${escapeHtml(s.step_code||'')}"><div class="timeline-mark"></div><div class="timeline-copy"><b>${escapeHtml(engineText(s.name))}</b><span>${escapeHtml(engineText(s.message||s.status))}</span>${stepTiming(s)}</div></div>`).join('');
   const events=d.events.slice(0,20).map(e=>`<div class="event"><b>${escapeHtml(engineText(e.event_type))} · ${fmt(e.created_at)}</b><p>${escapeHtml(engineText(e.message))}</p></div>`).join('');
   const simulate=USER.role==='admin'&&d.status==='waiting_merge'&&d.policy_snapshot.simulation_mode?`<button class="btn btn-secondary" id="simulate-merge">模拟 PR 已合并</button>`:'';
-  const cancel=!['delivered','failed','rejected','cancelled'].includes(jointStatus)?`<button class="btn btn-ghost" id="cancel-run">${isJoint?'取消联合任务':'取消任务'}</button>`:'';
-  const retry=d.status==='failed'&&!isJoint?`<button class="btn btn-secondary retry-run" id="retry-run">重新发起 ↻</button>`:'';
+  const cancel=d.can_manage_request!==false&&!['delivered','failed','rejected','cancelled'].includes(jointStatus)?`<button class="btn btn-ghost" id="cancel-run">${isJoint?'取消联合任务':'取消任务'}</button>`:'';
+  const retry=d.can_manage_request!==false&&d.status==='failed'&&!isJoint?`<button class="btn btn-secondary retry-run" id="retry-run">重新发起 ↻</button>`:'';
   const continuation=USER.role==='admin'&&d.status==='waiting_approval'?renderContinuationPanel(d):'';
   const blockerBrief=d.status==='waiting_approval'?renderBlockerSummary(d):'';
   const live=d.status==='developing'?`<button class="btn btn-live" id="open-devcore-stream"><i></i>查看${isAnalysisTask(d)?'分析':'研发'}过程</button>`:'';
   const prSources=isJoint?jointChildren.flatMap(child=>requestPullRequests(child).map(item=>({...item,project:child.project_name}))):requestPullRequests(d).map(item=>({...item,project:''}));
   const prButtons=prSources.map(item=>`<a class="btn btn-primary" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">打开 ${escapeHtml(item.project?`${item.project} / ${item.repository}`:item.repository)} · PR #${escapeHtml(item.id)} ↗</a>`).join('');
-  const supplement=d.status==='waiting_input'?renderSupplementPanel(d):'';
+  const supplement=d.can_manage_request!==false&&d.status==='waiting_input'?renderSupplementPanel(d):'';
   const optionLabels=isAnalysisTask(d)?[]:(d.delivery_options===null?['代码合并截图','License 申请（历史策略）']:(d.delivery_options||[]).map(value=>DELIVERY_OPTION_LABELS[value]||value));
   const classificationByProject=new Map((d.classification_summary||[]).map(item=>[item.project_key,item]));
   const jointPanel=isJoint?`<section class="joint-delivery-panel"><header><div><p class="eyebrow">${isAnalysisTask(d)?'联合分析 / JOINT ANALYSIS':'联合研发 / JOINT DELIVERY'}</p><h3>${jointChildren.length} 个项目协同${isAnalysisTask(d)?'分析':'交付'}</h3></div><span class="status-dot" data-status="${escapeHtml(jointStatus)}">${escapeHtml((isAnalysisTask(d)?ANALYSIS_STATUS:STATUS)[jointStatus]||jointStatus)}</span></header><div class="joint-child-grid">${jointChildren.map(child=>{const evidence=classificationByProject.get(child.project_key)||{},terms=(evidence.matched_terms||[]).join('、');return `<button type="button" class="joint-child ${child.id===d.id?'active':''}" data-joint-child-id="${escapeHtml(child.id)}"><span class="joint-child-index">${String(child.joint_project_index||1).padStart(2,'0')}</span><span class="joint-child-copy"><b>${escapeHtml(child.project_name)}</b><small>${escapeHtml(terms?`识别依据：${terms}`:'按需求内容自动归类')}</small><em>${escapeHtml(engineText(child.current_activity||child.status_label))}</em></span><i class="status-dot" data-status="${escapeHtml(child.display_status||child.status)}">${escapeHtml(child.status_label)}</i></button>`}).join('')}</div><p>${isAnalysisTask(d)?'各项目分别执行只读代码与开发库核验；全部完成后统一回填 TFS，并发送一封汇总分析邮件。':'各项目分别执行代码修改、提交、审核与构建；全部完成后统一更新 TFS，并发送一封汇总交付邮件。'}</p></section>`:'';
   const analysisPanel=renderAnalysisPanel(d),governancePanel=renderGovernancePanel(d),deliverySummary=isAnalysisTask(d)?`<div class="delivery-option-summary analysis-summary"><b>本次任务</b><span>只读代码分析</span><span>DM7 只读核验</span><span>结构化报告</span></div>`:`<div class="delivery-option-summary"><b>本次交付</b>${optionLabels.map(label=>`<span>${escapeHtml(label)}</span>`).join('')||'<span>按项目定义</span>'}</div>`;
   document.querySelector('#detail-content').innerHTML=`<div class="detail-head ${isAnalysisTask(d)?'analysis-detail-head':''}"><p class="eyebrow">任务 / RUN / ${d.id.slice(0,8)}${isJoint?' / JOINT':''}</p><h2>${tfsLink(d,`#${d.work_item_id}`)} · ${escapeHtml(d.title||'读取需求中')}</h2><div class="detail-meta"><span>${escapeHtml(d.project_name)}</span>${isJoint?`<span>联合 ${d.joint_project_index}/${d.joint_project_count}</span>`:''}<span>${escapeHtml(taskTypeLabel(d))}</span>${!isAnalysisTask(d)?`<span>${escapeHtml(d.delivery_mode_label)}</span>`:''}<span>${escapeHtml(d.status_label)}</span><span>总耗时 ${fmtDuration(requestDuration(d))}</span></div>${deliverySummary}<div class="notification-line">通知至 ${(d.notification_emails||[]).map(escapeHtml).join('、')||'—'}</div></div>${blockerBrief}${jointPanel}${d.error_message&&d.status!=='waiting_approval'?`<div class="error-box">${escapeHtml(engineText(d.error_message))}</div>`:''}${supplement}${continuation}<div class="detail-actions">${live}${prButtons}${simulate}${retry}${cancel}</div><p class="eyebrow">${isAnalysisTask(d)?'问题分析流水线 / ANALYSIS PIPELINE':'当前项目流水线 / PROJECT PIPELINE'}</p><div class="timeline">${steps}</div>${analysisPanel}${governancePanel}${screenshotGallery}${fileSection}<div class="section-heading compact"><div><p class="eyebrow">事件流 / EVENT STREAM</p><h2>执行记录</h2></div></div><div class="event-list">${events}</div>`;
   const stepSignature=`${d.status}:${d.current_step||''}:${d.steps.map(step=>step.status).join(',')}`,previousStepSignature=state.orbExperience.detailSteps.get(d.id);state.orbExperience.detailSteps.set(d.id,stepSignature);if(previousStepSignature&&previousStepSignature!==stepSignature){const runningStep=document.querySelector('#detail-content .timeline-item.running');if(runningStep){runningStep.classList.add('step-arrived');setTimeout(()=>runningStep.classList.remove('step-arrived'),1100)}}
+  window.ProjectLearning?.renderRequest(d);
   bindArtifactPreviews(document.querySelector('#detail-content'));
   bindMenuLinks(document.querySelector('#detail-content'));
   document.querySelectorAll('[data-joint-child-id]').forEach(button=>button.onclick=()=>openDetail(button.dataset.jointChildId));

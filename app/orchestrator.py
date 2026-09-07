@@ -195,6 +195,25 @@ class Worker:
                 history_context=history_context,
                 progress=15,
             )
+            acceptance_context = self.store.ensure_acceptance(
+                request_id,
+                work_item.get("acceptance_criteria") or work_item.get("description") or work_item["title"],
+                revision=work_item.get("revision"),
+                source="requirement" if work_item.get("acceptance_criteria") else "description",
+            )
+            project_lessons = self.store.relevant_experiences(
+                str(project.get("project_key") or detail.get("project_key") or ""),
+                int(work_item["id"]),
+                "\n".join(self._plain_text(work_item.get(field, "")) for field in ("title", "description", "acceptance_criteria")),
+                request_id=request_id,
+                limit=5,
+            )
+            self.store.update_request(request_id, project_lesson_context=project_lessons)
+            self.store.add_event(
+                request_id, "learning.context_loaded",
+                f"已冻结 {len(acceptance_context.get('items') or [])} 项验收标准，检索项目经验 {len(project_lessons)} 条；本轮不接入测试环境验证",
+                metadata={"experience_ids": [item.get("id") for item in project_lessons]},
+            )
             self.store.update_step(
                 request_id,
                 "validate",
@@ -262,7 +281,7 @@ class Worker:
                 result = (
                     self._simulate_analysis(request_id, work_item)
                     if analysis_task
-                    else self._simulate_development(request_id, work_item)
+                    else self._simulate_development(request_id, work_item, acceptance_context)
                 )
                 codex_thread_id = "demo-thread"
             else:
@@ -273,6 +292,8 @@ class Worker:
                         work_item=work_item,
                         project=project,
                         history_context=history_context,
+                        acceptance_context=acceptance_context,
+                        project_lessons=project_lessons,
                         on_event=lambda event_type, message: self.store.add_event(request_id, event_type, message),
                         on_live_event=live_publisher.emit,
                         resume_thread_id=detail.get("codex_thread_id") if detail.get("supplement_answers") else None,
@@ -316,7 +337,25 @@ class Worker:
                     self.store.add_event(request_id, "policy.protected_change", "检测到受保护路径变更，任务已暂停", level="warning", metadata={"paths": blocked})
                     return
             summary = result.get("summary", "")
+            self.store.update_request(
+                request_id,
+                project_retrospective=result.get("project_retrospective") or {},
+                lesson_usage=self._validated_lesson_usage(result.get("lesson_usage"), project_lessons),
+            )
             acceptance_ledger = normalize_acceptance_ledger(result) if not analysis_task else []
+            if acceptance_ledger and acceptance_context.get("items"):
+                by_id = {str(item["id"]): item for item in acceptance_ledger}
+                acceptance_ledger = [
+                    {
+                        **by_id.get(str(item["id"]), {
+                            "status": "partial", "repositories": [], "files": [], "tests": [],
+                            "evidence": ["本轮研发结果未映射该冻结验收项"],
+                        }),
+                        "id": item["id"], "criterion": item["criterion"],
+                    }
+                    for item in acceptance_context["items"]
+                ]
+                result["acceptance_ledger"] = acceptance_ledger
             if acceptance_ledger:
                 self.store.update_request(request_id, acceptance_ledger=acceptance_ledger)
             if analysis_task:
@@ -765,7 +804,18 @@ class Worker:
             }
         item = TfsClient(project["tfs_collection_url"]).get_work_item(detail["work_item_id"])
         allowed_types = project.get("allowed_work_item_types") or ["用户情景"]
-        allowed_states = project.get("allowed_states") or ["已评审"]
+        allowed_states = list(project.get("allowed_states") or ["已评审"])
+        if detail.get("parent_request_id"):
+            parent = self.store.detail(detail["parent_request_id"])
+            if not parent or parent.get("status") != RunStatus.DELIVERED.value or (
+                parent.get("project_id") != detail.get("project_id")
+                or parent.get("work_item_id") != detail.get("work_item_id")
+                or not detail.get("failed_item_ids")
+            ):
+                raise RuntimeError("关联返修缺少同项目已交付原任务或明确未通过验收项")
+            # Delivery has already resolved the original story. Rework must not require
+            # an unrelated user to manually reopen it, nor relax ordinary intake rules.
+            allowed_states.extend(["已解决", "已关闭"])
         if item["work_item_type"] not in allowed_types:
             raise RuntimeError(
                 f"TFS #{item['id']} 类型为 {item['work_item_type']}，项目仅允许：{'、'.join(allowed_types)}"
@@ -799,6 +849,25 @@ class Worker:
             if project.get("project_key") not in {entry["project_key"] for entry in matched}:
                 raise RuntimeError("任务项目快照与最新需求识别不一致，请重新发起；未创建工作区或修改代码")
         return item
+
+    @staticmethod
+    def _validated_lesson_usage(value: object, lessons: list[dict]) -> list[dict]:
+        supplied = {str(item.get("id")) for item in lessons}
+        result = []
+        seen = set()
+        for entry in value if isinstance(value, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            key = str(entry.get("experience_id") or "")
+            if key not in supplied or key in seen or entry.get("decision") not in {"adopted", "not_applicable", "conflict"}:
+                continue
+            seen.add(key)
+            result.append({
+                "experience_id": key, "decision": entry["decision"],
+                "reason": str(entry.get("reason") or "")[:2000],
+                "evidence": str(entry.get("evidence") or "")[:2000],
+            })
+        return result
 
     @staticmethod
     def _configured_repository_paths(project: dict) -> list[Path]:
@@ -1971,7 +2040,7 @@ class Worker:
                 level="error",
             )
 
-    def _simulate_development(self, request_id: str, work_item: dict) -> dict:
+    def _simulate_development(self, request_id: str, work_item: dict, acceptance: dict | None = None) -> dict:
         self.store.add_event(request_id, "devcore.thread", "演示模式：DevCore 研发线程已启动")
         self.store.add_event(request_id, "devcore.event", "演示模式：完成需求分析、代码修改与风险检查")
         return {
@@ -1980,6 +2049,13 @@ class Worker:
             "changed_files": ["src/demo/FeatureService.java", "config/application-demo.yml", "sql/upgrade.sql"],
             "acceptance_mapping": ["自动研发入口可用", "交付产物可追踪"],
             "acceptance_ledger": [
+                {
+                    "id": item["id"], "criterion": item["criterion"], "status": "completed",
+                    "repositories": ["demo"], "files": ["src/demo/FeatureService.java"],
+                    "tests": ["仅演示流程自检，未执行真实测试环境验证"], "evidence": ["simulation_mode"],
+                }
+                for item in (acceptance or {}).get("items", [])
+            ] or [
                 {
                     "id": "AC-1", "criterion": "自动研发入口可用", "status": "completed",
                     "repositories": ["demo"], "files": ["src/demo/FeatureService.java"],

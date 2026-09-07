@@ -152,6 +152,16 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
     history_context TEXT NOT NULL DEFAULT '[]',
     acceptance_ledger TEXT NOT NULL DEFAULT '[]',
     quality_gate_result TEXT NOT NULL DEFAULT '{}',
+    acceptance_owner_id INTEGER REFERENCES users(id),
+    root_request_id TEXT,
+    parent_request_id TEXT,
+    repair_round INTEGER NOT NULL DEFAULT 0,
+    failed_item_ids TEXT NOT NULL DEFAULT '[]',
+    protected_item_ids TEXT NOT NULL DEFAULT '[]',
+    repair_context TEXT NOT NULL DEFAULT '{}',
+    project_retrospective TEXT NOT NULL DEFAULT '{}',
+    lesson_usage TEXT NOT NULL DEFAULT '[]',
+    project_lesson_context TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -231,6 +241,63 @@ CREATE TABLE IF NOT EXISTS runners (
     last_seen_at TEXT NOT NULL,
     detail TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS acceptance_items (
+    request_id TEXT NOT NULL REFERENCES delivery_requests(id) ON DELETE CASCADE,
+    item_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    criterion TEXT NOT NULL,
+    requirement_revision INTEGER,
+    source TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(request_id,item_id)
+);
+CREATE TABLE IF NOT EXISTS acceptance_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id TEXT NOT NULL REFERENCES delivery_requests(id) ON DELETE CASCADE,
+    actor_id INTEGER NOT NULL REFERENCES users(id),
+    actor_name TEXT NOT NULL,
+    raw_feedback TEXT NOT NULL DEFAULT '',
+    tested_version TEXT NOT NULL,
+    environment TEXT NOT NULL DEFAULT '',
+    items TEXT NOT NULL,
+    requirement_revision INTEGER,
+    idempotency_key TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(request_id,idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS ix_acceptance_feedback_request ON acceptance_feedback(request_id,id);
+CREATE TABLE IF NOT EXISTS acceptance_repairs (
+    feedback_id INTEGER PRIMARY KEY REFERENCES acceptance_feedback(id),
+    request_id TEXT NOT NULL UNIQUE REFERENCES delivery_requests(id),
+    actor_id INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_experiences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id TEXT NOT NULL UNIQUE REFERENCES delivery_requests(id) ON DELETE CASCADE,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    work_item_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'candidate' CHECK(status IN ('candidate','verified','deprecated')),
+    scope_summary TEXT NOT NULL DEFAULT '',
+    implementation_summary TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL DEFAULT '{}',
+    content_hash TEXT NOT NULL DEFAULT '',
+    search_text TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_project_experiences_project ON project_experiences(project_id,status,updated_at);
+CREATE TABLE IF NOT EXISTS project_experience_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    experience_id INTEGER NOT NULL REFERENCES project_experiences(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    content TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    actor_id INTEGER REFERENCES users(id),
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -265,6 +332,9 @@ def init_db() -> None:
                     '["**/common/**","**/shared/**","**/production/**"]', "", "yangtao-pc", now, now,
                 ),
             )
+    # Import historic deliveries as candidate dossiers only, after the migration transaction.
+    from .services.project_learning import backfill_experiences
+    backfill_experiences()
 
 
 def _migrate_schema(conn: sqlite3.Connection) -> None:
@@ -330,6 +400,20 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN acceptance_ledger TEXT NOT NULL DEFAULT '[]'")
     if "quality_gate_result" not in request_columns:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN quality_gate_result TEXT NOT NULL DEFAULT '{}'")
+    learning_columns = {
+        "acceptance_owner_id": "INTEGER REFERENCES users(id)",
+        "root_request_id": "TEXT", "parent_request_id": "TEXT",
+        "repair_round": "INTEGER NOT NULL DEFAULT 0",
+        "failed_item_ids": "TEXT NOT NULL DEFAULT '[]'",
+        "protected_item_ids": "TEXT NOT NULL DEFAULT '[]'",
+        "repair_context": "TEXT NOT NULL DEFAULT '{}'",
+        "project_retrospective": "TEXT NOT NULL DEFAULT '{}'",
+        "lesson_usage": "TEXT NOT NULL DEFAULT '[]'",
+        "project_lesson_context": "TEXT NOT NULL DEFAULT '[]'",
+    }
+    for name, definition in learning_columns.items():
+        if name not in request_columns:
+            conn.execute(f"ALTER TABLE delivery_requests ADD COLUMN {name} {definition}")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS ix_delivery_requests_joint_group ON delivery_requests(joint_group_id, joint_project_index)"
     )
@@ -697,6 +781,8 @@ def update_request(request_id: str, **fields: Any) -> None:
     for json_field in (
         "policy_snapshot", "repository_states", "supplement_requests", "supplement_answers", "analysis_result",
         "history_context", "acceptance_ledger", "quality_gate_result",
+        "failed_item_ids", "protected_item_ids", "repair_context", "project_retrospective",
+        "lesson_usage", "project_lesson_context",
     ):
         if json_field in fields and not isinstance(fields[json_field], str):
             fields[json_field] = json.dumps(fields[json_field], ensure_ascii=False)
@@ -704,6 +790,9 @@ def update_request(request_id: str, **fields: Any) -> None:
     assignments = ",".join(f"{key}=?" for key in fields)
     with transaction() as conn:
         conn.execute(f"UPDATE delivery_requests SET {assignments} WHERE id=?", (*fields.values(), request_id))
+    if fields.get("status") == "delivered":
+        from .services.project_learning import sync_experience
+        sync_experience(request_id)
 
 
 def update_step(request_id: str, step_code: str, status: str, message: str = "") -> None:
@@ -803,6 +892,9 @@ def request_detail(request_id: str) -> dict[str, Any] | None:
     request["history_context"] = json_value(request.get("history_context"), [])
     request["acceptance_ledger"] = json_value(request.get("acceptance_ledger"), [])
     request["quality_gate_result"] = json_value(request.get("quality_gate_result"), {})
+    for key, fallback in (("failed_item_ids", []), ("protected_item_ids", []), ("repair_context", {}),
+                          ("project_retrospective", {}), ("lesson_usage", []), ("project_lesson_context", [])):
+        request[key] = json_value(request.get(key), fallback)
     request["notification_emails"] = json_value(request.get("notification_emails"), [request["requester_email"]])
     request["delivery_options"] = (
         None
