@@ -53,7 +53,7 @@ curl -fsS https://auto.yangtaoer.com.cn/healthz
 
 ## 3. 安装 Windows 本机执行器
 
-在需要运行 Codex、已有代码仓库并能访问 TFS 的电脑上安装 Python 3.11+ x64，然后以普通用户 PowerShell 执行：
+在需要运行 Codex、已有代码仓库并能访问 TFS 的电脑上安装 Python 3.11+ x64 与 Node.js 18+，然后以普通用户 PowerShell 执行：
 
 ```powershell
 Set-Location "C:\你的路径\全自助需求研发交付"
@@ -65,6 +65,7 @@ Set-Location "C:\你的路径\全自助需求研发交付"
 ```dotenv
 AUTODEV_CLOUD_URL=https://auto.yangtaoer.com.cn
 AUTODEV_RUNNER_ID=yangtao-pc
+CODEX_MODEL=gpt-6-astra
 ```
 
 然后：
@@ -74,6 +75,8 @@ AUTODEV_RUNNER_ID=yangtao-pc
 3. 仅四川自动审核需要把专用审核账号 PAT 写入 `tfs-reviewer-pat.txt`，并配置 `TFS_REVIEWER_ID` 与 `TFS_REVIEWER_NAME`。
 4. 确认当前 Windows 用户可以正常使用 Codex；默认复用本机已有登录态。
 5. 先运行 `.\local-runner\start.ps1`，云端左下角应在约 20 秒内显示 `yangtao-pc` 在线。
+
+执行器使用独立锁定的 CLI（`local-runner/codex-runtime/package.json`），不再使用 Python SDK 附带的旧版 CLI。已有 `.venv` 的电脑升级时，也必须在执行器空闲并停止后重新运行 `install.ps1` 同步依赖，再重启。可用 `CODEX_BIN` 指定其他已验证的原生 CLI 路径；模型保持 GPT-6 Astra，升级失败不会自动降级。`scripts/codex_smoke.py` 使用同一配置进行只读真实模型连通性检查。
 
 如启用 OSS 交付，在 `local-runner/.env.runner` 中配置 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ALIYUN_OSS_REGION`、`ALIYUN_OSS_ENDPOINT` 和 `ALIYUN_OSS_BUCKET`。默认对象前缀为 `autodev`，签名链接和产物保留期为 3 天，Runner 每 72 小时执行一次 OSS 与本机交付目录清理。
 

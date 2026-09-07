@@ -18,6 +18,7 @@ try {
         $Relative = [System.IO.Path]::GetRelativePath($ProjectRoot, $_.FullName).Replace('\', '/')
         $Relative -notmatch '^(\.git|\.venv|\.venv-runner|data|dist)/' -and
         $Relative -notmatch '(^|/)__pycache__/' -and
+        $Relative -notmatch '(^|/)node_modules/' -and
         $Relative -notmatch '\.pyc$' -and
         $Relative -ne '.env' -and
         $Relative -notmatch '(^|/)\.env\.runner$' -and

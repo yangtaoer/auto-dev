@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from dataclasses import dataclass
+from importlib.metadata import version
 from pathlib import Path
 from datetime import UTC, datetime
 from typing import Any, Callable
 
 from ..config import settings
 from .dm7_plugin import discover_dm7_plugin
+from .codex_runtime import resolve_codex_runtime
 from .process_env import sanitized_process_env
 from .tfs import TfsClient
 
@@ -442,7 +446,9 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                 "优先自主查明并解决问题；仅在关键事实无法获得且继续开发必然不可靠时进入待补充。"
             )
         )
+        runtime = resolve_codex_runtime()
         codex_config = CodexConfig(
+            codex_bin=runtime["path"],
             cwd=str(cwd),
             env=sanitized_process_env(),
             config_overrides=dm7.config_overrides,
@@ -463,7 +469,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                 on_event("devcore.thread_resumed", f"DevCore 已载入补充信息并继续原{'分析' if task_type == 'analysis' else '研发'}会话")
             else:
                 thread = codex.thread_start(service_name="tellhow-autodev", **thread_options)
-                on_event("devcore.thread", f"DevCore {'问题分析' if task_type == 'analysis' else '研发'}会话已启动")
+                on_event("devcore.thread", f"DevCore {'问题分析' if task_type == 'analysis' else '研发'}会话已启动：{thread.id}；模型 {settings.codex_model}；运行器 {runtime['version']}")
             on_event(
                 "dm7.capability_ready" if dm7.available else "dm7.capability_unavailable",
                 dm7.message,
@@ -475,31 +481,99 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                 run_input,
                 output_schema=ANALYSIS_RESULT_SCHEMA if task_type == "analysis" else RESULT_SCHEMA,
             )
-            final_text: str | None = None
-            for notification in handle.stream():
-                method = notification.method
-                if method in {"item/started", "item/completed", "turn/completed"}:
-                    on_event(
-                        "devcore.event",
-                        self._event_summary(method, notification.payload, task_type=task_type),
-                    )
-                if on_live_event:
-                    live_event = self._live_event(method, notification.payload)
-                    if live_event:
-                        on_live_event(live_event)
-                if method == "item/completed":
-                    payload = self._dump(notification.payload)
-                    item = payload.get("item", {})
-                    if item.get("type") in {"agentMessage", "agent_message"} and item.get("text"):
-                        final_text = item["text"]
-
-        if not final_text:
-            raise RuntimeError("DevCore 未返回结构化研发结果")
+            final_text = self._collect_output(handle.stream(), on_event, on_live_event, task_type=task_type)
         try:
             parsed = json.loads(final_text)
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"DevCore 结果不是有效 JSON: {final_text[:500]}") from exc
         return CodexRunResult(thread.id, parsed)
+
+    def _collect_output(self, notifications, on_event, on_live_event=None, *, task_type="development") -> str:
+        """A failed/interrupted turn must never be mistaken for a successful partial reply."""
+        final_text = None
+        last_error = None
+        status = None
+        try:
+            for notification in notifications:
+                method = notification.method
+                payload = self._dump(notification.payload)
+                if method == "error":
+                    last_error = self._failure_message(payload.get("error") or {})
+                    retrying = payload.get("willRetry", False)
+                    on_event("devcore.retrying" if retrying else "devcore.error", last_error)
+                if method in {"item/started", "item/completed", "turn/completed"}:
+                    on_event("devcore.event", self._event_summary(method, payload, task_type=task_type))
+                if on_live_event:
+                    live_event = self._live_event(method, payload)
+                    if live_event:
+                        on_live_event(live_event)
+                if method == "item/completed":
+                    item = payload.get("item") or {}
+                    if item.get("type") in {"agentMessage", "agent_message"} and item.get("text"):
+                        # Commentary/progress isn't the schema-constrained final response.
+                        if item.get("phase") != "commentary":
+                            final_text = item["text"]
+                if method == "turn/completed":
+                    turn = payload.get("turn") or {}
+                    status = turn.get("status")
+                    if turn.get("error"):
+                        last_error = self._failure_message(turn["error"])
+        except Exception as exc:
+            raise RuntimeError(last_error or self._failure_message({"message": str(exc)})) from None
+        if status != "completed":
+            if status == "interrupted":
+                raise RuntimeError("DevCore 执行被中断，尚未完成研发；请确认执行器状态后重试。")
+            raise RuntimeError(last_error or "DevCore 执行未正常完成，未收到成功结束事件；请检查执行器连接后重试。")
+        if not final_text:
+            raise RuntimeError("DevCore 已结束但未返回结构化研发结果；请检查模型输出后重试。")
+        return final_text
+
+    @staticmethod
+    def _failure_message(error: dict) -> str:
+        """Keep actionable upstream errors, never credentials or an entire response body."""
+        raw = str(error.get("message") or "上游未提供错误详情")
+        info = error.get("codexErrorInfo") or error.get("codex_error_info") or ""
+        http_status = error.get("httpStatusCode")
+        try:
+            upstream = json.loads(raw)
+            if isinstance(upstream, dict) and isinstance(upstream.get("error"), dict):
+                http_status = upstream.get("status")
+                raw = str(upstream["error"].get("message") or raw)
+        except (ValueError, TypeError):
+            pass
+        if isinstance(info, dict):
+            http_status = http_status or info.get("httpStatusCode")
+            for value in info.values():
+                if isinstance(value, dict):
+                    http_status = http_status or value.get("httpStatusCode")
+        signature = (raw + " " + json.dumps(info, ensure_ascii=False)).lower()
+        if "requires a newer version of codex" in signature:
+            reason = "Codex 运行器版本过旧，无法使用当前模型；请升级平台运行器后重试（不是额度不足）。"
+        elif any(word in signature for word in ("usagelimitexceeded", "usage_limit", "usage limit", "insufficient_quota")):
+            reason = "Codex 使用额度已达上限；请等待额度恢复，或由管理员处理额度后重试。"
+        elif "unauthorized" in signature or "authentication" in signature:
+            reason = "Codex 身份认证失败；请检查执行器登录状态后重试。"
+        elif "contextwindowexceeded" in signature:
+            reason = "Codex 上下文超出模型限制；请精简任务上下文后重试。"
+        elif any(word in signature for word in ("connection", "streamdisconnected", "timeout", "timed out")):
+            reason = "Codex 连接或响应流异常；请检查执行器网络后重试。"
+        else:
+            reason = "Codex 调用失败；请按上游错误详情处理后重试。"
+        # Known settings also include secrets loaded from files, not just env vars.
+        secrets = [str(value) for key, value in vars(settings).items()
+                   if value and re.search(r"password|token|secret|api_key|(?:^|_)pat$", key)]
+        secrets.extend(value for key, value in os.environ.items() if value and
+                       re.search(r"PASSWORD|TOKEN|SECRET|API_KEY|(?:^|_)PAT$", key, re.I))
+        for secret in sorted(set(secrets), key=len, reverse=True):
+            if len(secret) >= 4:
+                raw = raw.replace(secret, "[REDACTED]")
+        raw = re.sub(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", r"\1 [REDACTED]", raw)
+        raw = re.sub(r"\bsk-[A-Za-z0-9_-]+", "[REDACTED]", raw)
+        raw = re.sub(r'(?i)((?:api[_-]?key|password|token|secret|authorization)[\"\s]*[:=]\s*[\"\']?)[^\s,\"\'&}]+', r"\1[REDACTED]", raw)
+        raw = re.sub(r"https?://[^\s/@]+:[^\s/@]+@", "https://[REDACTED]@", raw)
+        code = info if isinstance(info, str) else ",".join(str(key) for key in info) if isinstance(info, dict) else ""
+        http_label = f" HTTP {int(http_status)}。" if str(http_status).isdigit() else ""
+        return f"{reason} 错误类型：{code or 'unknown'}。{http_label}上游详情：{' '.join(raw.split())[:1200]}"
 
     @staticmethod
     def _learning_context(acceptance: dict | None, lessons: list[dict] | None) -> str:
@@ -561,7 +635,8 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
         from openai_codex import Codex, CodexConfig
         from openai_codex.generated.v2_all import GetAccountRateLimitsResponse
 
-        codex_config = CodexConfig(env=sanitized_process_env())
+        runtime = resolve_codex_runtime()
+        codex_config = CodexConfig(codex_bin=runtime["path"], env=sanitized_process_env())
         with Codex(codex_config) as codex:
             if settings.codex_api_key:
                 codex.login_api_key(settings.codex_api_key)
@@ -603,6 +678,9 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
         reset_credits = limits.get("rateLimitResetCredits") or {}
         return {
             "available": True,
+            "model": settings.codex_model,
+            "runtime_version": runtime["version"],
+            "sdk_version": version("openai-codex"),
             "account_type": account.get("type") or "unknown",
             "plan_type": account.get("planType") or snapshot.get("planType") or "unknown",
             "primary": window(snapshot.get("primary")),

@@ -118,6 +118,19 @@ OSS 参数配置在本机 `local-runner/.env.runner`，包括 AccessKey、Region
 
 ## 断线与恢复
 
+平台研发与问题分析默认使用 **GPT-6 Astra（`gpt-6-astra`）**，不跟随桌面当前选中的模型，也不会自动降级。`CODEX_MODEL` 可显式配置；为空时仍使用 Astra。
+
+Python SDK 和实际 Codex CLI 分开管理：SDK 使用 `requirements-runner.txt`，独立 CLI 固定在 `local-runner/codex-runtime/package.json`（当前已验证 0.153.4）。升级 SDK 并不等于升级实际模型运行器。安装/更新执行器时，在没有活动任务的情况下运行 `local-runner/install.ps1`（需要 Node.js 18+），同步两类依赖后重启执行器；已有 `.venv` 也会同步。CLI 的 `node_modules` 不提交或打进云端部署包。
+
+默认优先使用平台独立 CLI，其次查找 PATH 中的原生 Codex；可设置 `CODEX_BIN` 指向新版原生 `codex.exe`。不使用 SDK 捆绑的旧 CLI，不通过更换模型绕过版本错误。任务事件及执行器心跳记录实际模型、CLI/SDK 版本；额度、认证、连接、版本错误会脱敏后展示在任务失败原因和邮件中。
+
+更新后可用执行器同一 Python 环境进行真实模型连接检查（不会修改业务仓库）：
+
+```powershell
+$env:AUTODEV_ENV_FILE = "local-runner/.env.runner"
+.\.venv\Scripts\python.exe scripts/codex_smoke.py
+```
+
 - 本机电脑关机或执行器退出时，新任务保留在云端队列，项目经理仍可正常访问控制台。
 - 本机重新上线后继续领取排队任务，并继续轮询等待合并的 PR。
 - 已上传云端的安装包、SQL、配置和截图不依赖本机在线。

@@ -1,5 +1,6 @@
 .venv/
 .venv-runner/
+local-runner/codex-runtime/node_modules/
 __pycache__/
 *.py[cod]
 .env

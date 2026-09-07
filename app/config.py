@@ -62,7 +62,7 @@ class Settings:
     ).resolve()
     runner_token: str = env_secret("AUTODEV_RUNNER_TOKEN")
     cloud_url: str = os.getenv("AUTODEV_CLOUD_URL", "").rstrip("/")
-    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "1.0-Alpha.34").strip() or "1.0-Alpha.34"
+    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "1.0-Alpha.35").strip() or "1.0-Alpha.35"
     runner_monitor_host: str = os.getenv("AUTODEV_RUNNER_MONITOR_HOST", "127.0.0.1").strip()
     runner_monitor_port: int = int(os.getenv("AUTODEV_RUNNER_MONITOR_PORT", "28766"))
     # Exclusive single-file limit; MB uses 1024**2 bytes (1 GB = 1024 MB here).
@@ -106,7 +106,7 @@ class Settings:
     smtp_from_name: str = os.getenv("SMTP_FROM_NAME", "AutoDev · 自主研发交付").strip()
     task_admin_email: str = os.getenv("AUTODEV_TASK_ADMIN_EMAIL", "yangtao2@tellhow.com").strip()
     smtp_starttls: bool = env_bool("SMTP_STARTTLS", True)
-    codex_model: str | None = os.getenv("CODEX_MODEL") or None
+    codex_model: str = os.getenv("CODEX_MODEL", "").strip() or "gpt-6-astra"
     codex_api_key: str = env_secret("CODEX_API_KEY")
 
     @property

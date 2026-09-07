@@ -46,8 +46,23 @@ if (-not (Test-Path -LiteralPath $Python)) {
 }
 if ($Python -eq $RunnerPython) {
     & $Python -m pip install --upgrade pip
-    & $Python -m pip install -r (Join-Path $ProjectRoot "requirements-runner.txt")
+    if ($LASTEXITCODE -ne 0) { throw "升级 pip 失败" }
 }
+# 复用 .venv 也必须同步锁定依赖，否则更新平台后仍会使用旧 Codex 运行器。
+& $Python -m pip install -r (Join-Path $ProjectRoot "requirements-runner.txt")
+if ($LASTEXITCODE -ne 0) { throw "同步本机执行器依赖失败" }
+
+if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+    throw "缺少 npm；请安装 Node.js 18+ 后重试（用于安装独立新版 Codex CLI）。"
+}
+& node -e "process.exit(Number(process.versions.node.split('.')[0]) >= 18 ? 0 : 1)"
+if ($LASTEXITCODE -ne 0) { throw "安装独立 Codex CLI 需要 Node.js 18+，请先升级 Node.js。" }
+Push-Location -LiteralPath (Join-Path $RunnerDir "codex-runtime")
+try {
+    & npm install --ignore-scripts --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { throw "安装平台 Codex CLI 失败" }
+}
+finally { Pop-Location }
 
 New-Item -ItemType Directory -Force -Path $SecretsDir | Out-Null
 if (-not (Test-Path -LiteralPath $EnvFile)) {
