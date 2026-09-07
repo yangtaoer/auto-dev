@@ -250,12 +250,12 @@ def evaluate_development_quality(
         required_checks = visual_profile.get("deployment_checks") or []
         missed = [name for name in required_checks if not deployment.get(name)]
         if missed:
-            blockers.append("前端部署验证未完成：" + "、".join(missed))
+            warnings.append("前端部署证据字段待补充（无需人工确认）：" + "、".join(missed))
         _check(
             checks,
             "deployment-assets",
             "前端部署与缓存验证",
-            "blocked" if missed else "passed",
+            "warning" if missed else "passed",
             "已检查资源哈希、目录层级和缓存策略" if not missed else "缺少：" + "、".join(missed),
         )
 

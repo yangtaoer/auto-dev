@@ -34,11 +34,11 @@ from .services.delivery import (
     repository_short_name,
     run_command,
 )
-from .services.tfs import TfsClient
+from .services.tfs import TfsClient, TfsConnectionError
 from .services.pipeline_release import TfsPipelineReleaseService
 from .services.process_env import git_authenticated_env, sanitized_process_env
 from .project_catalog import load_project_presets, resolve_projects_for_work_item
-from .services.development_risks import development_risks
+from .services.development_risks import development_risks, critical_risk
 from .services.quality_gates import (
     evaluate_analysis_quality,
     evaluate_development_quality,
@@ -179,7 +179,7 @@ class Worker:
         task_type = str(detail.get("task_type") or TaskType.DEVELOPMENT.value)
         analysis_task = task_type == TaskType.ANALYSIS.value
         try:
-            self.store.update_request(request_id, status=RunStatus.VALIDATING.value, started_at=utc_now(), progress=5)
+            self.store.update_request(request_id, status=RunStatus.VALIDATING.value, started_at=detail.get("started_at") or utc_now(), progress=5)
             self.store.update_step(request_id, "validate", "running", "正在读取并校验 TFS 需求")
             work_item = self._validate(detail, project)
             history_context = self.store.prior_requests(
@@ -193,6 +193,7 @@ class Worker:
                 requirement_summary=self._plain_text(work_item.get("description", ""))[:4000],
                 work_item_revision=work_item.get("revision"),
                 history_context=history_context,
+                error_message="",
                 progress=15,
             )
             acceptance_context = self.store.ensure_acceptance(
@@ -287,7 +288,9 @@ class Worker:
             else:
                 live_publisher = LiveCodexPublisher(request_id, self.store)
                 try:
-                    run = CodexRunner().run(
+                    run = self._run_with_recovery(
+                        request_id=request_id,
+                        repository_states=repository_states,
                         cwd=worktree,
                         work_item=work_item,
                         project=project,
@@ -300,6 +303,7 @@ class Worker:
                         supplement_requests=detail.get("supplement_requests") or [],
                         supplement_answers=detail.get("supplement_answers") or [],
                         task_type=task_type,
+                        model_config=self.store.model_config(request_id),
                     )
                 finally:
                     live_publisher.close()
@@ -464,6 +468,8 @@ class Worker:
             if warnings:
                 self.store.add_event(request_id, "review.advisory", "研发风险提示：" + "；".join(warnings), level="warning")
             if blockers:
+                if not any(critical_risk(value) for value in blockers):
+                    raise RuntimeError("自动修复后仍有真实研发缺项，已保留工作现场（不要求管理员审批证据）：" + "；".join(blockers))
                 risk_text = "；".join(blockers)
                 self.store.update_request(
                     request_id,
@@ -635,11 +641,64 @@ class Worker:
                     )
         except Cancelled:
             self._cancel(request_id)
+        except TfsConnectionError as exc:
+            # Only the read-only preflight may replay the whole workflow safely.
+            if self.store.get_status(request_id) == RunStatus.VALIDATING.value:
+                self.store.update_request(request_id, status=RunStatus.WAITING_RETRY.value, error_message=str(exc))
+                self.store.add_event(request_id, "tfs.connection_retry", "TFS 读取暂时中断；保留原会话和工作区，稍后自动重试", level="warning")
+                self._schedule_next_poll(request_id, backoff=True)
+            else:
+                self._fail(request_id, exc)
         except Exception as exc:
             self._fail(request_id, exc)
 
+    def _run_with_recovery(self, *, request_id: str, repository_states: list[dict], **kwargs):
+        """Let the same Codex thread repair ordinary gaps before escalating anything."""
+        for attempt in range(3):
+            self._check_cancelled(request_id)
+            run = CodexRunner().run(**kwargs)
+            self.store.update_request(request_id, codex_thread_id=run.thread_id)
+            if kwargs.get("task_type") == "analysis":
+                return run
+            for state in repository_states:
+                state["changed_files"] = changed_files(Path(state["worktree_path"]), state["base_commit"])
+            frozen = (kwargs.get("acceptance_context") or {}).get("items") or []
+            if frozen:
+                mapped = {str(item.get("id")): item for item in normalize_acceptance_ledger(run.result)}
+                run.result["acceptance_ledger"] = [
+                    {**mapped.get(str(item["id"]), {"status": "partial"}), "id": item["id"], "criterion": item["criterion"]}
+                    for item in frozen
+                ]
+            _, blockers = development_risks(run.result)
+            gate = evaluate_development_quality(kwargs["project"], repository_states, run.result)
+            blockers.extend(gate["blockers"])
+            if run.result.get("decision") == "needs_input":
+                blockers.extend(str(item.get("question") or "") + " " + str(item.get("reason") or "") for item in run.result.get("supplement_requests") or [])
+                if not blockers:
+                    blockers.append("请自主查明本次需求缺少的信息")
+            if not blockers or any(critical_risk(value) for value in blockers):
+                return run
+            if attempt == 2:
+                raise RuntimeError("已在原会话自动补齐两轮，仍无法完成：" + "；".join(blockers)[:2000])
+            self.store.add_event(request_id, "development.auto_recovery", f"正在自主补齐第 {attempt + 1}/2 轮，无需管理员确认：" + "；".join(blockers), level="warning")
+            kwargs["resume_thread_id"] = run.thread_id
+            kwargs["project"] = {**kwargs["project"], "development_instructions": str(kwargs["project"].get("development_instructions") or "") + "\n平台自动自检反馈（不是管理员补充）：请先按你的最佳建议修复以下缺项，继续当前工作区，不要索要普通技术确认，不得伪造通过：\n" + "\n".join(blockers)}
+        raise AssertionError("unreachable")
+
     def poll_merge(self, request_id: str) -> None:
         detail = self.store.detail(request_id)
+        if detail and detail["status"] == RunStatus.WAITING_RETRY.value:
+            self.run_request(request_id)
+            return
+        if detail and detail["status"] == RunStatus.WAITING_RELEASE.value:
+            try:
+                self._check_cancelled(request_id)
+                self._complete_delivery(request_id)
+            except Cancelled:
+                self._cancel(request_id)
+            except Exception as exc:
+                self._fail(request_id, exc)
+            return
         if not detail or detail["status"] != RunStatus.WAITING_MERGE.value:
             return
         project = detail["policy_snapshot"]
@@ -1716,6 +1775,8 @@ class Worker:
         project = detail["policy_snapshot"]
         options = self._delivery_options(detail)
         if detail["delivery_mode"] in REVIEW_DELIVERY_MODES and DELIVERY_OPTION_AUTO_RELEASE in options:
+            if not self._coordinated_release(request_id, detail, project):
+                return
             self.store.update_request(
                 request_id,
                 status=RunStatus.RELEASING.value,
@@ -1723,7 +1784,6 @@ class Worker:
                 progress=93,
             )
             self.store.update_step(request_id, "release", "running", "正在执行 TFS 自动发版并核验发布产物")
-            self._ensure_auto_release(request_id, detail, project)
             self.store.update_step(request_id, "release", "completed", "TFS 自动发版成功，发布产物链接已生成")
             detail = self.store.detail(request_id)
         elif detail["delivery_mode"] == DeliveryMode.SICHUAN_REVIEW_LOCAL_PACKAGE.value:
@@ -1843,13 +1903,46 @@ class Worker:
             metadata=plan,
         )
 
-    def _ensure_auto_release(self, request_id: str, detail: dict, project: dict) -> None:
+    def _coordinated_release(self, request_id: str, detail: dict, project: dict) -> bool:
+        if any(item.get("kind") == "release_artifact" for item in detail.get("artifacts") or []):
+            return True
+        decision = self.store.release_claim(request_id)
+        action = decision["action"]
+        if action == "stop":
+            return False
+        if action == "wait":
+            message = decision["message"]
+            self.store.update_request(request_id, status=RunStatus.WAITING_RELEASE.value, current_step="release", progress=92)
+            self.store.update_step(request_id, "release", "running", message)
+            self.store.add_event(request_id, "release.deferred", message)
+            self._schedule_next_poll(request_id)
+            return False
+        if action == "failed":
+            raise RuntimeError(decision["message"])
+        if action == "run":
+            self.store.update_request(request_id, status=RunStatus.RELEASING.value, current_step="release", progress=93)
+            self.store.update_step(request_id, "release", "running", "同项目研发已就绪，正在统一发版")
+            self.store.add_event(request_id, "release.batch_claimed", "已领取同项目唯一发版批次", metadata=decision)
+            try:
+                self._check_cancelled(request_id)
+                result = self._ensure_auto_release(request_id, detail, project)
+            except Exception as exc:
+                self.store.release_finish(request_id, decision["batch_id"], {"error": str(exc)[:2000]}, failed=True)
+                raise
+            self.store.release_finish(request_id, decision["batch_id"], result)
+        else:
+            result = decision["result"]
+            self.store.add_artifact(request_id, "release_artifact", f"合并发版 · {result.get('pipelineName')} · Build #{result.get('buildId')}", external_url=result["artifactsUrl"])
+            self.store.add_event(request_id, "release.shared", "已复用同项目统一发版产物，无需重复发版", metadata=decision)
+        return True
+
+    def _ensure_auto_release(self, request_id: str, detail: dict, project: dict) -> dict:
         existing = next(
             (item for item in detail.get("artifacts", []) if item.get("kind") == "release_artifact"),
             None,
         )
         if existing:
-            return
+            return {"artifactsUrl": existing["external_url"], "pipelineName": existing["name"]}
         if project.get("simulation_mode"):
             build_id = 1100000 + int(detail["work_item_id"]) % 100000
             artifacts_url = (
@@ -1911,6 +2004,7 @@ class Worker:
             ),
             metadata=result,
         )
+        return result
 
     def _ensure_license_application(self, request_id: str, detail: dict, project: dict) -> None:
         existing = next(

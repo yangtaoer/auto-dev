@@ -74,7 +74,7 @@ def main() -> None:
         except Exception as exc:
             logger.warning("Codex 套餐信息读取失败：%s", exc)
             with usage_lock:
-                codex_usage = {"available": False, "message": str(exc)[:300]}
+                codex_usage = {**codex_usage, "available": False, "message": str(exc)[:300]}
 
     def get_codex_usage() -> dict:
         with usage_lock:

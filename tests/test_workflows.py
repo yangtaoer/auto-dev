@@ -497,17 +497,17 @@ class WorkflowTests(unittest.TestCase):
             **detail,
             "status": "waiting_approval",
             "completed_at": None,
-            "error_message": "阻塞风险：缺少 APP 客户端仓库 <client>",
+            "error_message": "阻塞风险：重大安全隐患：APP 客户端仓库 <client> 存在越权",
             "artifacts": [],
         }
         blocked_mail = mailer.delivery_html(blocked_detail, action_required=True)
         self.assertIn("AutoDev · 待确认", mailer.delivery_subject(blocked_detail, action_required=True))
         self.assertIn("等待风险确认", blocked_mail)
-        self.assertIn("缺少 APP 客户端仓库 &lt;client&gt;", blocked_mail)
+        self.assertIn("客户端仓库 &lt;client&gt; 存在越权", blocked_mail)
         self.assertIn("为什么阻塞", blocked_mail)
         self.assertIn("需要你判断", blocked_mail)
         self.assertIn("缺失仓库是否属于本次需求范围", blocked_mail)
-        self.assertIn("登录 AutoDev 判断并继续", blocked_mail)
+        self.assertIn("打开 AutoDev 继续执行", blocked_mail)
         self.assertNotIn("无需 PR", blocked_mail)
         self.assertNotIn("等待代码合并", blocked_mail)
         self.assertNotIn("请逐个联系有权限的同事审核并合并", blocked_mail)
@@ -520,7 +520,8 @@ class WorkflowTests(unittest.TestCase):
             action_required=True,
         )
         self.assertIn("静态资源清单校验（asset_manifest_checked）", deployment_mail)
-        self.assertIn("是否足以证明版本可发布", deployment_mail)
+        self.assertNotIn("是否足以证明版本可发布", deployment_mail)
+        self.assertNotIn("需要你判断", deployment_mail)
         self.assertIn("AutoDev · DECISION SIGNAL", deployment_mail)
 
         failed_detail = {**detail, "status": "failed", "error_message": "Filename too long"}
@@ -1875,7 +1876,7 @@ else:
 
         blocked_detail = self.client.get(f"/api/requests/{request_id}").json()["request"]
         self.assertEqual(blocked_detail["blocker_summary"]["reason"], "缺少真实页面截图")
-        self.assertIn("不属于任何项目的交付硬门禁", blocked_detail["blocker_summary"]["decision_required"])
+        self.assertEqual(blocked_detail["blocker_summary"]["decision_required"], "")
 
         response = self.client.post(
             f"/api/requests/{request_id}/continue",
@@ -2105,7 +2106,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.35"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.36"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -2154,7 +2155,7 @@ else:
         self.assertIn("renderLedgerCalendar", script)
         self.assertIn("renderContinuationPanel", script)
         self.assertIn("renderBlockerSummary", script)
-        self.assertIn("为什么阻塞", script)
+        self.assertIn("当前情况", script)
         self.assertIn("需要你判断", script)
         self.assertIn("/continue", script)
         self.assertIn("继续执行并保留现场", script)
@@ -2398,15 +2399,15 @@ else:
         self.assertIn("<span>自主项目</span>", admin_page.text)
         self.client.post("/api/auth/logout")
         login_page = self.client.get("/login")
-        self.assertIn("editorial-ui.css?v=1.0-Alpha.35-login", login_page.text)
-        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.35", login_page.text)
+        self.assertIn("editorial-ui.css?v=1.0-Alpha.36-login", login_page.text)
+        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.36", login_page.text)
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("<span>自主项目</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.35"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.36"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
 
@@ -3363,13 +3364,13 @@ else:
     def test_risk_levels_preserve_legacy_caution_and_explicit_blockers(self) -> None:
         advisory = {"decision": "completed", "risks": ["无指定测试票，已用历史样例核验"], "blocking_risks": []}
         self.assertEqual(development_risks(advisory, legacy_review=True)[1], [])
-        self.assertTrue(development_risks({"risks": ["未分级旧风险"]}, legacy_review=True)[1])
+        self.assertEqual(development_risks({"risks": ["未分级旧风险"]}, legacy_review=True)[1], [])
         self.assertEqual(development_risks({"risks": [], "blocking_risks": ["客户端仓库缺失"]})[1], ["客户端仓库缺失"])
         with self.assertRaisesRegex(RuntimeError, "格式无效"):
             development_risks({"blocking_risks": "bad"})
 
     def test_advisory_risk_continues_but_blocker_does_not_submit(self) -> None:
-        for number, blockers in enumerate(([], ["缺少客户端接入，验收不完整"])):
+        for number, blockers in enumerate(([], ["核心业务逻辑冲突，继续会造成越权访问"])):
             project_id = self.create_project(f"test-risk-level-{number}", "sichuan_auto_review")
             created = self.client.post("/api/requests", json={"project_id": project_id, "work_item_id": 930201 + number})
             request_id = created.json()["id"]
@@ -3396,8 +3397,8 @@ else:
         snapshot = {**detail["policy_snapshot"], "simulation_mode": False}
         update_request(request_id, policy_snapshot=json.dumps(snapshot))
         state = {"name": "demo", "base_commit": "baseline", "branch": "feature/test", "worktree_path": TEST_DATA.name}
-        result = {"decision": "completed", "summary": "缺少客户端，未修改代码", "risks": [],
-                  "blocking_risks": ["缺少客户端仓库"], "changed_files": []}
+        result = {"decision": "completed", "summary": "发现重大安全隐患，未修改代码", "risks": [],
+                  "blocking_risks": ["重大安全隐患：缺少客户端仓库，无法消除越权"], "changed_files": []}
         with patch.object(worker, "_validate", return_value={"id": 930203, "title": "APP 测试"}), \
              patch.object(worker, "_validate_delivery_plan"), \
              patch.object(worker, "_prepare_worktrees", return_value=(Path(TEST_DATA.name), [state], "feature/test")), \
@@ -3614,7 +3615,7 @@ else:
                 }
             },
         )
-        self.assertIn("delivery_manifest", "；".join(blockers))
+        self.assertEqual(blockers, [])
 
 
 if __name__ == "__main__":

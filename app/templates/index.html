@@ -23,7 +23,8 @@
         {% if user.role == 'admin' %}<button class="nav-item" data-view="projects"><span class="nav-index">03</span><span>自主项目</span></button>
         <button class="nav-item" data-view="analytics"><span class="nav-index">04</span><span>统计看板</span></button>
         <button class="nav-item" data-view="users"><span class="nav-index">05</span><span>账号管理</span></button>
-        <button class="nav-item" data-view="experiences"><span class="nav-index">06</span><span>项目经验</span></button>{% endif %}
+        <button class="nav-item" data-view="experiences"><span class="nav-index">06</span><span>项目经验</span></button>
+        <button class="nav-item" data-view="models"><span class="nav-index">07</span><span>研发设置</span></button>{% endif %}
       </nav>
       <div class="sidebar-character-stage">
         <div id="sidebar-orb-character" class="autodev-orb" role="button" tabindex="0" aria-label="AutoDev 动态角色">
@@ -113,6 +114,21 @@
           <article class="analytics-card"><header><p class="eyebrow">提交人员 / REQUESTERS</p><h3>任务提交分布</h3></header><div class="analytics-bars" id="analytics-requesters"></div></article>
           <article class="analytics-card project-ranking"><header><p class="eyebrow">项目运行 / PROJECTS</p><h3>项目完成情况</h3></header><div id="analytics-projects"></div></article>
         </div>
+      </section>
+      <section class="view" id="view-models">
+        <div class="section-heading"><div><p class="eyebrow">执行标准 / ENGINE DEFAULTS</p><h2>为下一次研发，选择合适的引擎</h2></div></div>
+        <form id="model-settings-form" class="model-settings-panel">
+          <div class="model-settings-intro"><p class="eyebrow">GLOBAL / 01</p><h3>全局默认配置</h3><p>统一用于自主研发与问题分析。新开工任务使用最新设置；正在运行及原会话续作保留开工配置。</p><p id="model-settings-current" aria-live="polite">正在读取执行器支持的模型…</p></div>
+          <div class="model-settings-fields">
+            <label id="model-choice-label">研发模型</label>
+            <div id="model-choice" class="ledger-select"><input type="hidden" name="model"><button type="button" aria-labelledby="model-choice-label model-choice-name" aria-haspopup="listbox" aria-expanded="false"><b id="model-choice-name">请选择模型</b><i></i></button><div class="ledger-select-menu" role="listbox" aria-labelledby="model-choice-label" hidden></div></div>
+            <fieldset id="model-efforts"><legend>默认思考深度</legend><div class="effort-options"></div></fieldset>
+            <p class="muted">模型与深度来自本机执行器实时支持列表。较深的思考通常耗时更长。</p>
+            <div class="model-settings-actions"><button class="btn btn-primary" type="submit" disabled>保存全局设置 ↗</button><button class="text-button" type="button" id="reload-models">刷新可用模型</button></div>
+            <p id="model-settings-message" role="status"></p>
+          </div>
+        </form>
+        <div class="policy-note"><b>自主决策边界</b><span>普通技术问题由 DevCore 自主处理；重要逻辑冲突与重大安全隐患才进入人工确认。同项目待发版需求自动合并发版。</span></div>
       </section>
       <section class="view" id="view-users">
         <div class="section-heading"><div><p class="eyebrow">账号管理 / ACCESS REGISTRY</p><h2>项目经理账号</h2></div><button class="btn btn-secondary" id="new-user">＋ 新建账号</button></div>
@@ -228,5 +244,6 @@
   </script>
   <script src="/static/app.js?v={{ app_version }}"></script>
   <script src="/static/learning-ui.js?v={{ app_version }}"></script>
+  {% if user.role == 'admin' %}<link rel="stylesheet" href="/static/model-settings.css?v={{ app_version }}"><script src="/static/model-settings.js?v={{ app_version }}"></script>{% endif %}
 </body>
 </html>

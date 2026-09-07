@@ -5,6 +5,8 @@ import html
 import mimetypes
 import re
 import subprocess
+import logging
+import time
 from datetime import UTC, datetime
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +40,22 @@ class TfsError(RuntimeError):
     pass
 
 
+class TfsConnectionError(TfsError):
+    """A read failed after bounded retries; no remote mutation was attempted."""
+
+
+def recoverable_preflight_failure(detail: dict) -> bool:
+    """Only resume a failed read before any new submission, never uncertain writes."""
+    message = str(detail.get("error_message") or "").lower()
+    return (
+        detail.get("status") == "failed" and detail.get("current_step") == "validate"
+        and not detail.get("pr_id")
+        and not any(state.get("pr_id") for state in detail.get("repository_states") or [])
+        and any(marker in message for marker in ("winerror 10053", "winerror 10054", "tfs 读取连接中断", "tfs 读取暂时不可用"))
+        and bool(detail.get("codex_thread_id") and detail.get("repository_states"))
+    )
+
+
 class TfsClient:
     REQUIREMENT_IMAGE_LIMIT = 30
     REQUIREMENT_IMAGE_BYTES = 20 * 1024 * 1024
@@ -53,8 +71,27 @@ class TfsClient:
         return httpx.Client(auth=httpx.BasicAuth("", token), timeout=30, trust_env=False)
 
     def _request(self, method: str, url: str, *, pat: str | None = None, **kwargs):
-        with self._client(pat) as client:
-            response = client.request(method, url, **kwargs)
+        # A fresh client also discards aborted Windows/antivirus keep-alive sockets.
+        # Never replay writes: a lost response does not mean TFS rejected a build/PR.
+        attempts = 5 if method.upper() in {"GET", "HEAD"} else 1
+        for attempt in range(attempts):
+            try:
+                with self._client(pat) as client:
+                    response = client.request(method, url, **kwargs)
+                if response.status_code not in {408, 429, 502, 503, 504}:
+                    break
+                if attempt == attempts - 1:
+                    if attempts > 1:
+                        raise TfsConnectionError(f"TFS 读取暂时不可用（HTTP {response.status_code}），已重试 {attempts} 次；工作现场已保留")
+                    break
+            except httpx.TransportError as exc:
+                if attempt == attempts - 1:
+                    if attempts > 1:
+                        raise TfsConnectionError(f"TFS 读取连接中断，已重试 {attempts} 次；工作现场已保留（{type(exc).__name__}）") from exc
+                    raise TfsError("TFS 写入连接中断，结果未知；请核对远端结果，系统未重复提交") from exc
+            delay = min(2 ** attempt, 8)
+            logging.getLogger(__name__).warning("TFS 只读连接暂时异常，%s 秒后重试 (%s/%s)", delay, attempt + 2, attempts)
+            time.sleep(delay)
         if response.is_error:
             detail = response.text[:1000]
             raise TfsError(f"TFS {method} {url} 返回 {response.status_code}: {detail}")

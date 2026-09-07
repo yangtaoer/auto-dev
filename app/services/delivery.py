@@ -741,11 +741,13 @@ class Mailer:
             blocker = summarize_blocker(detail)
             reason = safe_text(blocker["reason"], limit=3000)
             decision_required = safe_text(blocker["decision_required"], limit=3000)
+            decision_row = (f'<tr><td style="padding:12px 14px">需要你判断</td><td style="padding:12px 14px;line-height:1.7">{decision_required}</td></tr>' if blocker["decision_required"] else '')
+            blocked_title = "任务已暂停，等待你的判断" if blocker["decision_required"] else "普通技术问题无需人工审批"
             action = f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;border:1px solid #171813;background:#fffdf7">
-              <tr><td colspan="2" style="padding:12px 14px;background:#171813;color:#fffdf7"><span style="display:block;color:#ff7952;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.16em">BLOCKED / DECISION REQUIRED</span><b style="display:block;margin-top:4px;font-size:15px">任务已暂停，等待你的判断</b></td></tr>
+              <tr><td colspan="2" style="padding:12px 14px;background:#171813;color:#fffdf7"><span style="display:block;color:#ff7952;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.16em">RECOVERY / RISK SUMMARY</span><b style="display:block;margin-top:4px;font-size:15px">{blocked_title}</b></td></tr>
               <tr><td width="118" valign="top" style="padding:12px 10px 12px 14px;border-bottom:1px solid #d6cbb8;color:#a3381f;font-size:11px;font-weight:700">为什么阻塞</td><td valign="top" style="padding:12px 14px 12px 10px;border-bottom:1px solid #d6cbb8;color:#4f4a42;font-size:12px;line-height:1.7">{reason}</td></tr>
-              <tr><td width="118" valign="top" style="padding:12px 10px 12px 14px;color:#8c5d16;font-size:11px;font-weight:700">需要你判断</td><td valign="top" style="padding:12px 14px 12px 10px;color:#171813;font-size:12px;line-height:1.7">{decision_required}</td></tr>
-              <tr><td colspan="2" style="padding:0 14px 14px"><a href="{console_url}" style="display:inline-block;padding:8px 12px;background:#e9572b;color:#171813;text-decoration:none;font-size:12px;font-weight:700">登录 AutoDev 判断并继续 →</a></td></tr>
+              {decision_row}
+              <tr><td colspan="2" style="padding:0 14px 14px"><a href="{console_url}" style="display:inline-block;padding:8px 12px;background:#e9572b;color:#171813;text-decoration:none;font-size:12px;font-weight:700">打开 AutoDev 继续执行 →</a></td></tr>
             </table>"""
         elif action_required:
             review_items = [

@@ -301,6 +301,29 @@ CREATE TABLE IF NOT EXISTS project_experience_revisions (
 """
 
 
+SCHEMA += """
+CREATE TABLE IF NOT EXISTS platform_settings (
+    key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS run_model_configs (
+    request_id TEXT PRIMARY KEY REFERENCES delivery_requests(id) ON DELETE CASCADE,
+    value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS release_batches (
+    id TEXT PRIMARY KEY, scope TEXT NOT NULL, project_id INTEGER NOT NULL,
+    owner_id TEXT NOT NULL REFERENCES delivery_requests(id),
+    status TEXT NOT NULL, claim_token TEXT NOT NULL, result TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_running_release_project
+ON release_batches(project_id) WHERE status='running';
+CREATE TABLE IF NOT EXISTS release_members (
+    request_id TEXT PRIMARY KEY REFERENCES delivery_requests(id) ON DELETE CASCADE,
+    scope TEXT NOT NULL, batch_id TEXT REFERENCES release_batches(id), created_at TEXT NOT NULL
+);
+"""
+
+
 def init_db() -> None:
     if settings.environment == "production" and settings.bootstrap_admin_password in {"", "admin123"}:
         raise RuntimeError("生产环境必须通过 BOOTSTRAP_ADMIN_PASSWORD_FILE 配置强管理员密码")

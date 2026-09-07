@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import socket
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,7 @@ from .db import (
     update_request, update_step, utc_now,
 )
 from .services.oss_storage import OssArtifactStorage, cleanup_local_deliveries
-from .services import project_learning
+from .services import project_learning, model_settings, release_coordination
 
 
 logger = logging.getLogger("autodev.remote_store")
@@ -23,6 +24,10 @@ logger = logging.getLogger("autodev.remote_store")
 
 class LocalStore:
     remote = False
+
+    model_config = staticmethod(model_settings.for_request)
+    release_claim = staticmethod(release_coordination.claim)
+    release_finish = staticmethod(release_coordination.finish)
 
     def next_queued(self) -> str | None:
         with transaction() as conn:
@@ -45,14 +50,14 @@ class LocalStore:
         with transaction() as conn:
             item = conn.execute(
                 """SELECT id FROM delivery_requests
-                   WHERE status='waiting_merge' AND (next_poll_at IS NULL OR next_poll_at<=?)
+                   WHERE status IN ('waiting_merge','waiting_release','waiting_retry') AND (next_poll_at IS NULL OR next_poll_at<=?)
                    ORDER BY updated_at LIMIT 1""",
                 (now,),
             ).fetchone()
             if not item:
                 return None
             conn.execute(
-                "UPDATE delivery_requests SET next_poll_at=?,updated_at=? WHERE id=? AND status='waiting_merge'",
+                "UPDATE delivery_requests SET next_poll_at=?,updated_at=? WHERE id=? AND status IN ('waiting_merge','waiting_release','waiting_retry')",
                 (lease_until, now, item["id"]),
             )
             return item["id"]
@@ -361,6 +366,15 @@ class RemoteStore:
     def get_status(self, request_id: str) -> str | None:
         detail = self.detail(request_id)
         return detail["status"] if detail else None
+
+    def model_config(self, request_id: str) -> dict:
+        return self._json(self._request("POST", f"/api/runner/requests/{request_id}/model-config"))
+
+    def release_claim(self, request_id: str) -> dict:
+        return self._json(self._request("POST", f"/api/runner/requests/{request_id}/release-claim", json={"token": str(uuid.uuid4())}))
+
+    def release_finish(self, request_id: str, batch_id: str, result: dict, *, failed: bool = False) -> dict:
+        return self._json(self._request("POST", f"/api/runner/requests/{request_id}/release-finish", json={"batch_id": batch_id, "result": result, "failed": failed}))
 
     def notify(self, request_id: str, *, action_required: bool, terminal: bool = False) -> None:
         self._json(

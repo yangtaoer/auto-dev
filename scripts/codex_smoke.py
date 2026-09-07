@@ -39,6 +39,8 @@ with Codex(CodexConfig(codex_bin=runtime["path"], env=sanitized_process_env())) 
     )
     handle = thread.turn(
         '仅验证模型连接和结构化输出，不调用工具、不读取或修改文件。返回 ok=true、project="AutoDev"。',
+        model=settings.codex_model,
+        effort="high",
         output_schema=schema,
     )
     text = CodexRunner()._collect_output(handle.stream(), lambda kind, message: print(kind, message, flush=True))
@@ -46,4 +48,4 @@ with Codex(CodexConfig(codex_bin=runtime["path"], env=sanitized_process_env())) 
     if payload.get("ok") is not True:
         raise SystemExit("Codex SDK smoke test failed")
     print(json.dumps({"thread_id": thread.id, "model": settings.codex_model,
-                      "runtime": runtime["version"], **payload}, ensure_ascii=False))
+                      "effort": "high", "runtime": runtime["version"], **payload}, ensure_ascii=False))

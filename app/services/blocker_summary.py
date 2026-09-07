@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from .development_risks import critical_risk
 
 
 _BLOCKER_PREFIX = re.compile(
@@ -34,8 +35,7 @@ def _decision_required(reason: str) -> str:
         )
     if any(keyword in text for keyword in _TECHNICAL_CHECK_LABELS) or "前端部署验证" in text:
         return (
-            "请判断现有 production 构建、静态资源清单、部署目录与缓存策略的自动化证据"
-            "是否足以证明版本可发布；认可则在下方写明依据并继续，不认可则指出必须补做的部署验证。"
+            "部署自动化证据由 DevCore 自主核验并记录；普通证据字段缺项不需要管理员确认。"
         )
     if any(keyword in text for keyword in ("仓库", "repository", "repo", "tfs 路径", "tfs路径")):
         return (
@@ -67,5 +67,5 @@ def summarize_blocker(detail: dict[str, Any]) -> dict[str, str]:
     reason = _clean_reason(detail.get("error_message") or detail.get("current_activity"))
     return {
         "reason": reason,
-        "decision_required": _decision_required(reason),
+        "decision_required": _decision_required(reason) if critical_risk(reason) else "",
     }

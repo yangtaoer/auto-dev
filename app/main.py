@@ -61,8 +61,8 @@ from .live_stream import live_codex_streams
 from .security import hash_password, verify_password
 from .services.delivery import ArtifactService, Mailer
 from .services.blocker_summary import summarize_blocker
-from .services.tfs import TfsClient
-from .services import project_learning
+from .services.tfs import TfsClient, recoverable_preflight_failure
+from .services import project_learning, model_settings, release_coordination
 
 
 @asynccontextmanager
@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.35",
+    version="1.0-Alpha.36",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -329,6 +329,54 @@ def runner_record_online(runner: dict | None, *, now: datetime | None = None) ->
         return False
 
 
+class ModelSettingsInput(BaseModel):
+    model: str = Field(min_length=1, max_length=120)
+    effort: str = Field(min_length=1, max_length=20)
+
+
+@app.get("/api/admin/model-settings")
+def get_model_settings(user: Annotated[dict, Depends(admin_user)]) -> dict:
+    return {"settings": model_settings.current(), "models": model_settings.catalog()}
+
+
+@app.put("/api/admin/model-settings")
+def set_model_settings(payload: ModelSettingsInput, user: Annotated[dict, Depends(admin_user)]) -> dict:
+    try:
+        return {"settings": model_settings.save(payload.model, payload.effort, user["id"])}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/runner/requests/{request_id}/model-config", dependencies=[Depends(runner_auth)])
+def request_model_config(request_id: str) -> dict:
+    if not row("SELECT id FROM delivery_requests WHERE id=?", (request_id,)):
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return model_settings.for_request(request_id)
+
+
+class ReleaseClaimInput(BaseModel):
+    token: str = Field(min_length=1, max_length=80)
+
+
+class ReleaseFinishInput(BaseModel):
+    batch_id: str
+    result: dict
+    failed: bool = False
+
+
+@app.post("/api/runner/requests/{request_id}/release-claim", dependencies=[Depends(runner_auth)])
+def claim_release(request_id: str, payload: ReleaseClaimInput) -> dict:
+    return release_coordination.claim(request_id, payload.token)
+
+
+@app.post("/api/runner/requests/{request_id}/release-finish", dependencies=[Depends(runner_auth)])
+def finish_release(request_id: str, payload: ReleaseFinishInput) -> dict:
+    try:
+        return release_coordination.finish(request_id, payload.batch_id, payload.result, failed=payload.failed)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 def runner_is_online(runner_id: str) -> bool:
     return runner_record_online(row("SELECT * FROM runners WHERE runner_id=?", (runner_id,)))
 
@@ -366,6 +414,7 @@ def public_engine_text(value: Any) -> Any:
 
 def public_request_payload(detail: dict[str, Any]) -> dict[str, Any]:
     result = dict(detail)
+    result["can_continue_in_place"] = recoverable_preflight_failure(detail)
     result.pop("codex_thread_id", None)
     for key in ("title", "requirement_summary", "result_summary", "error_message"):
         result[key] = public_engine_text(result.get(key))
@@ -1882,8 +1931,8 @@ def continue_waiting_approval_request(
 ) -> dict:
     """Resume the same workspace and DevCore session after an administrator reviews a blocker."""
     detail = can_access_request(user, request_id)
-    if detail["status"] != RunStatus.WAITING_APPROVAL.value:
-        raise HTTPException(status_code=409, detail="只有等待人工确认的任务可以继续执行")
+    if detail["status"] != RunStatus.WAITING_APPROVAL.value and not recoverable_preflight_failure(detail):
+        raise HTTPException(status_code=409, detail="只有待确认任务或提交前读取连接失败的任务可以在原现场继续")
     if not detail.get("codex_thread_id") or not detail.get("repository_states"):
         raise HTTPException(status_code=409, detail="当前任务没有可恢复的 DevCore 会话或隔离工作区")
 
@@ -2178,13 +2227,13 @@ def runner_pollable(runner_id: str) -> dict:
     lease_until = (datetime.now(UTC) + timedelta(seconds=max(60, settings.poll_seconds * 3))).isoformat()
     with transaction() as conn:
         item = conn.execute(
-            """SELECT id FROM delivery_requests WHERE runner_id=? AND status='waiting_merge'
+            """SELECT id FROM delivery_requests WHERE runner_id=? AND status IN ('waiting_merge','waiting_release','waiting_retry')
                AND (next_poll_at IS NULL OR next_poll_at<=?) ORDER BY updated_at LIMIT 1""",
             (runner_id, now),
         ).fetchone()
         if item:
             conn.execute(
-                "UPDATE delivery_requests SET next_poll_at=?,updated_at=? WHERE id=? AND status='waiting_merge'",
+                "UPDATE delivery_requests SET next_poll_at=?,updated_at=? WHERE id=? AND status IN ('waiting_merge','waiting_release','waiting_retry')",
                 (lease_until, now, item["id"]),
             )
     return {"request": request_detail(item["id"]) if item else None}

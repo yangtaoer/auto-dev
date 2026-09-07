@@ -274,6 +274,7 @@ class CodexRunner:
         supplement_requests: list[dict[str, Any]] | None = None,
         supplement_answers: list[dict[str, Any]] | None = None,
         task_type: str = "development",
+        model_config: dict[str, str] | None = None,
     ) -> CodexRunResult:
         from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox, SkillInput, TextInput
 
@@ -424,7 +425,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
 12. 不要把一般性风险、可通过代码默认值处理的细节或可由仓库/数据库工具查明的信息升级为阻塞项。先检索代码、文档和数据库，再作判断。
 13. 只有缺少的信息会直接决定错误业务口径、越权或不可逆数据设计，且无法从代码、TFS、配置和 DM7 本机开发库查明时，才返回 decision=needs_input。此时不要提交半成品，supplement_requests 必须逐项给出明确问题、原因和建议答案。
 14. 可以可靠实现时必须返回 decision=completed 并完成代码、自检及必要 SQL/配置修改；普通提醒（如缺少截图中指定样例、已覆盖的测试限制）写入 risks，不得因此跳过研发。
-15. 风险必须分级：需要用户补充明确业务信息时返回 needs_input 与 supplement_requests；需要管理员授权的高风险改动或无法保证完整交付的技术阻塞写入 blocking_risks（无则 []）。缺少必要客户端/服务端仓库、只增加接口却没有页面接入、验收关键项未实现不能宣称 completed 且无阻塞，必须说明缺失范围。不得用普通 risks 掩盖未实现功能。
+15. 只有无法自主消解的重要代码/核心业务逻辑冲突或重大安全隐患才请求人工确认（needs_input 或 blocking_risks）。普通技术选型、证据格式缺项、部署清单/目录/缓存检查、浏览器和截图不可用，应按你的最佳建议自主处理并记录 risks，不得让管理员判断证据是否足够。真实功能缺失、构建/测试失败必须先自主修复，不能伪造通过或用 risks 掩盖未完成项；仍无法完成时如实写明 blocking_risks，外层会继续自动修复。
 16. 开始修改前先检查历史任务、最新目标分支、相关 PR 与提交。若需求已完整进入最新目标分支，返回 decision=already_satisfied，保持工作区零改动，并在 existing_implementation 中列出提交、PR和代码证据；不得重复开发。
 17. 使用平台在开工前冻结的验收项 ID 和原始标准写入 acceptance_ledger，不得重新编号、删项或改变验收口径；没有冻结清单时才按 AC-1、AC-2……编号。每项必须映射仓库、文件、测试和证据。changed_files 中的每个实际变更都必须归属至少一个验收项。自检结论不等于用户验收；没有执行的检查不得写成通过。
 18. 涉及统计、积分、状态、数据关联或保存查询链时，必须核验业务数据不变量，包括数据来源时点、计算公式、排序与显示字段、导出与页面列、提交字段与持久化/查询关联键的一致性，并写入 business_invariants。
@@ -447,6 +448,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
             )
         )
         runtime = resolve_codex_runtime()
+        execution = model_config or {"model": settings.codex_model, "effort": "high"}
         codex_config = CodexConfig(
             codex_bin=runtime["path"],
             cwd=str(cwd),
@@ -459,7 +461,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                 codex.login_api_key(settings.codex_api_key)
             thread_options = {
                 "cwd": str(cwd),
-                "model": settings.codex_model,
+                "model": execution["model"],
                 "sandbox": Sandbox.read_only if task_type == "analysis" else Sandbox.full_access,
                 "approval_mode": ApprovalMode.deny_all,
                 "developer_instructions": developer_instructions,
@@ -469,7 +471,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                 on_event("devcore.thread_resumed", f"DevCore 已载入补充信息并继续原{'分析' if task_type == 'analysis' else '研发'}会话")
             else:
                 thread = codex.thread_start(service_name="tellhow-autodev", **thread_options)
-                on_event("devcore.thread", f"DevCore {'问题分析' if task_type == 'analysis' else '研发'}会话已启动：{thread.id}；模型 {settings.codex_model}；运行器 {runtime['version']}")
+                on_event("devcore.thread", f"DevCore {'问题分析' if task_type == 'analysis' else '研发'}会话已启动：{thread.id}；模型 {execution['model']}；思考深度 {execution['effort']}；运行器 {runtime['version']}")
             on_event(
                 "dm7.capability_ready" if dm7.available else "dm7.capability_unavailable",
                 dm7.message,
@@ -479,6 +481,8 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                 run_input.insert(0, SkillInput(name="dm7-database:dm7-database", path=str(dm7.skill_path)))
             handle = thread.turn(
                 run_input,
+                model=execution["model"],
+                effort=execution["effort"],
                 output_schema=ANALYSIS_RESULT_SCHEMA if task_type == "analysis" else RESULT_SCHEMA,
             )
             final_text = self._collect_output(handle.stream(), on_event, on_live_event, task_type=task_type)
@@ -633,7 +637,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
     def read_account_usage(cls) -> dict[str, Any]:
         """Read the local Codex account meter for the cloud admin dashboard."""
         from openai_codex import Codex, CodexConfig
-        from openai_codex.generated.v2_all import GetAccountRateLimitsResponse
+        from openai_codex.generated.v2_all import GetAccountRateLimitsResponse, ModelListResponse
 
         runtime = resolve_codex_runtime()
         codex_config = CodexConfig(codex_bin=runtime["path"], env=sanitized_process_env())
@@ -644,6 +648,18 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
             limits_response = codex._client.request(  # SDK does not expose a public convenience wrapper yet.
                 "account/rateLimits/read", None, response_model=GetAccountRateLimitsResponse
             )
+            models = []
+            cursor = None
+            while True:
+                page = cls._dump(codex._client.request("model/list", {"cursor": cursor, "includeHidden": False}, response_model=ModelListResponse))
+                for entry in page.get("data") or []:
+                    if not entry.get("hidden"):
+                        models.append({"model": entry["model"], "name": entry["displayName"],
+                                       "efforts": [value["reasoningEffort"] for value in entry["supportedReasoningEfforts"]],
+                                       "default_effort": entry["defaultReasoningEffort"]})
+                cursor = page.get("nextCursor")
+                if not cursor:
+                    break
         account = cls._dump(account_response).get("account") or {}
         if "root" in account:
             account = account["root"] or {}
@@ -679,6 +695,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
         return {
             "available": True,
             "model": settings.codex_model,
+            "models": models,
             "runtime_version": runtime["version"],
             "sdk_version": version("openai-codex"),
             "account_type": account.get("type") or "unknown",
