@@ -50,6 +50,8 @@ class LearningRunnerTests(unittest.TestCase):
         with patch("app.orchestrator.TfsClient") as tfs, patch("app.orchestrator.load_project_presets", return_value=[]):
             tfs.return_value.get_work_item.return_value = item
             self.assertEqual(worker._validate(detail, project), item)
+            unspecified = {**detail, "failed_item_ids": [], "repair_context": {"unspecified_scope": True, "feedback_id": 1}}
+            self.assertEqual(worker._validate(unspecified, project), item)
             with self.assertRaisesRegex(RuntimeError, "项目仅允许"):
                 worker._validate({"work_item_id": 6, "project_id": 2}, project)
             store.detail.return_value["project_id"] = 999
@@ -66,10 +68,10 @@ class LearningRunnerTests(unittest.TestCase):
             "artifacts": [], "status": "delivered",
         }
         body = Mailer().delivery_html(detail)
-        self.assertIn("逐项验收并反馈", body)
+        self.assertIn("确认验收结果", body)
         self.assertIn("?request=11111111-1111-1111-1111-111111111111&amp;acceptance=1", body)
         self.assertIn("无需提供真实截图", body)
-        self.assertNotIn("逐项验收并反馈", Mailer().delivery_html(detail, terminal_status="failed"))
+        self.assertNotIn("确认验收结果", Mailer().delivery_html(detail, terminal_status="failed"))
 
 
 if __name__ == "__main__":

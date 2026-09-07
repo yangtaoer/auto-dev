@@ -190,7 +190,7 @@ class Worker:
             self.store.update_request(
                 request_id,
                 title=work_item["title"],
-                requirement_summary=self._plain_text(work_item.get("description", ""))[:4000],
+                requirement_summary=self._plain_text(work_item.get("description", ""))[:60000],
                 work_item_revision=work_item.get("revision"),
                 history_context=history_context,
                 error_message="",
@@ -198,14 +198,14 @@ class Worker:
             )
             acceptance_context = self.store.ensure_acceptance(
                 request_id,
-                work_item.get("acceptance_criteria") or work_item.get("description") or work_item["title"],
+                work_item.get("description") or work_item["title"],
                 revision=work_item.get("revision"),
-                source="requirement" if work_item.get("acceptance_criteria") else "description",
+                source="requirement_description_v2",
             )
             project_lessons = self.store.relevant_experiences(
                 str(project.get("project_key") or detail.get("project_key") or ""),
                 int(work_item["id"]),
-                "\n".join(self._plain_text(work_item.get(field, "")) for field in ("title", "description", "acceptance_criteria")),
+                "\n".join(self._plain_text(work_item.get(field, "")) for field in ("title", "description")),
                 request_id=request_id,
                 limit=5,
             )
@@ -441,7 +441,7 @@ class Worker:
             warnings, blockers = development_risks(result, legacy_review=mode.value in SICHUAN_APPROVAL_DELIVERY_MODES)
             requirement_text = "\n".join(
                 str(work_item.get(field) or "")
-                for field in ("title", "description", "acceptance_criteria")
+                for field in ("title", "description")
             )
             quality_gate = evaluate_development_quality(
                 project,
@@ -869,7 +869,10 @@ class Worker:
             if not parent or parent.get("status") != RunStatus.DELIVERED.value or (
                 parent.get("project_id") != detail.get("project_id")
                 or parent.get("work_item_id") != detail.get("work_item_id")
-                or not detail.get("failed_item_ids")
+                or not (detail.get("failed_item_ids") or (
+                    detail.get("repair_context", {}).get("unspecified_scope")
+                    and detail.get("repair_context", {}).get("feedback_id")
+                ))
             ):
                 raise RuntimeError("关联返修缺少同项目已交付原任务或明确未通过验收项")
             # Delivery has already resolved the original story. Rework must not require

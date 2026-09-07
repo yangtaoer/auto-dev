@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.37",
+    version="1.0-Alpha.38",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -196,7 +196,9 @@ class AcceptanceItemInput(BaseModel):
 
 
 class AcceptanceFeedbackInput(BaseModel):
-    items: list[AcceptanceItemInput] = Field(min_length=1, max_length=200)
+    items: list[AcceptanceItemInput] = Field(default_factory=list, max_length=100)
+    overall_status: Literal["passed", "failed"] | None = None
+    failed_item_ids: list[str] = Field(default_factory=list, max_length=100)
     raw_feedback: str = Field(default="", max_length=12000)
     tested_version: str = Field(default="", max_length=300)
     environment: str = Field(default="", max_length=1000)
@@ -1637,6 +1639,7 @@ def submit_request_acceptance(
         raw_feedback=payload.raw_feedback, tested_version=payload.tested_version,
         environment=payload.environment, idempotency_key=payload.idempotency_key,
         expected_latest_feedback_id=payload.expected_latest_feedback_id,
+        overall_status=payload.overall_status, failed_item_ids=payload.failed_item_ids,
     )
     return {"feedback": feedback, "acceptance": learning_call(project_learning.get_acceptance, request_id)}
 

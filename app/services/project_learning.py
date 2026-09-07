@@ -18,6 +18,7 @@ from ..domain import PIPELINE_STEPS
 
 
 HUMAN_STATUSES = {"passed", "failed", "unverified"}
+DESCRIPTION_SOURCE = "requirement_description_v2"
 
 
 def _json(value: Any) -> str:
@@ -87,6 +88,54 @@ def _criteria(criteria: Any) -> list[str]:
     return result
 
 
+def description_criteria(description: str) -> list[str]:
+    """Keep explicit requirement points together with their explanatory paragraphs.
+
+    Unnumbered prose is one scope, not one acceptance item per HTML formatting line.
+    Top-level HTML list items are explicit points; nested lists stay with their parent.
+    """
+    class DescriptionHTML(_CriteriaHTML):
+        def __init__(self) -> None:
+            super().__init__()
+            self.list_depth = 0
+
+        def handle_starttag(self, tag: str, attrs: list) -> None:
+            if tag in {"ul", "ol"}:
+                self.list_depth += 1
+            if tag == "li" and self.list_depth == 1:
+                self.parts.append("\n\u241e")
+            super().handle_starttag(tag, attrs)
+
+        def handle_endtag(self, tag: str) -> None:
+            super().handle_endtag(tag)
+            if tag in {"ul", "ol"}:
+                self.list_depth = max(0, self.list_depth - 1)
+
+    parser = DescriptionHTML()
+    parser.feed(str(description or "")[:60000])
+    plain = "".join(parser.parts).strip()
+    if "\u241e" in plain:
+        sections = plain.split("\u241e")
+        prefix, values = sections[0].strip(), [value.strip() for value in sections[1:]]
+    else:
+        marker = r"(?:\d+[、．）)]|\d+\.(?!\d)\s*|[一二三四五六七八九十]+[、．）)]|[（(](?:\d+|[一二三四五六七八九十]+)[）)])"
+        # Inline numbered points may immediately follow the prior sentence.
+        pattern = re.compile(r"(?m)(?:^\s*|(?<=[；;。\n])\s*|(?<=\s))(?=" + marker + r")")
+        starts = sorted({match.end() for match in pattern.finditer(plain)})
+        if starts:
+            prefix = plain[:starts[0]].strip()
+            values = [plain[start:end].strip(" ;；\n") for start, end in zip(starts, starts[1:] + [len(plain)])]
+        else:
+            prefix, values = "", [plain]
+    values = [_text(value, 60000).strip() for value in values if value.strip()]
+    if prefix and values:
+        # Preserve introductory scope restrictions without inventing another checkbox.
+        values[0] = _text(prefix, 60000) + "\n" + values[0]
+    if len(values) > 100:
+        raise ValueError("需求分点超过 100 项，请先按功能范围拆分任务")
+    return values
+
+
 def _request(conn: sqlite3.Connection, request_id: str) -> dict[str, Any]:
     row = conn.execute("""SELECT r.*,p.project_key,p.name project_name FROM delivery_requests r
                           JOIN projects p ON p.id=r.project_id WHERE r.id=?""", (request_id,)).fetchone()
@@ -110,16 +159,23 @@ def _authorize(request: dict[str, Any], user: dict[str, Any]) -> None:
 
 
 def _ensure(conn: sqlite3.Connection, request: dict[str, Any], criteria: Any, revision: int | None, source: str) -> None:
-    # A frozen list is immutable even if the source TFS revision later changes.
-    if conn.execute("SELECT 1 FROM acceptance_items WHERE request_id=? LIMIT 1", (request["id"],)).fetchone():
-        return
-    values = _criteria(criteria)
+    existing = conn.execute("SELECT source FROM acceptance_items WHERE request_id=?", (request["id"],)).fetchall()
+    if existing:
+        # Never renumber human history or an existing repair contract. Upgrade only
+        # unreviewed legacy lists, once, from the actual stored requirement description.
+        legacy = all(row["source"] in {"requirement", "description", "historical_self_report", "requirement_summary"} for row in existing)
+        has_history = conn.execute("SELECT 1 FROM acceptance_feedback WHERE request_id=? LIMIT 1", (request["id"],)).fetchone()
+        has_child = conn.execute("SELECT 1 FROM delivery_requests WHERE parent_request_id=? LIMIT 1", (request["id"],)).fetchone()
+        can_upgrade = ((source == DESCRIPTION_SOURCE and criteria is not None) or (criteria is None and request["status"] == "delivered"))
+        description = criteria if source == DESCRIPTION_SOURCE and criteria is not None else request.get("requirement_summary")
+        if not (legacy and can_upgrade and description and not has_history and not has_child and not request.get("parent_request_id")):
+            return
+        criteria, source = description, DESCRIPTION_SOURCE
+        conn.execute("DELETE FROM acceptance_items WHERE request_id=?", (request["id"],))
+    values = description_criteria(criteria) if source == DESCRIPTION_SOURCE and isinstance(criteria, str) else _criteria(criteria)
     if not values:
-        values = _criteria(_load(request.get("acceptance_ledger"), []))
-        source = "historical_self_report"
-    if not values:
-        values = _criteria(request.get("requirement_summary") or request.get("title"))
-        source = "requirement_summary"
+        values = description_criteria(request.get("requirement_summary") or request.get("title") or "验证本次需求是否完成")
+        source = DESCRIPTION_SOURCE
     now = db.utc_now()
     conn.executemany("""INSERT INTO acceptance_items(request_id,item_id,position,criterion,requirement_revision,source,created_at)
                         VALUES(?,?,?,?,?,?,?)""",
@@ -157,6 +213,8 @@ def _acceptance(conn: sqlite3.Connection, request: dict[str, Any]) -> dict[str, 
     for entry in rounds:
         if entry["tested_version"] != version or entry["environment"] != environment:
             continue
+        if entry.get("overall_status"):
+            feedback.clear()  # A whole-requirement verdict supersedes older partial rounds.
         for item in entry["items"]:
             feedback[item["id"]] = {**item, "tested_version": version, "environment": entry["environment"],
                 "actor_name": entry["actor_name"], "created_at": entry["created_at"], "feedback_id": entry["id"]}
@@ -165,8 +223,9 @@ def _acceptance(conn: sqlite3.Connection, request: dict[str, Any]) -> dict[str, 
         item["id"] = item.pop("item_id")
         # Match a criterion first; ID fallback only when model copied the frozen ID faithfully.
         dev = next((entry for entry in ledger if str(entry.get("criterion", "")).strip() == item["criterion"].strip()), None)
-        if dev is None:
+        if dev is None and item["source"] != DESCRIPTION_SOURCE:
             dev = next((entry for entry in ledger if _canonical_id(entry.get("id")) == item["id"]), {})
+        dev = dev or {}
         item["development_status"] = dev.get("status", "unreported")
         item["tests"] = [_text(value, 2000) for value in dev["tests"][:30]] if isinstance(dev.get("tests"), list) else []
         item["evidence"] = [_text(value, 2000) for value in dev["evidence"][:30]] if isinstance(dev.get("evidence"), list) else []
@@ -176,6 +235,8 @@ def _acceptance(conn: sqlite3.Connection, request: dict[str, Any]) -> dict[str, 
     passed = sum(item["human_status"] == "passed" for item in items)
     failed = sum(item["human_status"] == "failed" for item in items)
     status = "accepted" if items and passed == len(items) else "partial" if passed else "changes_requested" if failed else "pending"
+    if rounds and rounds[-1].get("overall_status") == "failed":
+        status = "changes_requested"
     return {"items": items, "rounds": rounds, "status": status, "tested_version": version, "environment": environment,
             "requirement_revision": items[0]["requirement_revision"] if items else request.get("work_item_revision"),
             "latest_feedback_id": rounds[-1]["id"] if rounds else 0,
@@ -191,6 +252,8 @@ def _acceptance(conn: sqlite3.Connection, request: dict[str, Any]) -> dict[str, 
 def get_acceptance(request_id: str) -> dict[str, Any]:
     with db.transaction() as conn:
         request = _request(conn, request_id)
+        if request["status"] == "delivered":
+            _ensure(conn, request, None, request.get("work_item_revision"), DESCRIPTION_SOURCE)
         return _acceptance(conn, request)
 
 
@@ -209,10 +272,16 @@ def assign_acceptance_owner(request_id: str, user_id: int, actor_id: int) -> dic
 
 def submit_feedback(request_id: str, user: dict[str, Any] | int, items: list[dict[str, Any]], raw_feedback: str = "",
                     tested_version: str = "", environment: str = "", idempotency_key: str = "",
-                    expected_latest_feedback_id: int | None = None) -> dict[str, Any]:
-    if not tested_version.strip():
-        raise ValueError("请填写实际验收的版本或构建号")
-    if not isinstance(items, list) or not items or len(items) > 100:
+                    expected_latest_feedback_id: int | None = None, overall_status: str | None = None,
+                    failed_item_ids: list[str] | None = None) -> dict[str, Any]:
+    if overall_status not in {None, "passed", "failed"}:
+        raise ValueError("验收结论必须为通过或不通过")
+    failed_ids = [_canonical_id(value) for value in (failed_item_ids or [])]
+    if len(failed_ids) > 100 or len(set(failed_ids)) != len(failed_ids):
+        raise ValueError("未通过项不能重复，最多 100 项")
+    if (overall_status and items) or (failed_ids and overall_status != "failed"):
+        raise ValueError("整体验收与逐项反馈不能混用，通过时不能选择未通过项")
+    if not isinstance(items, list) or (not items and not overall_status) or len(items) > 100:
         raise ValueError("请至少确认一个验收项，最多 100 项")
     if not idempotency_key or len(idempotency_key) > 128:
         raise ValueError("提交反馈需要有效的幂等标识")
@@ -225,6 +294,8 @@ def submit_feedback(request_id: str, user: dict[str, Any] | int, items: list[dic
     if len({item["id"] for item in normalized}) != len(normalized):
         raise ValueError("验收项不能重复")
     payload = {"items": normalized, "raw_feedback": _text(raw_feedback, 12000), "tested_version": _text(tested_version, 300), "environment": _text(environment, 500)}
+    if overall_status:
+        payload.update(overall_status=overall_status, failed_item_ids=sorted(failed_ids))
     with db.transaction() as conn:
         request = _request(conn, request_id)
         actor = _actor(conn, user)
@@ -242,19 +313,21 @@ def submit_feedback(request_id: str, user: dict[str, Any] | int, items: list[dic
         if expected_latest_feedback_id is not None and expected_latest_feedback_id != acceptance["latest_feedback_id"]:
             raise RuntimeError("验收反馈已更新，请刷新后确认最新结果再提交")
         valid = {item["id"] for item in acceptance["items"]}
-        if any(item["id"] not in valid for item in normalized):
+        if any(item["id"] not in valid for item in normalized) or any(item_id not in valid for item_id in failed_ids):
             raise ValueError("反馈包含不存在的验收项，请刷新验收清单")
+        if overall_status:
+            normalized = [{"id": item["id"], "status": "passed" if overall_status == "passed" else "failed" if item["id"] in failed_ids else "unverified",
+                           "actual": "", "expected": "", "note": ""} for item in acceptance["items"]]
         criteria_by_id = {item["id"]: item["criterion"] for item in acceptance["items"]}
         for item in normalized:
-            if item["status"] == "failed" and not (item["actual"].strip() or item["note"].strip() or payload["raw_feedback"].strip()):
-                raise ValueError("未通过项请填写实际表现、备注或原始反馈，便于定位返修")
             if item["status"] == "failed" and not item["expected"]:
                 item["expected"] = criteria_by_id[item["id"]]
+        version = payload["tested_version"] or f"交付记录 {request_id[:8]} / {request.get('commit_hash') or '当前交付'}"
         now = db.utc_now()
         cursor = conn.execute("""INSERT INTO acceptance_feedback(request_id,actor_id,actor_name,raw_feedback,tested_version,
-                              environment,items,requirement_revision,idempotency_key,payload_hash,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                              (request_id, actor["id"], actor["display_name"], payload["raw_feedback"], payload["tested_version"],
-                               payload["environment"], _json(normalized), acceptance["requirement_revision"], idempotency_key, payload_hash, now))
+                              environment,items,requirement_revision,idempotency_key,payload_hash,created_at,overall_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                              (request_id, actor["id"], actor["display_name"], payload["raw_feedback"], version,
+                               payload["environment"], _json(normalized), acceptance["requirement_revision"], idempotency_key, payload_hash, now, overall_status or ""))
         conn.execute("INSERT INTO delivery_events(request_id,level,event_type,message,metadata,created_at) VALUES(?,?,?,?,?,?)",
                      (request_id, "info", "acceptance.feedback", "提出人验收反馈已保存", _json({"feedback_id": cursor.lastrowid, "actor_id": actor["id"]}), now))
         _sync(conn, request)
@@ -312,7 +385,8 @@ def create_repair(request_id: str, user: dict[str, Any] | int, feedback_id: int 
                 raise RuntimeError("已有较新反馈，请基于最新反馈发起返修")
             failed = [item for item in bundle["items"] if item["human_status"] == "failed"]
             protected = [item for item in bundle["items"] if item["human_status"] == "passed"]
-            if not failed:
+            unspecified_scope = feedback["overall_status"] == "failed" and not failed
+            if not failed and not unspecified_scope:
                 raise ValueError("当前没有未通过的验收项，不需要返修")
             active = conn.execute("""SELECT id FROM delivery_requests WHERE project_id=? AND work_item_id=?
                          AND status NOT IN ('delivered','rejected','failed','cancelled')""", (request["project_id"], request["work_item_id"])).fetchone()
@@ -333,7 +407,11 @@ def create_repair(request_id: str, user: dict[str, Any] | int, feedback_id: int 
             context = {"parent_request_id": request_id, "root_request_id": root_id, "feedback_id": feedback_id,
                        "raw_feedback": _text(feedback["raw_feedback"], 12000), "tested_version": feedback["tested_version"],
                        "environment": feedback["environment"], "failed_items": failed, "protected_items": protected,
+                       "unspecified_scope": unspecified_scope,
+                       "review_items": bundle["items"] if unspecified_scope else [],
                        "instructions": "仅针对未通过验收项及必要依赖精确返修；已通过项是上一版本证据，必须保护。修改公共逻辑时补充受影响项回归说明；不得声称新版已获人工验收。测试环境自动部署和验证本期暂不执行。"}
+            if unspecified_scope:
+                context["instructions"] = "提出人确认整体未通过，但未指定具体项。先对照需求描述、当前实现与自检定位差异，再精确修复；review_items 是待排查范围，不代表每项均失败。不得假定未指定项通过，不得扩大改造范围；本期不操作测试环境。"
             values = {"id": repair_id, "work_item_id": request["work_item_id"], "work_item_revision": request.get("work_item_revision"),
                       "project_id": request["project_id"], "requester_id": request["requester_id"],
                       "acceptance_owner_id": request.get("acceptance_owner_id") or request["requester_id"],

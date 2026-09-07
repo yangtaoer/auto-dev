@@ -779,9 +779,9 @@ class Mailer:
                 f"{settings.public_base_url.rstrip('/')}/?request={detail.get('id', '')}&acceptance=1", quote=True
             )
             action += f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px;background:#fff4d9;border-left:4px solid #d99518">
-              <tr><td style="padding:13px 14px;color:#34342e;font-size:12px;line-height:1.7"><b style="display:block;color:#171813;font-size:14px">交付完成后，请提出人逐项验收</b>
-              研发自检不等于业务验收。请记录实际验证版本，逐项反馈通过或未通过；例如“第 3、6 项未通过，其余通过”。无需提供真实截图。未通过项可关联原需求发起返修，已通过项保留版本记录并作为保护范围。
-              <div style="margin-top:10px"><a href="{acceptance_url}" style="display:inline-block;padding:9px 13px;background:#e9572b;color:#171813;text-decoration:none;font-weight:700">逐项验收并反馈 →</a></div>
+              <tr><td style="padding:13px 14px;color:#34342e;font-size:12px;line-height:1.7"><b style="display:block;color:#171813;font-size:14px">交付完成后，请提出人确认验证结果</b>
+              只需选择验证通过或不通过；不通过时可选填具体需求项或说明。系统自动关联本次交付，无需填写版本、环境，也无需提供真实截图。反馈会保留在项目经验中；需要时可继续发起关联返修。
+              <div style="margin-top:10px"><a href="{acceptance_url}" style="display:inline-block;padding:9px 13px;background:#e9572b;color:#171813;text-decoration:none;font-weight:700">确认验收结果 →</a></div>
               </td></tr></table>"""
 
         completed_text = format_datetime(detail.get("completed_at"), "进行中")

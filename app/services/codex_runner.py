@@ -366,7 +366,7 @@ class CodexRunner:
 需求编号：#{work_item['id']}
 需求标题：{work_item['title']}
 问题描述：{work_item.get('description', '')}
-期望结果：{work_item.get('acceptance_criteria', '')}
+期望结果：按照问题描述判断，不使用 TFS 验收条件字段。
 区域：{work_item.get('area_path', '')}
 TFS 附件与关联元数据：{tfs_relations or '无'}
 {requirement_image_context}
@@ -399,7 +399,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
 需求编号：#{work_item['id']}
 需求标题：{work_item['title']}
 需求描述：{work_item.get('description', '')}
-验收标准：{work_item.get('acceptance_criteria', '')}
+验收标准：按照需求描述的分点及下方冻结账本逐项完成；不使用 TFS 验收条件字段。
 区域：{work_item.get('area_path', '')}
 {requirement_image_context}
 仓库范围：{repository_scope}

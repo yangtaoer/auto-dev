@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/static/brand-ui.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/editorial-ui.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/learning-ui.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/task-dialog.css?v={{ app_version }}">
 </head>
 <body>
   <div class="app-shell">
@@ -164,7 +165,7 @@
   </div>
 
   <div class="drawer-backdrop" id="detail-backdrop" hidden></div>
-  <aside class="detail-drawer" id="detail-drawer" aria-hidden="true"><button class="modal-close" id="close-detail">×</button><div id="detail-content"></div></aside>
+  <section class="detail-drawer" id="detail-drawer" role="dialog" aria-modal="true" aria-label="任务详情" aria-hidden="true" inert><button class="modal-close" id="close-detail" aria-label="关闭任务详情">×</button><div id="detail-content"></div></section>
   <aside class="devcore-stream-panel" id="devcore-stream-panel" aria-hidden="true">
     <header><div><p class="eyebrow" id="devcore-stream-eyebrow">实时研发会话 / LIVE DEVCORE SESSION</p><h2 id="devcore-stream-title">研发过程</h2></div><button class="modal-close" id="close-devcore-stream">×</button></header>
     <div class="stream-notice"><i></i><span>仅传输打开后的输出；关闭即停止采集且不保存</span></div>
@@ -242,6 +243,7 @@
       sidebarCharacter.destroy();
     }, {once: true});
   </script>
+  <script src="/static/task-dialog.js?v={{ app_version }}"></script>
   <script src="/static/app.js?v={{ app_version }}"></script>
   <script src="/static/learning-ui.js?v={{ app_version }}"></script>
   {% if user.role == 'admin' %}<link rel="stylesheet" href="/static/model-settings.css?v={{ app_version }}"><script src="/static/model-settings.js?v={{ app_version }}"></script>{% endif %}

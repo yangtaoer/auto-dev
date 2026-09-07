@@ -77,7 +77,7 @@ window.ProjectLearning = (() => {
   function renderRounds(rounds) {
     if(!list(rounds).length)return '<p class="muted">尚无人工验收反馈。未反馈不会计为通过。</p>';
     rounds=[...rounds].sort((a,b)=>Number(b.id)-Number(a.id));
-    return `<div class="learning-rounds">${list(rounds).map((round,index)=>`<details class="learning-round"><summary><b>验收记录 ${list(rounds).length-index}</b><span>${H(round.actor_name||'验收人')} · ${H(fmt(round.created_at))}</span></summary><div>${fact('被测版本 / 环境',[round.tested_version||'未注明版本',round.environment||'未注明环境'].join(' / '))}${round.raw_feedback?fact('原始反馈',round.raw_feedback):''}${list(round.items).map(item=>`<p class="learning-round-item"><b>${H(item.id)} · ${H(humanLabels[item.status]||item.status)}</b>${item.actual?`<span>实际：${H(item.actual)}</span>`:''}${item.expected?`<span>预期：${H(item.expected)}</span>`:''}${item.note?`<span>${H(item.note)}</span>`:''}</p>`).join('')}${round.repair_request_id?`<button type="button" class="text-button" data-learning-request="${H(round.repair_request_id)}">查看关联返修任务 ↗</button>`:''}</div></details>`).join('')}</div>`;
+    return `<div class="learning-rounds">${list(rounds).map((round,index)=>`<details class="learning-round"><summary><b>验收记录 ${list(rounds).length-index}</b><span>${H(round.actor_name||'验收人')} · ${H(fmt(round.created_at))}</span></summary><div>${round.overall_status?fact('整体验收',round.overall_status==='passed'?'验证通过':'验证不通过'):''}${fact('被测版本 / 环境',[round.tested_version||'未注明版本',round.environment||'未注明环境'].join(' / '))}${round.raw_feedback?fact('原始反馈',round.raw_feedback):''}${list(round.items).map(item=>`<p class="learning-round-item"><b>${H(item.id)} · ${H(humanLabels[item.status]||item.status)}</b>${item.actual?`<span>实际：${H(item.actual)}</span>`:''}${item.expected?`<span>预期：${H(item.expected)}</span>`:''}${item.note?`<span>${H(item.note)}</span>`:''}</p>`).join('')}${round.repair_request_id?`<button type="button" class="text-button" data-learning-request="${H(round.repair_request_id)}">查看关联返修任务 ↗</button>`:''}</div></details>`).join('')}</div>`;
   }
 
   function bindRequestLinks(root) {
@@ -139,7 +139,10 @@ window.ProjectLearning = (() => {
     if(!session){session={request,element:document.createElement('section'),bundle:null,draft:null,status:'',loading:false};session.element.className='request-learning-panel';session.element.dataset.requestId=request.id;draftPanels.set(request.id,session);}
     session.request=request;
     // Reattach the original node after task polling; typed text, focus state and preview survive.
-    document.querySelector('#detail-content .detail-head')?.after(session.element);
+    document.querySelector('#task-acceptance-mount')?.append(session.element);
+    document.querySelector('#task-experience-context').innerHTML=renderSimilar(request);
+    bindRequestLinks(document.querySelector('#task-experience-context'));
+    renderRequirementPoints(session);
     if(!session.bundle&&!session.loading)loadAcceptance(session);
     else if((session.status!==request.status||session.reload)&&!session.loading){session.reload=false;loadAcceptance(session);}
     session.status=request.status;
@@ -153,9 +156,9 @@ window.ProjectLearning = (() => {
       session.bundle=result;
       if(!session.draft){
         const acceptance=result.acceptance||{};
-        session.draft={raw_feedback:'',tested_version:acceptance.tested_version||'',environment:'',items:{},expected_latest_feedback_id:Number(acceptance.latest_feedback_id)||0,idempotency_key:key(),preview:null};
-        list(acceptance.items).forEach(item=>session.draft.items[item.id]={id:item.id,status:'unverified',actual:'',expected:'',note:''});
+        session.draft={verdict:null,raw_feedback:'',failedIds:new Set(),expected_latest_feedback_id:Number(acceptance.latest_feedback_id)||0,idempotency_key:key(),optionalOpen:false};
       }
+      renderRequirementPoints(session);
       drawAcceptance(session);
     } catch(error) {
       session.element.innerHTML=renderSimilar(session.request)+empty('验收账本暂时无法读取',error.message)+'<button type="button" class="btn btn-secondary acceptance-reload">重新读取</button>';
@@ -163,120 +166,92 @@ window.ProjectLearning = (() => {
     } finally {session.loading=false;}
   }
 
-  function renderAcceptanceItem(item,draft,editable) {
-    const entry=draft.items[item.id]||(draft.items[item.id]={id:item.id,status:'unverified',actual:'',expected:item.criterion||'',note:''});
-    if(!entry.expected)entry.expected=item.criterion||'';
-    const rawTestStatus=item.automatic_test_status||item.automated_test_status||item.test_status;
-    const testStatus=rawTestStatus==='deferred'?'暂未接入':rawTestStatus;
-    return `<article class="acceptance-item" data-ac-id="${H(item.id)}" data-status="${H(entry.status)}"><header><code>${H(item.id)}</code><b>${H(item.criterion)}</b></header><div class="learning-mini-facts"><span>研发：${H(developmentLabel(item.development_status))}</span><span>自动测试：${H(testStatus?({passed:'通过',failed:'未通过',unverified:'未验证',not_run:'未执行'}[testStatus]||testStatus):'未记录自动测试结论')}</span><span>已提交验收：${H(humanLabels[item.human_status]||'未验证')}</span></div>${item.feedback?.tested_version?`<p class="learning-basis">上次验收版本：${H(item.feedback.tested_version)}</p>`:''}<details class="acceptance-evidence"><summary>实现与自检依据</summary>${bullets([...list(item.tests),...list(item.evidence)])}</details>${editable?`<div class="acceptance-choice" role="group" aria-label="${H(item.id)} 本轮验收结论">${Object.entries(humanLabels).map(([status,label])=>`<button type="button" data-status="${status}" aria-pressed="${entry.status===status}">${label}</button>`).join('')}</div><div class="acceptance-failure" ${entry.status==='failed'?'':'hidden'}><label><span>实际表现</span><textarea data-item-field="actual" rows="2" maxlength="4000" placeholder="哪个角色、单位、步骤出现了什么问题">${H(entry.actual)}</textarea></label><label><span>预期表现</span><textarea data-item-field="expected" rows="2" maxlength="4000" placeholder="这一项应该如何表现">${H(entry.expected)}</textarea></label></div><label class="acceptance-item-note"><span>补充说明（可选）</span><input data-item-field="note" maxlength="2000" value="${H(entry.note)}" placeholder="验证范围、样例或复现条件"></label>`:''}</article>`;
-  }
-
-  function drawAcceptance(session) {
-    const request=session.request,bundle=session.bundle,acceptance=bundle.acceptance||{},draft=session.draft;
-    const items=list(acceptance.items),editable=Boolean(bundle.can_submit??bundle.can_accept),rounds=list(acceptance.rounds);
-    const latestRound=rounds.find(round=>Number(round.id)===Number(acceptance.latest_feedback_id))||rounds[0];
-    session.element.innerHTML=`${renderSimilar(request)}<section class="acceptance-panel"><header class="acceptance-heading"><div><p class="eyebrow">提出人验收 / HUMAN ACCEPTANCE</p><h3>${H(acceptanceLabels[acceptance.status]||'等待验收')}</h3></div><span class="learning-count">${items.length} <small>项</small></span></header><p class="learning-note">研发自检、自动测试和人工验收分别记录。每轮填写本次实际验证结果；未验证项不计为通过。</p>${acceptance.parent_request_id?`<p class="learning-repair-scope">返修第 ${Number(acceptance.repair_round)||1} 轮 · 处理 ${H(list(acceptance.failed_item_ids).join('、')||'反馈项')}<br>保护范围：${H(list(acceptance.protected_item_ids).join('、')||'以原验收账本为准')}</p>`:''}${bundle.can_assign?`<form class="acceptance-assignee"><label><span>指定验收人</span>${selectMarkup('user_id','选择验收人')}</label><button type="submit" class="btn btn-secondary">保存</button><p class="form-error" hidden></p></form>`:''}<form class="acceptance-form"><div class="acceptance-items">${items.map(item=>renderAcceptanceItem(item,draft,editable)).join('')||empty('尚未形成可逐项验收的账本','完成需求拆解后将在这里显示固定编号的验收项。')}</div>${editable&&items.length?`<div class="acceptance-compose"><div class="section-heading compact"><b>本轮验证结果</b><button type="button" class="text-button acceptance-pass-all">本轮全部验证通过</button></div><label><span>用一句话描述反馈</span><textarea name="raw_feedback" rows="3" maxlength="12000" placeholder="例如：共 10 项，3、6 未完成，其余均验证通过。第 3 项实际…，预期…">${H(draft.raw_feedback)}</textarea><small>先预览识别结果，确认后填入上面的逐项结论。输入草稿在任务自动刷新时保留。</small></label><button type="button" class="btn btn-secondary acceptance-preview">预览逐项结论</button><div class="acceptance-preview-result" aria-live="polite" ${draft.preview?'':'hidden'}></div><div class="acceptance-test-context"><label><span>实际验证的版本（可选）</span><input name="tested_version" maxlength="300" value="${H(draft.tested_version)}" placeholder="例如 Build 12345 / 交付包版本"></label><label><span>验证环境（可选）</span><input name="environment" maxlength="300" value="${H(draft.environment)}" placeholder="例如阿坝测试环境 / 现场版本"></label></div><p class="learning-note">此处记录你已完成的验证，不会连接环境或启动自动测试。</p><p class="form-error acceptance-error" hidden></p><button type="submit" class="btn btn-primary acceptance-submit">提交本轮验收反馈 ↗</button></div>`:request.status!=='delivered'?'<p class="learning-note">完成交付后，提出人或指定验收人可提交逐项验证结果。</p>':'<p class="learning-note">由需求提出人、指定验收人或管理员提交验收反馈。</p>'}</form><section class="learning-section"><h4>已提交的验收记录</h4>${renderRounds(rounds)}</section>${editable&&latestRound&&list(latestRound.items).some(item=>item.status==='failed')?`<div class="acceptance-repair-action"><div><b>基于已提交的未通过项继续修复</b><p>创建关联原需求的返修轮次，已通过项作为保护范围。提交反馈本身不会启动研发。</p></div><button type="button" class="btn btn-primary acceptance-start-repair" ${latestRound.repair_request_id?'disabled':''}>${latestRound.repair_request_id?'该轮已发起返修':'发起本轮局部返修 ↗'}</button><p class="form-error acceptance-repair-error" hidden></p></div>`:''}</section>`;
-    if(Number(acceptance.latest_feedback_id)!==draft.expected_latest_feedback_id){
-      const notice=document.createElement('div');notice.className='acceptance-stale-notice';
-      notice.innerHTML='<b>已有更新的验收反馈</b><p>本轮草稿已保留。请查看下方最新记录，再确认是否按当前草稿提交。</p><button type="button" class="btn btn-secondary">已核对最新反馈，继续填写当前草稿</button>';
-      session.element.querySelector('.acceptance-compose')?.prepend(notice);
-      notice.querySelector('button').onclick=()=>{draft.expected_latest_feedback_id=Number(acceptance.latest_feedback_id)||0;draft.idempotency_key=key();notice.remove();};
-    }
-    const savedSummary=acceptance.summary||{},summaryLine=document.createElement('div');
-    summaryLine.className='learning-mini-facts acceptance-saved-summary';
-    summaryLine.innerHTML=`<span>已提交：通过 ${Number(savedSummary.passed)||0}</span><span>未通过 ${Number(savedSummary.failed)||0}</span><span>未验证 ${Number(savedSummary.unverified)||0}</span>${acceptance.requirement_revision!=null?`<span>需求修订 ${H(acceptance.requirement_revision)}</span>`:''}${acceptance.tested_version?`<span>验收版本 ${H(acceptance.tested_version)}</span>`:''}`;
-    session.element.querySelector('.acceptance-heading')?.after(summaryLine);
-    bindRequestLinks(session.element);
-    const versionField=session.element.querySelector('[name="tested_version"]');
-    if(versionField){versionField.required=true;versionField.closest('label').querySelector('span').textContent='实际验证的版本 / 构建号（必填）';}
-    bindAcceptance(session,latestRound);
-    if(draft.preview)drawPreview(session);
-  }
-
-  function bindAcceptance(session,latestRound) {
-    const root=session.element,draft=session.draft,bundle=session.bundle;
-    root.querySelectorAll('[data-ac-id]').forEach(row=>{
-      const entry=draft.items[row.dataset.acId];
-      row.querySelectorAll('.acceptance-choice button').forEach(button=>button.onclick=()=>{
-        entry.status=button.dataset.status;row.dataset.status=entry.status;
-        row.querySelectorAll('.acceptance-choice button').forEach(choice=>choice.setAttribute('aria-pressed',String(choice===button)));
-        row.querySelector('.acceptance-failure').hidden=entry.status!=='failed';
-      });
-      row.querySelectorAll('[data-item-field]').forEach(input=>input.oninput=()=>{entry[input.dataset.itemField]=input.value;});
-    });
-    const form=root.querySelector('.acceptance-form');
-    ['raw_feedback','tested_version','environment'].forEach(name=>{
-      const input=form.elements.namedItem(name);if(input)input.oninput=()=>{draft[name]=input.value;if(name==='raw_feedback'){draft.preview=null;const preview=root.querySelector('.acceptance-preview-result');preview.hidden=true;preview.innerHTML='';}};
-    });
-    root.querySelector('.acceptance-pass-all')?.addEventListener('click',()=>{
-      Object.values(draft.items).forEach(item=>item.status='passed');drawAcceptance(session);
-    });
-    root.querySelector('.acceptance-preview')?.addEventListener('click',async event=>{
-      const error=root.querySelector('.acceptance-error'),button=event.currentTarget;error.hidden=true;
-      if(!draft.raw_feedback.trim()){error.textContent='请先填写需要识别的反馈，或直接选择每项结论。';error.hidden=false;return;}
-      button.disabled=true;session.previewLoading=true;const originalText=draft.raw_feedback;
-      try {const preview=await api(`/api/requests/${encodeURIComponent(session.request.id)}/acceptance/preview`,{method:'POST',body:JSON.stringify({text:originalText})});if(draft.raw_feedback!==originalText){toast('反馈内容已修改，请重新预览');return;}draft.preview=preview;drawPreview(session);}
-      catch(err){error.textContent=err.message;error.hidden=false;}finally{button.disabled=false;session.previewLoading=false;}
-    });
-    form.onsubmit=event=>{event.preventDefault();submitFeedback(session);};
-    root.querySelector('.acceptance-start-repair')?.addEventListener('click',async event=>{
-      const button=event.currentTarget,error=root.querySelector('.acceptance-repair-error');button.disabled=true;error.hidden=true;
-      session.repairKey=session.repairKey||key();
-      try {const result=await api(`/api/requests/${encodeURIComponent(session.request.id)}/acceptance/repair`,{method:'POST',body:JSON.stringify({feedback_id:latestRound.id,idempotency_key:session.repairKey})});toast('局部返修已进入队列');await refresh();await openDetail(result.request.id);}
-      catch(err){error.textContent=err.message;error.hidden=false;button.disabled=false;}
-    });
-    const assignee=root.querySelector('.acceptance-assignee');
-    if(assignee){
-      const users=list(bundle.users),requesterId=session.request.requester_id;
-      const options=users.map(user=>[String(user.id),`${user.display_name} · ${user.username}`]);
-      if(requesterId&&!users.some(user=>Number(user.id)===Number(requesterId)))options.unshift([String(requesterId),'由需求提出人验收']);
-      wireSelect(assignee.querySelector('.ledger-select'),options,bundle.acceptance?.acceptance_owner_id||requesterId||'');
-      assignee.onsubmit=async event=>{
-        event.preventDefault();const button=assignee.querySelector('[type="submit"]'),error=assignee.querySelector('.form-error');button.disabled=true;error.hidden=true;
-        try{await api(`/api/requests/${encodeURIComponent(session.request.id)}/acceptance/assignee`,{method:'PUT',body:JSON.stringify({user_id:Number(assignee.elements.user_id.value)||Number(requesterId)})});toast('验收人已更新');await loadAcceptance(session);}
+  function renderRequirementPoints(session) {
+    if(state.selectedRequest!==session.request.id)return;
+    const mount=document.querySelector('#requirement-points'),bundle=session.bundle;
+    if(!mount)return;
+    if(!bundle){mount.innerHTML=empty('正在读取需求拆解…');return;}
+    mount.innerHTML=`<ol class="task-points">${list(bundle.acceptance?.items).map(item=>`<li>${H(item.criterion)}</li>`).join('')}</ol>`;
+    if(bundle.can_assign){
+      const owner=document.createElement('details');owner.className='task-context';
+      owner.innerHTML=`<summary>指定验收人</summary><form class="acceptance-assignee"><label>${selectMarkup('user_id','选择验收人')}</label><button class="btn btn-secondary" type="submit">保存</button><p class="form-error" hidden></p></form>`;
+      mount.append(owner);
+      const form=owner.querySelector('form'),options=list(bundle.users).map(user=>[String(user.id),`${user.display_name} · ${user.username}`]);
+      wireSelect(form.querySelector('.ledger-select'),options,bundle.acceptance?.acceptance_owner_id||session.request.requester_id||'');
+      form.onsubmit=async event=>{
+        event.preventDefault();const button=form.querySelector('button[type=submit]'),error=form.querySelector('.form-error');button.disabled=true;error.hidden=true;
+        try{await api(`/api/requests/${session.request.id}/acceptance/assignee`,{method:'PUT',body:JSON.stringify({user_id:Number(form.elements.user_id.value)})});toast('验收人已更新');await loadAcceptance(session);}
         catch(err){error.textContent=err.message;error.hidden=false;button.disabled=false;}
       };
     }
   }
 
-  function drawPreview(session) {
-    const panel=session.element.querySelector('.acceptance-preview-result'),preview=session.draft.preview;
-    if(!panel||!preview)return;
-    const items=[...list(preview.items)].sort((a,b)=>String(a.id).localeCompare(String(b.id),undefined,{numeric:true}));
-    panel.hidden=false;
-    panel.innerHTML=`<b>识别结果，尚未提交</b>${list(preview.warnings).length?bullets(preview.warnings):''}<div class="acceptance-preview-chips">${items.map(item=>`<span>${H(item.id)} · ${H(humanLabels[item.status]||'未验证')}</span>`).join('')}</div><p>未提及且未明确包含在“其余通过”中的项目，保留为未验证。</p><button type="button" class="btn btn-secondary" ${items.length?'':'disabled'}>确认识别结果，填入逐项结论</button>`;
-    panel.querySelector('button').onclick=()=>{
-      items.forEach(item=>{const target=session.draft.items[item.id];if(target&&Object.hasOwn(humanLabels,item.status)){target.status=item.status;['actual','expected','note'].forEach(name=>{if(item[name])target[name]=String(item[name]);});}});
-      session.draft.preview=null;drawAcceptance(session);toast('识别结果已填入，请核对后提交反馈');
-    };
+  function drawAcceptance(session) {
+    const bundle=session.bundle,acceptance=bundle.acceptance||{},draft=session.draft;
+    const items=list(acceptance.items),editable=Boolean(bundle.can_submit??bundle.can_accept),rounds=list(acceptance.rounds);
+    const latestRound=rounds.find(round=>Number(round.id)===Number(acceptance.latest_feedback_id));
+    const failed=latestRound&&(latestRound.overall_status==='failed'||list(latestRound.items).some(item=>item.status==='failed'));
+    session.element.innerHTML=`<section class="acceptance-panel"><header class="acceptance-heading"><div><p class="eyebrow">提出人验收 / ACCEPTANCE</p><h3>${H(acceptanceLabels[acceptance.status]||'等待验收')}</h3></div></header>
+      ${editable?`<form class="acceptance-form"><fieldset class="acceptance-verdict"><legend>这次需求验证结果如何？</legend>
+        <button type="button" data-verdict="passed" aria-pressed="${draft.verdict==='passed'}"><span aria-hidden="true">✓</span>验证通过</button>
+        <button type="button" data-verdict="failed" aria-pressed="${draft.verdict==='failed'}"><span aria-hidden="true">×</span>验证不通过</button></fieldset>
+        <details class="acceptance-optional" ${draft.verdict==='failed'?'':'hidden'} ${draft.optionalOpen?'open':''}><summary>补充未通过项或说明（可选）</summary>
+          <p class="learning-note">可留空直接提交；未选择的项目不会自动记为通过。</p>
+          <div class="acceptance-failed-points">${items.map(item=>`<label><input type="checkbox" value="${H(item.id)}" ${draft.failedIds.has(item.id)?'checked':''}><span>${H(item.criterion)}</span></label>`).join('')}</div>
+          <label class="acceptance-comment"><span>补充说明（可选）</span><textarea name="raw_feedback" rows="3" maxlength="12000" placeholder="例如：第 3 项仍未生效">${H(draft.raw_feedback)}</textarea></label>
+        </details><p class="form-error acceptance-error" hidden></p>
+        <div class="acceptance-submit-row"><button type="submit" class="btn btn-primary acceptance-submit">提交验收结果 ↗</button><small>自动关联本次交付，无需填写版本或环境。</small></div></form>`:`<p class="learning-note">${session.request.status==='delivered'?'由需求提出人、指定验收人或管理员提交验收结果。':'任务交付后，只需确认验证通过或不通过。'}</p>`}
+      ${editable&&failed?`<div class="acceptance-repair-action"><button type="button" class="btn btn-secondary acceptance-start-repair" ${latestRound.repair_request_id?'disabled':''}>${latestRound.repair_request_id?'本轮已发起返修':'根据本轮反馈继续修复 ↗'}</button><p class="form-error acceptance-repair-error" hidden></p></div>`:''}
+      ${rounds.length?`<details class="acceptance-history"><summary>历史反馈 · ${rounds.length} 次</summary>${renderRounds(rounds)}</details>`:''}
+    </section>`;
+    if(Number(acceptance.latest_feedback_id)!==draft.expected_latest_feedback_id){
+      const notice=document.createElement('div');notice.className='acceptance-stale-notice';
+      notice.innerHTML='<b>已有新的验收反馈，当前草稿已保留。</b><button type="button" class="btn btn-secondary">已核对历史反馈，继续提交</button>';
+      session.element.querySelector('.acceptance-form')?.prepend(notice);
+      notice.querySelector('button').onclick=()=>{draft.expected_latest_feedback_id=Number(acceptance.latest_feedback_id)||0;draft.idempotency_key=key();notice.remove();};
+    }
+    bindRequestLinks(session.element);
+    const form=session.element.querySelector('.acceptance-form');
+    if(form){
+      form.querySelectorAll('[data-verdict]').forEach(button=>button.onclick=()=>{
+        draft.verdict=button.dataset.verdict;
+        form.querySelectorAll('[data-verdict]').forEach(choice=>choice.setAttribute('aria-pressed',String(choice===button)));
+        form.querySelector('.acceptance-optional').hidden=draft.verdict!=='failed';
+        form.querySelector('.acceptance-error').hidden=true;
+      });
+      form.querySelector('.acceptance-optional').ontoggle=event=>{draft.optionalOpen=event.currentTarget.open;};
+      form.querySelectorAll('input[type=checkbox]').forEach(input=>input.onchange=()=>{input.checked?draft.failedIds.add(input.value):draft.failedIds.delete(input.value);});
+      form.elements.raw_feedback.oninput=event=>{draft.raw_feedback=event.target.value;};
+      form.onsubmit=event=>{event.preventDefault();submitFeedback(session);};
+    }
+    session.element.querySelector('.acceptance-start-repair')?.addEventListener('click',async event=>{
+      const button=event.currentTarget,error=session.element.querySelector('.acceptance-repair-error');button.disabled=true;error.hidden=true;
+      session.repairKey=session.repairKey||key();
+      try{const result=await api(`/api/requests/${session.request.id}/acceptance/repair`,{method:'POST',body:JSON.stringify({feedback_id:latestRound.id,idempotency_key:session.repairKey})});toast('返修已进入队列');await refresh();await openDetail(result.request.id);}
+      catch(err){error.textContent=err.message;error.hidden=false;button.disabled=false;}
+    });
   }
 
   async function submitFeedback(session) {
-    const form=session.element.querySelector('.acceptance-form'),error=form.querySelector('.acceptance-error'),button=form.querySelector('[type="submit"]');
-    if(!error||!button)return;
-    error.hidden=true;
-    const draft=session.draft,items=Object.values(draft.items);
-    if(session.previewLoading){error.textContent='正在识别反馈，请等待预览结果后再提交。';error.hidden=false;return;}
-    if(Number(session.bundle.acceptance.latest_feedback_id)!==draft.expected_latest_feedback_id){error.textContent='请先核对更新的验收记录，再确认本轮草稿。';error.hidden=false;return;}
-    if(!draft.tested_version.trim()){error.textContent='请填写本次实际验证的版本或构建号。';error.hidden=false;form.elements.tested_version.focus();return;}
-    if(draft.preview){error.textContent='请先确认识别结果，再提交本轮反馈。';error.hidden=false;return;}
-    if(!items.some(item=>item.status!=='unverified')){error.textContent='请至少填写一项已验证结果。';error.hidden=false;return;}
-    const incomplete=items.find(item=>item.status==='failed'&&!item.actual.trim()&&!item.note.trim()&&!draft.raw_feedback.trim());
-    if(incomplete){error.textContent=`请补充 ${incomplete.id} 的实际表现、说明或原始反馈，便于精确返修。`;error.hidden=false;session.element.querySelector(`[data-ac-id="${CSS.escape(incomplete.id)}"] .acceptance-failure textarea`)?.focus();return;}
-    const payload={items,raw_feedback:draft.raw_feedback,tested_version:draft.tested_version,environment:draft.environment,expected_latest_feedback_id:draft.expected_latest_feedback_id};
+    const form=session.element.querySelector('.acceptance-form'),error=form.querySelector('.acceptance-error');
+    error.hidden=true;const draft=session.draft;
+    if(!draft.verdict){error.textContent='请选择验证通过或不通过。';error.hidden=false;return;}
+    if(Number(session.bundle.acceptance.latest_feedback_id)!==draft.expected_latest_feedback_id){error.textContent='已有新反馈，请核对历史记录后继续提交。';error.hidden=false;return;}
+    const payload={overall_status:draft.verdict,failed_item_ids:draft.verdict==='failed'?[...draft.failedIds]:[],raw_feedback:draft.verdict==='failed'?draft.raw_feedback:'',expected_latest_feedback_id:draft.expected_latest_feedback_id};
     const serialized=JSON.stringify(payload);
     if(draft.lastPayload&&draft.lastPayload!==serialized)draft.idempotency_key=key();draft.lastPayload=serialized;
     const controls=[...form.querySelectorAll('input,textarea,button')].map(control=>[control,control.disabled]);
     controls.forEach(([control])=>control.disabled=true);
-    try {
-      const result=await api(`/api/requests/${encodeURIComponent(session.request.id)}/acceptance/feedback`,{method:'POST',body:JSON.stringify({...payload,idempotency_key:draft.idempotency_key})});
+    try{
+      const result=await api(`/api/requests/${session.request.id}/acceptance/feedback`,{method:'POST',body:JSON.stringify({...payload,idempotency_key:draft.idempotency_key})});
       session.draft=null;
       if(result.acceptance)session.bundle={...session.bundle,acceptance:result.acceptance};
-      await loadAcceptance(session);toast('本轮验收反馈已保存；可单独发起未通过项返修');catalog.loaded=false;
-    } catch(err){
-      error.textContent=`${err.message}。你的输入草稿已保留。`;error.hidden=false;controls.forEach(([control,disabled])=>control.disabled=disabled);
+      await loadAcceptance(session);toast('验收结果已保存');catalog.loaded=false;
+    }catch(err){
+      error.textContent=`${err.message}。草稿已保留。`;error.hidden=false;
+      controls.forEach(([control,disabled])=>control.disabled=disabled);
       if(!form.querySelector('.acceptance-check-latest')){
-        const reload=document.createElement('button');reload.type='button';reload.className='text-button acceptance-check-latest';reload.textContent='读取最新验收记录并保留草稿';reload.onclick=()=>loadAcceptance(session);error.after(reload);
+        const reload=document.createElement('button');reload.type='button';reload.className='text-button acceptance-check-latest';reload.textContent='读取最新反馈并保留草稿';reload.onclick=()=>loadAcceptance(session);error.after(reload);
       }
     }
   }
@@ -293,7 +268,7 @@ window.ProjectLearning = (() => {
   window.addEventListener('keydown',event=>{if(event.key==='Escape'){const modal=document.querySelector('#experience-modal');if(modal&&!modal.hidden){experienceGeneration++;modal.hidden=true;}}});
   const requestedId=new URLSearchParams(location.search).get('request');
   if(requestedId&&/^[A-Za-z0-9-]{1,80}$/.test(requestedId)){
-    openDetail(requestedId).then(()=>{if(new URLSearchParams(location.search).has('acceptance'))document.querySelector('.request-learning-panel')?.scrollIntoView({block:'start'});}).catch(error=>toast(error.message));
+    openDetail(requestedId).then(()=>{if(new URLSearchParams(location.search).has('acceptance'))TaskDialog.select('acceptance');}).catch(error=>toast(error.message));
   }
   return {renderRequest,syncProjects,willOpenRequest:id=>{const session=draftPanels.get(id);if(session)session.reload=true;},open:()=>{syncProjects();loadCatalog(catalog.page);}};
 })();

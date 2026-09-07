@@ -257,6 +257,7 @@ CREATE TABLE IF NOT EXISTS acceptance_feedback (
     actor_id INTEGER NOT NULL REFERENCES users(id),
     actor_name TEXT NOT NULL,
     raw_feedback TEXT NOT NULL DEFAULT '',
+    overall_status TEXT NOT NULL DEFAULT '',
     tested_version TEXT NOT NULL,
     environment TEXT NOT NULL DEFAULT '',
     items TEXT NOT NULL,
@@ -437,6 +438,9 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     for name, definition in learning_columns.items():
         if name not in request_columns:
             conn.execute(f"ALTER TABLE delivery_requests ADD COLUMN {name} {definition}")
+    feedback_columns = {item["name"] for item in conn.execute("PRAGMA table_info(acceptance_feedback)")}
+    if "overall_status" not in feedback_columns:
+        conn.execute("ALTER TABLE acceptance_feedback ADD COLUMN overall_status TEXT NOT NULL DEFAULT ''")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS ix_delivery_requests_joint_group ON delivery_requests(joint_group_id, joint_project_index)"
     )

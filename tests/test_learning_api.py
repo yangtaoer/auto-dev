@@ -69,6 +69,21 @@ class LearningApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()["acceptance"]
 
+    def test_minimal_overall_feedback_accepts_pass_or_fail_only(self) -> None:
+        path = f"/api/requests/{self.request_id}/acceptance/feedback"
+        failed = self.client.post(path, json={"overall_status": "failed", "idempotency_key": "simple-failed", "expected_latest_feedback_id": 0})
+        self.assertEqual(failed.status_code, 200, failed.text)
+        self.assertEqual(failed.json()["acceptance"]["status"], "changes_requested")
+        self.assertEqual(failed.json()["acceptance"]["summary"]["passed"], 0)
+        latest = failed.json()["feedback"]["id"]
+        invalid = self.client.post(path, json={"overall_status": "failed", "failed_item_ids": ["AC-999"], "idempotency_key": "unknown-point", "expected_latest_feedback_id": latest})
+        self.assertEqual(invalid.status_code, 422)
+        passed = self.client.post(path, json={"overall_status": "passed", "idempotency_key": "simple-passed", "expected_latest_feedback_id": latest})
+        self.assertEqual(passed.status_code, 200, passed.text)
+        self.assertEqual(passed.json()["acceptance"]["status"], "accepted")
+        stale = self.client.post(path, json={"overall_status": "failed", "idempotency_key": "stale-failed", "expected_latest_feedback_id": latest})
+        self.assertEqual(stale.status_code, 409)
+
     def feedback_payload(self, *, key: str = "feedback-round-one", latest: int = 0) -> dict:
         return {
             "items": [

@@ -85,12 +85,67 @@ class ProjectLearningTests(unittest.TestCase):
         self.assertEqual(result["items"][1]["human_status"], "unverified")
         self.assertEqual(result["environment"], "验收环境乙")
 
-    def test_unknown_duplicate_and_non_actionable_feedback_rejected(self) -> None:
-        for items in ([{"id": "AC-99", "status": "passed"}], [{"id": "AC-1", "status": "failed"}],
+    def test_unknown_and_duplicate_feedback_rejected(self) -> None:
+        for items in ([{"id": "AC-99", "status": "passed"}],
                       [{"id": "AC-1", "status": "passed"}, {"id": "AC-01", "status": "passed"}]):
             with self.assertRaises(ValueError):
                 self.feedback(items)
         self.assertEqual(self.learning.get_acceptance(self.request_id)["rounds"], [])
+
+    def test_failed_feedback_needs_no_explanation_or_version(self) -> None:
+        feedback = self.feedback([{"id": "AC-1", "status": "failed"}], tested_version="")
+        self.assertEqual(feedback["items"][0]["status"], "failed")
+        self.assertIn(self.request_id[:8], feedback["tested_version"])
+
+    def test_description_points_keep_explanations_and_ignore_markup(self) -> None:
+        split = self.learning.description_criteria
+        self.assertEqual(split("<p>1、登录</p><p>登录应保留原角色。</p><p>2、查询</p>"), ["1、登录\n\n登录应保留原角色。", "2、查询"])
+        self.assertEqual(split("1、登录；2、查询；3、退出"), ["1、登录", "2、查询", "3、退出"])
+        self.assertEqual(split("<ol><li>登录<p>保留角色</p></li><li>查询</li></ol>"), ["登录\n保留角色", "查询"])
+        self.assertEqual(split("<p>改进查询</p><p>不改变权限</p><script>bad()</script>"), ["改进查询\n\n不改变权限"])
+        self.assertEqual(len(split("升级到 1.2.3，保留既有逻辑")), 1)
+        self.assertEqual(split("一、登录\n二、查询"), ["一、登录", "二、查询"])
+
+    def test_upgrade_legacy_unreviewed_criteria_but_preserve_human_history(self) -> None:
+        self.db.update_request(self.request_id, requirement_summary="1、需求登录；2、需求查询；3、需求退出")
+        upgraded = self.learning.get_acceptance(self.request_id)
+        self.assertEqual([item["criterion"] for item in upgraded["items"]], ["1、需求登录", "2、需求查询", "3、需求退出"])
+        self.feedback([{"id": "AC-1", "status": "passed"}])
+        self.db.update_request(self.request_id, requirement_summary="完全不同的需求")
+        self.assertEqual(self.learning.get_acceptance(self.request_id)["items"], self.learning.ensure_acceptance(self.request_id, "不同内容", source=self.learning.DESCRIPTION_SOURCE)["items"])
+        self.assertEqual(len(self.learning.get_acceptance(self.request_id)["items"]), 3)
+
+    def test_pending_read_does_not_freeze_title_before_real_requirement_arrives(self) -> None:
+        request_id = self.db.create_delivery_request(self.project, self.owner["id"], 994, self.project["delivery_mode"], [])
+        self.assertEqual(self.learning.get_acceptance(request_id)["items"], [])
+        result = self.learning.ensure_acceptance(request_id, "1、真正的需求；2、另一个功能", source=self.learning.DESCRIPTION_SOURCE)
+        self.assertEqual(len(result["items"]), 2)
+
+    def test_overall_failed_without_points_is_not_a_false_pass_and_can_repair(self) -> None:
+        passed = self.learning.submit_feedback(self.request_id, self.owner, [], overall_status="passed", idempotency_key="whole-pass")
+        self.assertEqual(self.learning.get_acceptance(self.request_id)["status"], "accepted")
+        failed = self.learning.submit_feedback(self.request_id, self.owner, [], overall_status="failed", idempotency_key="whole-fail", expected_latest_feedback_id=passed["id"])
+        self.assertEqual(failed["overall_status"], "failed")
+        bundle = self.learning.get_acceptance(self.request_id)
+        self.assertEqual(bundle["status"], "changes_requested")
+        self.assertTrue(all(item["human_status"] == "unverified" for item in bundle["items"]))
+        experience = self.learning.sync_experience(self.request_id)
+        self.assertEqual(experience["status"], "candidate")
+        repair = self.learning.create_repair(self.request_id, self.owner, failed["id"])
+        self.assertTrue(repair["repair_context"]["unspecified_scope"])
+        self.assertEqual(repair["failed_item_ids"], [])
+        self.assertEqual(len(repair["repair_context"]["review_items"]), 2)
+
+    def test_overall_failed_selected_points_are_optional_and_idempotent(self) -> None:
+        kwargs = dict(overall_status="failed", failed_item_ids=["AC-2"], idempotency_key="selected-fail", expected_latest_feedback_id=0)
+        first = self.learning.submit_feedback(self.request_id, self.owner, [], **kwargs)
+        again = self.learning.submit_feedback(self.request_id, self.owner, [], **kwargs)
+        self.assertEqual(first["id"], again["id"])
+        self.assertEqual([item["status"] for item in first["items"]], ["unverified", "failed"])
+        with self.assertRaises(RuntimeError):
+            self.learning.submit_feedback(self.request_id, self.owner, [], **{**kwargs, "failed_item_ids": ["AC-1"]})
+        with self.assertRaises(ValueError):
+            self.learning.submit_feedback(self.request_id, self.owner, [], overall_status="passed", failed_item_ids=["AC-1"], idempotency_key="contradictory")
 
     def test_preview_conservatively_parses_separate_failures(self) -> None:
         preview = self.learning.preview_feedback(self.request_id, "第1点未完成，第2点看不到待办，其余通过")
