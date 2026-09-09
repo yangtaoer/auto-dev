@@ -62,7 +62,7 @@ from .security import hash_password, verify_password
 from .services.delivery import ArtifactService, Mailer
 from .services.blocker_summary import summarize_blocker
 from .services.tfs import TfsClient, recoverable_preflight_failure
-from .services import project_learning, model_settings, release_coordination
+from .services import project_learning, model_settings, release_coordination, task_controls
 
 
 @asynccontextmanager
@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.39",
+    version="1.0-Alpha.40",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -1778,6 +1778,52 @@ def retry_request(request_id: str, user: Annotated[dict, Depends(current_user)])
     return {"id": new_request_id, "status": RunStatus.QUEUED.value, "work_item_id": original["work_item_id"]}
 
 
+@app.post('/api/requests/{request_id}/restart')
+def restart_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
+    can_access_request(user, request_id)
+    return {'control': learning_call(task_controls.queue, request_id, 'restart', user)}
+
+
+@app.post('/api/requests/{request_id}/rollback')
+def rollback_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
+    can_access_request(user, request_id)
+    return {'control': learning_call(task_controls.queue, request_id, 'rollback', user)}
+
+
+class ControlClaimInput(BaseModel):
+    runner_id: str
+    active_ids: list[str] = Field(default_factory=list, max_length=10)
+
+
+class ControlUpdateInput(BaseModel):
+    status: Literal['running', 'waiting_merge', 'completed', 'failed']
+    message: str = Field(max_length=3000)
+    result: dict = Field(default_factory=dict)
+
+
+@app.post('/api/runner/controls/claim', dependencies=[Depends(runner_auth)])
+def runner_claim_control(payload: ControlClaimInput) -> dict:
+    return {'control': task_controls.claim(payload.runner_id, payload.active_ids)}
+
+
+@app.patch('/api/runner/controls/{control_id}', dependencies=[Depends(runner_auth)])
+def runner_update_control(control_id: str, payload: ControlUpdateInput) -> dict:
+    if not row('SELECT 1 FROM request_controls WHERE id=?', (control_id,)):
+        raise HTTPException(status_code=404, detail='操作不存在')
+    task_controls.update(control_id, **payload.model_dump())
+    return {'ok': True}
+
+
+@app.post('/api/runner/controls/{control_id}/restart', dependencies=[Depends(runner_auth)])
+def runner_restart_control(control_id: str) -> dict:
+    return {'id': learning_call(task_controls.restart, control_id)}
+
+
+@app.get('/api/runner/requests/{request_id}/status', dependencies=[Depends(runner_auth)])
+def runner_request_status(request_id: str) -> dict:
+    return row('SELECT status FROM delivery_requests WHERE id=?', (request_id,)) or {'status': None}
+
+
 def retry_linked_repair(request_id: str, user: dict) -> str:
     """Queue a fresh repair attempt with its frozen scope in the same transaction."""
     with transaction() as conn:
@@ -2021,7 +2067,7 @@ def cancel_request(request_id: str, user: Annotated[dict, Depends(current_user)]
         for child in children:
             if child["status"] in {"delivered", "failed", "rejected", "cancelled"}:
                 continue
-            update_request(child["id"], status=RunStatus.CANCELLED.value, completed_at=completed_at)
+            learning_call(task_controls.queue, child['id'], 'cancel', user)
             add_event(
                 child["id"],
                 "joint.request_cancelled",
@@ -2042,14 +2088,14 @@ def cancel_request(request_id: str, user: Annotated[dict, Depends(current_user)]
         return {"ok": True, "joint": True}
     if detail["status"] in {"delivered", "failed", "rejected", "cancelled"}:
         raise HTTPException(status_code=409, detail="任务已经结束")
-    update_request(request_id, status=RunStatus.CANCELLED.value, completed_at=utc_now())
+    control = learning_call(task_controls.queue, request_id, 'cancel', user)
     add_event(request_id, "request.cancelled", f"{user['display_name']} 取消了任务", level="warning")
     try:
         if send_cloud_email(request_id, action_required=False, terminal=True):
             add_event(request_id, "mail.terminal_sent", "已发送任务取消通知邮件", level="warning")
     except Exception as exc:
         add_event(request_id, "mail.terminal_failed", f"任务取消通知邮件发送失败：{str(exc)[:1000]}", level="error")
-    return {"ok": True}
+    return {"ok": True, "control": control}
 
 
 @app.post("/api/requests/{request_id}/simulate-merge")
@@ -2204,7 +2250,10 @@ def runner_claim(payload: RunnerIdentity) -> dict:
     """Atomically reserve one queued request for its configured local runner."""
     with transaction() as conn:
         item = conn.execute(
-            "SELECT id FROM delivery_requests WHERE runner_id=? AND status='queued' ORDER BY created_at LIMIT 1",
+            """SELECT id FROM delivery_requests r WHERE runner_id=? AND status='queued'
+               AND NOT EXISTS (SELECT 1 FROM request_controls c JOIN delivery_requests s ON s.id=c.request_id
+                 WHERE s.project_id=r.project_id AND c.action='rollback' AND c.status IN ('running','waiting_merge'))
+               ORDER BY created_at LIMIT 1""",
             (payload.runner_id,),
         ).fetchone()
         if not item:

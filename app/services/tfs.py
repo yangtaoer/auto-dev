@@ -606,3 +606,22 @@ class TfsClient:
             "source_branch": data.get("sourceRefName", "").removeprefix("refs/heads/"),
             "target_branch": data.get("targetRefName", "").removeprefix("refs/heads/"),
         }
+
+    def active_pull_requests_for_branch(self, repo_path: str, branch: str, target: str) -> list[int]:
+        repo = self.repository_info(repo_path)
+        url = f"{self.base_url}/{quote(repo.project, safe='')}/_apis/git/repositories/{repo.id}/pullRequests"
+        response = self._request('GET', url, params={'api-version': '2.0', 'searchCriteria.status': 'active',
+                'searchCriteria.sourceRefName': 'refs/heads/' + branch,
+                'searchCriteria.targetRefName': 'refs/heads/' + target})
+        return [int(pr['pullRequestId']) for pr in response.get('value', [])
+                if pr.get('sourceRefName') == 'refs/heads/' + branch and pr.get('targetRefName') == 'refs/heads/' + target]
+
+    def abandon_pull_request(self, repo_path: str, pr_id: int) -> str:
+        repo = self.repository_info(repo_path)
+        url = f"{self.base_url}/{quote(repo.project, safe='')}/_apis/git/repositories/{repo.id}/pullRequests/{pr_id}?api-version=2.0"
+        current = self._request('GET', url)
+        if current.get('status') == 'active':
+            current = self._request('PATCH', url, json={'status': 'abandoned', 'autoCompleteSetBy': None})
+        if current.get('status') not in {'abandoned', 'completed'}:
+            raise RuntimeError(f'PR #{pr_id} 未确认关闭或合并，不能继续重新开始')
+        return str(current.get('status') or '')

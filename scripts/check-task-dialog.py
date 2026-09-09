@@ -33,6 +33,8 @@ db.add_artifact(request_id, 'backend_package', 'chengdu-server-v38.zip', externa
 db.add_artifact(request_id, 'delivery_manifest', 'delivery-validation-manifest.json', external_url='https://example.invalid/manifest.json')
 blocked_id = db.create_delivery_request(project, admin['id'], 881039, project['delivery_mode'], [])
 db.update_request(blocked_id, title='【成都网络发令】复杂逻辑冲突确认', requirement_summary='1、修改当前调控班待办。', status='waiting_approval', error_message='重大代码逻辑冲突，需要明确业务取舍')
+restart_id = db.create_delivery_request(project, admin['id'], 881040, project['delivery_mode'], [])
+db.update_request(restart_id, title='重新开始测试', status='developing')
 process = subprocess.Popen([sys.executable,'-m','uvicorn','app.main:app','--host','127.0.0.1','--port','28769'],cwd=root,
                            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
 try:
@@ -116,8 +118,30 @@ try:
         assert page.locator('#task-tab-development').get_attribute('aria-selected')=='true'
         page.get_by_role('tab',name='交付概览').click()
         assert page.locator('#continuation-prompt').input_value().startswith('保持当前工作区')
+        page.locator('[data-task-action=cancel]').click()
+        page.locator('#task-action-confirm[open]').wait_for()
+        page.keyboard.press('Escape')
+        assert page.locator('#detail-drawer').get_attribute('aria-hidden')=='false'
+        page.locator('[data-task-action=cancel]').click()
+        page.locator('#confirm-task-action').click()
+        page.locator('[data-control-status=pending]').wait_for()
+        assert db.request_detail(blocked_id)['status']=='cancelled'
+        page.evaluate('(id)=>openDetail(id)',restart_id)
+        page.locator('[data-task-action=restart]').click()
+        page.locator('#confirm-task-action').click()
+        page.locator('[data-control-status=pending]').wait_for()
+        assert db.request_detail(restart_id)['controls'][0]['action']=='restart'
+        db.update_request(request_id, repository_states=[{'changed_files':['src/change.js'],'commit_hash':'a'*40}])
+        page.evaluate('(id)=>openDetail(id)',request_id)
+        page.locator('[data-task-action=rollback]').click()
+        page.locator('#task-action-confirm[open]').wait_for()
+        page.set_viewport_size({'width':390,'height':844})
+        assert page.evaluate("document.querySelector('#task-action-confirm').scrollWidth<=document.querySelector('#task-action-confirm').clientWidth")
+        page.locator('#confirm-task-action').click()
+        page.locator('[data-control-status=pending]').wait_for()
+        assert db.request_detail(request_id)['controls'][0]['action']=='rollback'
         assert not errors,errors
-        print('TASK_UI_OK: ordered tabs, products first, minimal pass/fail, optional failed points, polling drafts, mobile width, keyboard, continuation preserved; zero JS errors')
+        print('TASK_UI_OK: ordered tabs, products first, pass/fail, polling drafts, mobile width, keyboard, cancellation, restart, rollback confirmation; zero JS errors')
         browser.close()
 finally:
     process.terminate()

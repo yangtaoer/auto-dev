@@ -11,6 +11,9 @@ import shutil
 import smtplib
 import ssl
 import subprocess
+import os
+import signal
+import time
 from datetime import UTC, datetime, timedelta, timezone
 from email.headerregistry import Address
 from email.message import EmailMessage
@@ -36,10 +39,47 @@ def run_command(
     timeout_minutes: int = 60,
     *,
     env_overrides: dict[str, str] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> str:
     process_env = sanitized_process_env()
     if env_overrides:
         process_env.update({str(key): str(value) for key, value in env_overrides.items()})
+    if cancel_check:
+        cancel_check()
+        with subprocess.Popen(command, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, encoding='utf-8', errors='replace', env=process_env,
+                              start_new_session=os.name != 'nt',
+                              creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0) as process:
+            deadline = time.monotonic() + timeout_minutes * 60
+            try:
+                while True:
+                    cancel_check()
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError('构建命令执行超时')
+                    try:
+                        stdout, stderr = process.communicate(timeout=2)
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+            except BaseException:
+                if process.poll() is None:
+                    if os.name == 'nt':
+                        subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], capture_output=True, check=False)
+                    else:
+                        os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    if os.name != 'nt':
+                        os.killpg(process.pid, signal.SIGKILL)
+                    else:
+                        process.kill()
+                    process.communicate(timeout=10)
+                raise
+            cancel_check()
+            if process.returncode:
+                raise RuntimeError(f'命令执行失败 ({process.returncode}): {(stdout + stderr)[-3000:]}')
+            return (stdout + '\n' + stderr)[-5000:]
     result = subprocess.run(
         command,
         cwd=cwd,

@@ -16,7 +16,7 @@ from .db import (
     update_request, update_step, utc_now,
 )
 from .services.oss_storage import OssArtifactStorage, cleanup_local_deliveries
-from .services import project_learning, model_settings, release_coordination
+from .services import project_learning, model_settings, release_coordination, task_controls
 
 
 logger = logging.getLogger("autodev.remote_store")
@@ -28,11 +28,19 @@ class LocalStore:
     model_config = staticmethod(model_settings.for_request)
     release_claim = staticmethod(release_coordination.claim)
     release_finish = staticmethod(release_coordination.finish)
+    control_update = staticmethod(task_controls.update)
+    control_restart = staticmethod(task_controls.restart)
+
+    def claim_control(self, active_ids):
+        return task_controls.claim(settings.runner_id, active_ids)
 
     def next_queued(self) -> str | None:
         with transaction() as conn:
             item = conn.execute(
-                "SELECT id FROM delivery_requests WHERE status='queued' ORDER BY created_at LIMIT 1"
+                """SELECT id FROM delivery_requests r WHERE status='queued'
+                   AND NOT EXISTS (SELECT 1 FROM request_controls c JOIN delivery_requests s ON s.id=c.request_id
+                     WHERE s.project_id=r.project_id AND c.action='rollback' AND c.status IN ('running','waiting_merge'))
+                   ORDER BY created_at LIMIT 1"""
             ).fetchone()
             if not item:
                 return None
@@ -120,6 +128,15 @@ class LocalStore:
 
 class RemoteStore:
     """Cloud control-plane adapter used by the outbound-only Windows runner."""
+
+    def claim_control(self, active_ids):
+        return self._json(self._request('POST', '/api/runner/controls/claim', json={'runner_id': self.runner_id, 'active_ids': active_ids})).get('control')
+
+    def control_update(self, control_id, *, status, message, result):
+        return self._json(self._request('PATCH', f'/api/runner/controls/{control_id}', json={'status': status, 'message': message, 'result': result}))
+
+    def control_restart(self, control_id):
+        return self._json(self._request('POST', f'/api/runner/controls/{control_id}/restart', json={}))['id']
 
     remote = True
 
@@ -364,8 +381,7 @@ class RemoteStore:
         return remote_deleted, local_deleted
 
     def get_status(self, request_id: str) -> str | None:
-        detail = self.detail(request_id)
-        return detail["status"] if detail else None
+        return self._json(self._request('GET', f'/api/runner/requests/{request_id}/status')).get('status')
 
     def model_config(self, request_id: str) -> dict:
         return self._json(self._request("POST", f"/api/runner/requests/{request_id}/model-config"))

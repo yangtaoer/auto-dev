@@ -64,6 +64,7 @@ window.TaskDialog = (() => {
   document.addEventListener('keydown', event => {
     const root = dialog();
     if (!root?.classList.contains('open')) return;
+    if (document.querySelector('#task-action-confirm[open]')) return;
     const overlay = [...document.querySelectorAll('#artifact-preview,#experience-modal')].some(node => !node.hidden);
     const stream = document.querySelector('#devcore-stream-panel.open');
     if (overlay || stream) {

@@ -12,6 +12,27 @@ if (-not (Test-Path -LiteralPath $GitDir)) {
     throw "当前目录不是巴中项目 Git 工作区：$RepositoryRoot"
 }
 
+# A delivery package must be built from the commit already on the target branch.
+if ($env:AUTODEV_TARGET_BRANCH) { $BaseBranch = $env:AUTODEV_TARGET_BRANCH }
+if (-not $env:AUTODEV_BUILD_COMMIT) {
+    & git -C $RepositoryRoot fetch origin $BaseBranch
+    if ($LASTEXITCODE -ne 0) { throw "无法更新目标分支，未执行打包" }
+}
+$BuildCommit = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0) { throw "无法读取构建提交" }
+$RemoteCommit = (& git -C $RepositoryRoot rev-parse "refs/remotes/origin/$BaseBranch").Trim()
+if ($LASTEXITCODE -ne 0 -or $BuildCommit -ne $RemoteCommit) {
+    throw "当前提交未与 origin/$BaseBranch 一致，必须先合入目标分支再本地打包"
+}
+if ($env:AUTODEV_BUILD_COMMIT -and $BuildCommit -ne $env:AUTODEV_BUILD_COMMIT) {
+    throw "构建提交与平台冻结的已推送提交不一致，未执行打包"
+}
+Write-Host "构建基线已确认：origin/$BaseBranch @ $BuildCommit"
+$TrackedChanges = @(& git -C $RepositoryRoot diff HEAD --name-only)
+if ($LASTEXITCODE -ne 0 -or $TrackedChanges.Count -gt 0) {
+    throw "存在未提交的已跟踪文件改动，不能混入正式交付包"
+}
+
 function Invoke-Checked {
     param(
         [Parameter(Mandatory)][string]$FilePath,
@@ -80,6 +101,7 @@ if (-not (Test-Path -LiteralPath $FrontendDist -PathType Container)) { throw "�
 
 $Branch = (& git -C $RepositoryRoot branch --show-current).Trim()
 $WorkItemId = "unknown"
+if ($env:AUTODEV_WORK_ITEM_ID) { $WorkItemId = $env:AUTODEV_WORK_ITEM_ID }
 $FeaturePrefix = "feature/"
 if ($Branch.StartsWith($FeaturePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
     $CandidateWorkItemId = $Branch.Substring($FeaturePrefix.Length).Split("-")[0]
@@ -112,17 +134,27 @@ foreach ($Name in @("env.sh", "start.sh", "nginx.conf", "README.md")) {
     }
 }
 
-$ChangedPaths = & git -C $RepositoryRoot diff --name-only "origin/$BaseBranch...HEAD" --
+$ChangedPaths = if ($env:AUTODEV_CHANGED_FILES) {
+    @($env:AUTODEV_CHANGED_FILES | ConvertFrom-Json)
+} else {
+    @(& git -C $RepositoryRoot diff-tree --no-commit-id --name-only -r HEAD)
+}
 foreach ($RelativePath in $ChangedPaths) {
+    $ResolvedSource = [System.IO.Path]::GetFullPath((Join-Path $RepositoryRoot $RelativePath))
+    if (-not $ResolvedSource.StartsWith($RepositoryRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "本次改动清单包含工作区之外的路径"
+    }
     $Normalized = $RelativePath.Replace("/", "\")
     if ($RelativePath -match "\.sql$") {
         $SqlSource = Join-Path $RepositoryRoot $Normalized
         if (Test-Path -LiteralPath $SqlSource -PathType Leaf) {
-            Copy-Item -LiteralPath $SqlSource -Destination (Join-Path $ReleaseDir "sql")
+            $SqlDestination = Join-Path (Join-Path $ReleaseDir "sql") $Normalized
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $SqlDestination) | Out-Null
+            Copy-Item -LiteralPath $SqlSource -Destination $SqlDestination
         }
     }
 }
-if (-not (Get-ChildItem -LiteralPath (Join-Path $ReleaseDir "sql") -File -ErrorAction SilentlyContinue)) {
+if (-not (Get-ChildItem -LiteralPath (Join-Path $ReleaseDir "sql") -File -Recurse -ErrorAction SilentlyContinue)) {
     Remove-Item -LiteralPath (Join-Path $ReleaseDir "sql") -Force
 }
 
@@ -132,6 +164,7 @@ $ReleaseNotes = @(
     "- TFS 需求：#$WorkItemId"
     "- 来源分支：$Branch"
     "- 基础分支：$BaseBranch"
+    "- 已推送构建提交：$BuildCommit"
     "- 生成时间：$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     "- 后端：th-dc-biz-bazhong.jar"
     "- 前端：dist/"

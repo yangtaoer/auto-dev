@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="/static/learning-ui.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/task-dialog.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/dashboard-compact.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/task-actions.css?v={{ app_version }}">
 </head>
 <body>
   <div class="app-shell">
@@ -245,6 +246,7 @@
     }, {once: true});
   </script>
   <script src="/static/task-dialog.js?v={{ app_version }}"></script>
+  <script src="/static/task-actions.js?v={{ app_version }}"></script>
   <script src="/static/app.js?v={{ app_version }}"></script>
   <script src="/static/learning-ui.js?v={{ app_version }}"></script>
   {% if user.role == 'admin' %}<link rel="stylesheet" href="/static/model-settings.css?v={{ app_version }}"><script src="/static/model-settings.js?v={{ app_version }}"></script>{% endif %}

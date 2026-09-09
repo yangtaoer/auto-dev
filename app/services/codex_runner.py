@@ -275,6 +275,7 @@ class CodexRunner:
         supplement_answers: list[dict[str, Any]] | None = None,
         task_type: str = "development",
         model_config: dict[str, str] | None = None,
+        is_cancelled: Callable[[], bool] | None = None,
     ) -> CodexRunResult:
         from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox, SkillInput, TextInput
 
@@ -487,7 +488,17 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                 effort=execution["effort"],
                 output_schema=ANALYSIS_RESULT_SCHEMA if task_type == "analysis" else RESULT_SCHEMA,
             )
-            final_text = self._collect_output(handle.stream(), on_event, on_live_event, task_type=task_type)
+            from .task_cancellation import TaskCancelled, interrupt_on_cancel
+            cancelled = is_cancelled or (lambda: False)
+            with interrupt_on_cancel(handle, cancelled):
+                try:
+                    final_text = self._collect_output(handle.stream(), on_event, on_live_event, task_type=task_type)
+                except Exception:
+                    if cancelled():
+                        raise TaskCancelled('任务已取消') from None
+                    raise
+                if cancelled():
+                    raise TaskCancelled('任务已取消')
         try:
             parsed = json.loads(final_text)
         except json.JSONDecodeError as exc:

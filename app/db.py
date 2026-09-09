@@ -168,6 +168,21 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_active_work_item
 ON delivery_requests(project_id, work_item_id)
 WHERE status NOT IN ('delivered','rejected','failed','cancelled');
+CREATE TABLE IF NOT EXISTS request_controls (
+    id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL REFERENCES delivery_requests(id),
+    action TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    actor_id INTEGER NOT NULL REFERENCES users(id),
+    runner_id TEXT NOT NULL,
+    result TEXT NOT NULL DEFAULT '{}',
+    message TEXT NOT NULL DEFAULT '',
+    next_poll_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_request_control_active ON request_controls(request_id)
+WHERE status IN ('pending','running','waiting_merge');
 CREATE TABLE IF NOT EXISTS request_intakes (
     id TEXT PRIMARY KEY,
     work_item_id INTEGER NOT NULL,
@@ -816,6 +831,12 @@ def update_request(request_id: str, **fields: Any) -> None:
     fields["updated_at"] = utc_now()
     assignments = ",".join(f"{key}=?" for key in fields)
     with transaction() as conn:
+        current = conn.execute("SELECT status FROM delivery_requests WHERE id=?", (request_id,)).fetchone()
+        if current and current['status'] == 'cancelled' and fields.get('status', 'cancelled') != 'cancelled':
+            # Cancellation is terminal even when an in-flight runner sends a late write.
+            fields.pop('status', None)
+            fields.pop('completed_at', None)
+            assignments = ",".join(f"{key}=?" for key in fields)
         conn.execute(f"UPDATE delivery_requests SET {assignments} WHERE id=?", (*fields.values(), request_id))
     if fields.get("status") == "delivered":
         from .services.project_learning import sync_experience
@@ -913,6 +934,9 @@ def request_detail(request_id: str) -> dict[str, Any] | None:
     )
     request["policy_snapshot"] = json_value(request["policy_snapshot"], {})
     request["repository_states"] = json_value(request.get("repository_states"), [])
+    request["controls"] = rows("SELECT * FROM request_controls WHERE request_id=? ORDER BY created_at DESC", (request_id,))
+    for control in request["controls"]:
+        control['result'] = json_value(control['result'], {})
     request["supplement_requests"] = json_value(request.get("supplement_requests"), [])
     request["supplement_answers"] = json_value(request.get("supplement_answers"), [])
     request["analysis_result"] = json_value(request.get("analysis_result"), {})

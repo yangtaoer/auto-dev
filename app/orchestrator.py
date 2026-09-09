@@ -25,6 +25,7 @@ from .domain import (
     TaskType,
 )
 from .services.codex_runner import CodexRunner
+from .services.task_cancellation import TaskCancelled as Cancelled
 from .services.commit_policy import (
     assert_delivery_history, committable_changes, stage_delivery_changes, preserve_validation_before_sync,
 )
@@ -52,10 +53,6 @@ from .store import LocalStore
 
 
 logger = logging.getLogger("autodev.worker")
-
-
-class Cancelled(RuntimeError):
-    pass
 
 
 class Worker:
@@ -125,6 +122,7 @@ class Worker:
                 self.stop_event.wait(settings.poll_seconds)
 
     def process_once(self) -> bool:
+        controlled = self._process_control()
         routed = False
         if self.store.remote:
             intake = self.store.claim_intake()
@@ -149,7 +147,7 @@ class Worker:
             finally:
                 self._set_active(waiting, False)
             return True
-        return routed
+        return routed or controlled
 
     def _route_intake(self, intake: dict) -> None:
         try:
@@ -174,6 +172,59 @@ class Worker:
                 intake["id"], intake["work_item_id"], message,
             )
 
+    def _process_control(self) -> bool:
+        claim = getattr(self.store, 'claim_control', None)
+        if not callable(claim):
+            return False
+        with self._active_lock:
+            control = claim(self.current_request_ids)
+            if not isinstance(control, dict):
+                return False
+            self._set_active(control['request_id'], True)
+        def save(status, message, result):
+            control['result'] = result
+            self.store.control_update(control['id'], status=status, message=message, result=result)
+        try:
+            detail = self.store.detail(control['request_id'])
+            if control['action'] == 'rollback':
+                from .services.code_rollback import execute
+                save(*execute(control, detail, save))
+            else:
+                result = control.get('result') or {}
+                result['pull_requests'] = []
+                if not detail['policy_snapshot'].get('simulation_mode'):
+                    tfs = TfsClient(detail['policy_snapshot']['tfs_collection_url'])
+                    for state in detail.get('repository_states') or []:
+                        ids = {int(state['pr_id'])} if state.get('pr_id') else set()
+                        if state.get('branch') and state.get('status') not in {'prepared', 'base_synced'}:
+                            # A create-PR response may have been lost after TFS accepted it.
+                            ids.update(tfs.active_pull_requests_for_branch(state['repository_path'], state['branch'], state.get('base_branch') or detail['policy_snapshot'].get('base_branch') or 'dev'))
+                        for pr_id in sorted(ids):
+                            status = tfs.abandon_pull_request(state['repository_path'], pr_id)
+                            result['pull_requests'].append({'id': pr_id, 'status': status})
+                save('running', '原任务已停止；未合并 PR 已关闭，已合并代码保留', result)
+                if control['action'] == 'restart':
+                    request_id = self.store.control_restart(control['id'])
+                    result['new_request_id'] = request_id
+                    save('completed', '已从最新目标分支重新排队，使用新会话与新工作区', result)
+                else:
+                    save('completed', '任务已停止；已合并代码与已启动的外部发版不自动撤销', result)
+        except Exception as exc:
+            save('failed', str(exc)[:3000], control.get('result') or {})
+        finally:
+            self._set_active(control['request_id'], False)
+        return True
+
+    @staticmethod
+    def _verify_build_baseline(worktree: Path, state: dict) -> None:
+        target = state.get('base_branch') or 'dev'
+        env = git_authenticated_env(settings.tfs_pat) if settings.tfs_pat else sanitized_process_env()
+        git(worktree, 'fetch', 'origin', target, env=env)
+        head = git(worktree, 'rev-parse', 'HEAD')
+        remote = git(worktree, 'rev-parse', f'origin/{target}')
+        if head != remote or head != state.get('base_branch_commit'):
+            raise RuntimeError(f'{state.get("name", "仓库")} 构建提交与已推送的最新 {target} 不一致，未执行打包')
+
     def run_request(self, request_id: str) -> None:
         detail = self.store.detail(request_id)
         if not detail:
@@ -182,6 +233,7 @@ class Worker:
         task_type = str(detail.get("task_type") or TaskType.DEVELOPMENT.value)
         analysis_task = task_type == TaskType.ANALYSIS.value
         try:
+            self._check_cancelled(request_id)
             self.store.update_request(request_id, status=RunStatus.VALIDATING.value, started_at=detail.get("started_at") or utc_now(), progress=5)
             self.store.update_step(request_id, "validate", "running", "正在读取并校验 TFS 需求")
             work_item = self._validate(detail, project)
@@ -533,6 +585,7 @@ class Worker:
                     )
                     state["commit_hash"] = commit_hash
                     state["status"] = "pushed"
+                    self.store.update_request(request_id, repository_states=repository_states)
                     commits.append(commit_hash)
                     if mode in {DeliveryMode.LOCAL_PACKAGE, DeliveryMode.SICHUAN_REVIEW_LOCAL_PACKAGE}:
                         self.artifacts.collect_changed_assets(
@@ -578,6 +631,7 @@ class Worker:
                     verification_command,
                     worktree,
                     env_overrides=self._build_environment(detail, changed_states),
+                    cancel_check=lambda: self._check_cancelled(request_id),
                 )
                 self.store.add_event(request_id, "verification.completed", "PR 前构建/校验通过", metadata={"output_tail": output[-1000:]})
 
@@ -597,6 +651,7 @@ class Worker:
                         target_branch=state["base_branch"],
                     )
                     state.update({"pr_id": pr["id"], "pr_url": pr["url"], "status": "waiting_merge"})
+                    self.store.update_request(request_id, repository_states=repository_states)
                     pull_requests.append((state, pr))
                 self.store.update_request(request_id, repository_states=repository_states)
             primary_pr = pull_requests[0][1]
@@ -610,6 +665,7 @@ class Worker:
                 else:
                     tfs = TfsClient(project["tfs_collection_url"])
                     for state, pr in pull_requests:
+                        self._check_cancelled(request_id)
                         tfs.approve_pull_request(state["repository_path"], pr["id"])
                     self.store.add_event(
                         request_id,
@@ -659,7 +715,8 @@ class Worker:
         """Let the same Codex thread repair ordinary gaps before escalating anything."""
         for attempt in range(3):
             self._check_cancelled(request_id)
-            run = CodexRunner().run(**kwargs)
+            run = CodexRunner().run(**kwargs, is_cancelled=lambda: self.store.get_status(request_id) == 'cancelled')
+            self._check_cancelled(request_id)
             self.store.update_request(request_id, codex_thread_id=run.thread_id)
             if kwargs.get("task_type") == "analysis":
                 return run
@@ -867,6 +924,15 @@ class Worker:
         item = TfsClient(project["tfs_collection_url"]).get_work_item(detail["work_item_id"])
         allowed_types = project.get("allowed_work_item_types") or ["用户情景"]
         allowed_states = list(project.get("allowed_states") or ["已评审"])
+        restart_source = (detail.get('repair_context') or {}).get('_restart_source_id')
+        if restart_source:
+            source = self.store.detail(restart_source)
+            if (not source or source.get('status') != 'cancelled'
+                    or source.get('project_id') != detail.get('project_id')
+                    or source.get('work_item_id') != detail.get('work_item_id')
+                    or not any(c.get('action') == 'restart' and c.get('result', {}).get('new_request_id') == detail['id'] for c in source.get('controls', []))):
+                raise RuntimeError('重新开始的来源任务无法核验')
+            allowed_states.extend(['已解决', '已关闭'])
         if detail.get("parent_request_id"):
             parent = self.store.detail(detail["parent_request_id"])
             if not parent or parent.get("status") != RunStatus.DELIVERED.value or (
@@ -1166,6 +1232,7 @@ class Worker:
             pass
 
     def _commit_and_push(self, worktree: Path, detail: dict, work_item: dict, project: dict, branch: str, *, base_commit: str | None = None) -> str:
+        self._check_cancelled(detail['id'])
         title = re.sub(r"[\r\n]+", " ", work_item["title"]).strip()[:72]
         area = work_item.get("area_path", "").split("\\")[-1] or project.get("name", "项目")
         subject = f"feat(#{work_item['id']}):{area}-{title}"
@@ -1187,6 +1254,7 @@ class Worker:
         git(worktree, "commit", "--no-verify", "-m", subject)
         commit_hash = git(worktree, "rev-parse", "HEAD")
         push_env = git_authenticated_env(settings.tfs_pat) if settings.tfs_pat else sanitized_process_env()
+        self._check_cancelled(detail['id'])
         git(worktree, "push", "--no-verify", "-u", "origin", branch, env=push_env)
         self.store.add_event(detail["id"], "git.pushed", subject, metadata={"branch": branch, "commit": commit_hash})
         return commit_hash
@@ -1210,6 +1278,10 @@ class Worker:
             feature_branch = str(state["branch"])
             changed = repository_name in changed_names
 
+            def record_commits(commits):
+                state['delivered_commits'] = commits
+                self.store.update_request(request_id, repository_states=repository_states)
+
             stash = preserve_validation_before_sync(worktree)
             if stash:
                 state["local_validation_stash"] = stash
@@ -1222,6 +1294,8 @@ class Worker:
                 target_branch=target_branch,
                 changed=changed,
                 git_env=git_env,
+                cancel_check=lambda: self._check_cancelled(request_id),
+                on_delivery_commits=record_commits,
             )
             state["commit_hash"] = final_commit
             state["base_branch_commit"] = final_commit
@@ -1264,10 +1338,14 @@ class Worker:
         target_branch: str,
         changed: bool,
         git_env: dict[str, str],
+        cancel_check=None,
+        on_delivery_commits=None,
     ) -> str:
         remote_target = f"origin/{target_branch}"
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
+            if cancel_check:
+                cancel_check()
             git(worktree, "fetch", "origin", target_branch, env=git_env)
             if changed:
                 rebase = subprocess.run(
@@ -1293,7 +1371,14 @@ class Worker:
                     )
 
                 # 功能分支此前已推送；rebase 可能改变提交号，只允许覆盖本任务自己的远端功能分支。
+                if cancel_check:
+                    cancel_check()
+                delivery_commits = git(worktree, 'rev-list', '--reverse', f'{remote_target}..HEAD').splitlines()
+                if delivery_commits and on_delivery_commits:
+                    on_delivery_commits(delivery_commits)
                 git(worktree, "push", "--no-verify", "--force-with-lease", "origin", feature_branch, env=git_env)
+                if cancel_check:
+                    cancel_check()
                 push = subprocess.run(
                     ["git", "-C", str(worktree), "push", "--no-verify", "origin", f"HEAD:refs/heads/{target_branch}"],
                     capture_output=True,
@@ -1343,6 +1428,7 @@ class Worker:
         *,
         target_branch: str | None = None,
     ) -> dict:
+        self._check_cancelled(request_id)
         if project.get("simulation_mode"):
             pr_id = 8000 + int(work_item["id"]) % 1000
             url = f"{project['tfs_collection_url']}/{project['tfs_project']}/_git/demo/pullrequest/{pr_id}"
@@ -1355,6 +1441,7 @@ class Worker:
         return {"id": int(result["PullRequestId"]), "url": result["WebUrl"]}
 
     def _deliver_local_package(self, request_id: str, detail: dict, project: dict, worktree: Path | None, work_item: dict) -> None:
+        self._check_cancelled(request_id)
         self.store.update_request(request_id, status=RunStatus.BUILDING.value, current_step="deliver", progress=74)
         self.store.update_step(request_id, "deliver", "running", "代码已提交目标分支；正在基于最新目标分支强制构建并归集交付物")
         if project.get("simulation_mode"):
@@ -1363,7 +1450,17 @@ class Worker:
             build_command = project.get("build_command", "").strip()
             if not build_command:
                 raise RuntimeError("本地打包交付方式必须配置 build_command")
-            output = run_command(build_command, worktree)
+            latest = self.store.detail(request_id)
+            states = latest.get('repository_states') or []
+            for state in states:
+                self._verify_build_baseline(Path(state['worktree_path']), state)
+            build_env = self._build_environment(latest, states)
+            primary = next((s for s in states if Path(s['worktree_path']) == worktree), states[0] if states else {})
+            build_env.update(AUTODEV_BUILD_COMMIT=str(primary.get('base_branch_commit') or ''),
+                             AUTODEV_DELIVERY_BASE_COMMIT=str(primary.get('base_commit') or ''),
+                             AUTODEV_CHANGED_FILES=json.dumps(primary.get('changed_files') or [], ensure_ascii=False),
+                             AUTODEV_TARGET_BRANCH=str(primary.get('base_branch') or project.get('base_branch') or 'dev'))
+            output = run_command(build_command, worktree, env_overrides=build_env, cancel_check=lambda: self._check_cancelled(request_id))
             self.store.add_event(request_id, "build.completed", "本地构建命令执行成功", metadata={"output_tail": output[-1000:]})
             self.artifacts.collect_packages(
                 request_id,
@@ -1440,6 +1537,7 @@ class Worker:
             build_command,
             workspace_root,
             env_overrides=self._build_environment(detail, changed_states),
+            cancel_check=lambda: self._check_cancelled(request_id),
         )
         self.store.add_event(
             request_id,
@@ -1606,6 +1704,7 @@ class Worker:
 
     def _complete_analysis(self, request_id: str, result: dict) -> None:
         """Persist and deliver a read-only problem-analysis result without entering the code pipeline."""
+        self._check_cancelled(request_id)
         detail = self.store.detail(request_id)
         if not detail:
             raise RuntimeError("问题分析任务不存在")
@@ -1640,6 +1739,7 @@ class Worker:
         detail = self.store.detail(request_id) or detail
 
         if not project.get("simulation_mode"):
+            self._check_cancelled(request_id)
             manifest = self._analysis_manifest_html(detail, result)
             tfs_client = TfsClient(project["tfs_collection_url"])
             if detail.get("joint_group_id") and self.store.remote:
@@ -1658,6 +1758,7 @@ class Worker:
                     metadata={"tfs": tfs_result},
                 )
 
+        self._check_cancelled(request_id)
         completed_at = utc_now()
         self.store.update_request(request_id, completed_at=completed_at)
         if detail.get("joint_group_id") and self.store.remote:
@@ -1788,6 +1889,7 @@ class Worker:
         )
 
     def _complete_delivery(self, request_id: str) -> None:
+        self._check_cancelled(request_id)
         detail = self.store.detail(request_id)
         project = detail["policy_snapshot"]
         options = self._delivery_options(detail)
@@ -1810,6 +1912,7 @@ class Worker:
             reason = "本地打包项目不执行 TFS 自动发版" if detail["delivery_mode"] not in REVIEW_DELIVERY_MODES else "发起人未选择自动发版"
             self.store.update_step(request_id, "release", "skipped", reason)
         self.store.update_request(request_id, status=RunStatus.DELIVERING.value, current_step="deliver", progress=96)
+        self._check_cancelled(request_id)
         if (
             detail["delivery_mode"] in REVIEW_DELIVERY_MODES
             and DELIVERY_OPTION_LICENSE_REQUEST in options
@@ -1843,6 +1946,7 @@ class Worker:
             self.store.add_event(request_id, "artifact.manifest_created", "已生成交付文件 SHA256 与构建提交清单")
             detail = self.store.detail(request_id)
         if detail.get("joint_group_id") and self.store.remote:
+            self._check_cancelled(request_id)
             completed_at = utc_now()
             self.store.update_request(
                 request_id,
@@ -1868,6 +1972,7 @@ class Worker:
                 self.store.add_event(request_id, "joint.delivery_completed", "全部联合项目已完成并汇总交付")
             return
         if not project.get("simulation_mode"):
+            self._check_cancelled(request_id)
             manifest = self.artifacts.delivery_manifest_html(detail)
             tfs_result = TfsClient(project["tfs_collection_url"]).complete_delivery(
                 detail["work_item_id"], manifest, actual_version="V1.0"
@@ -1881,6 +1986,7 @@ class Worker:
         # Freeze the completion timestamp before rendering the final email so the
         # timeline never falls back to the misleading "进行中" placeholder.
         completed_at = utc_now()
+        self._check_cancelled(request_id)
         self.store.update_request(request_id, completed_at=completed_at)
         self._send_status_email(request_id, action_required=False)
         self.store.update_request(request_id, status=RunStatus.DELIVERED.value, current_step="deliver", progress=100)
@@ -1990,6 +2096,7 @@ class Worker:
                 metadata=plan,
             )
             result = service.run(str(project.get("name") or detail.get("project_name") or ""))
+            self._check_cancelled(request_id)
             if result.get("retryCount"):
                 failed_builds = [
                     f"#{item.get('buildId')}"
@@ -2269,6 +2376,9 @@ class Worker:
         self._send_terminal_email(request_id)
 
     def _fail(self, request_id: str, exc: Exception) -> None:
+        if self.store.get_status(request_id) == 'cancelled':
+            self._cancel(request_id)
+            return
         message = str(exc)[:3000]
         logger.exception("研发任务失败 request_id=%s: %s", request_id, message)
         detail = self.store.detail(request_id)
