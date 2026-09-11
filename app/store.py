@@ -58,14 +58,14 @@ class LocalStore:
         with transaction() as conn:
             item = conn.execute(
                 """SELECT id FROM delivery_requests
-                   WHERE status IN ('waiting_merge','waiting_release','waiting_retry') AND (next_poll_at IS NULL OR next_poll_at<=?)
+                   WHERE status IN ('waiting_merge','waiting_release','waiting_retry','waiting_analysis_sync') AND (next_poll_at IS NULL OR next_poll_at<=?)
                    ORDER BY updated_at LIMIT 1""",
                 (now,),
             ).fetchone()
             if not item:
                 return None
             conn.execute(
-                "UPDATE delivery_requests SET next_poll_at=?,updated_at=? WHERE id=? AND status IN ('waiting_merge','waiting_release','waiting_retry')",
+                "UPDATE delivery_requests SET next_poll_at=?,updated_at=? WHERE id=? AND status IN ('waiting_merge','waiting_release','waiting_retry','waiting_analysis_sync')",
                 (lease_until, now, item["id"]),
             )
             return item["id"]

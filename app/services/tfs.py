@@ -111,6 +111,8 @@ class TfsClient:
             "iteration_path": fields.get("System.IterationPath", ""),
             "description": fields.get("System.Description", ""),
             "acceptance_criteria": fields.get("Microsoft.VSTS.Common.AcceptanceCriteria", ""),
+            "actual_delivery_version": fields.get(ACTUAL_DELIVERY_VERSION_FIELD, ""),
+            "delivery_artifacts": fields.get(DELIVERY_ARTIFACTS_FIELD, ""),
             "relations": item.get("relations", []),
         }
 
@@ -248,13 +250,24 @@ class TfsClient:
         """Publish an analysis report and resolve the TFS item without inventing a release version."""
         work_item = self.get_work_item(work_item_id)
         previous_state = str(work_item.get("state") or "")
+        # Reconcile before retrying: a lost PATCH response may already have resolved
+        # the item. Do not replay a state transition or overwrite a newer version.
+        if previous_state == resolved_state and work_item.get("delivery_artifacts") == html_value:
+            return {"previous_state": previous_state, "state": previous_state}
         patch = [
             {"op": "add", "path": f"/fields/{DELIVERY_ARTIFACTS_FIELD}", "value": html_value}
         ]
+        if not str(work_item.get("actual_delivery_version") or "").strip():
+            patch.append({
+                "op": "add", "path": f"/fields/{ACTUAL_DELIVERY_VERSION_FIELD}",
+                "value": "不适用（问题分析，无代码发版）",
+            })
         if previous_state != resolved_state:
             patch.append(
                 {"op": "replace", "path": "/fields/System.State", "value": resolved_state}
             )
+        if work_item.get("revision") is not None:
+            patch.insert(0, {"op": "test", "path": "/rev", "value": work_item["revision"]})
         updated = self._request(
             "PATCH",
             f"{self.base_url}/_apis/wit/workitems/{work_item_id}?api-version=2.0",

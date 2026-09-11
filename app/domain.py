@@ -98,6 +98,7 @@ class RunStatus(StrEnum):
     WAITING_MERGE = "waiting_merge"
     WAITING_RELEASE = "waiting_release"
     WAITING_RETRY = "waiting_retry"
+    WAITING_ANALYSIS_SYNC = "waiting_analysis_sync"
     CAPTURING = "capturing"
     DELIVERING = "delivering"
     DELIVERED = "delivered"
@@ -126,6 +127,7 @@ STATUS_LABELS = {
     RunStatus.WAITING_MERGE: "等待 PR 合并",
     RunStatus.WAITING_RELEASE: "等待同项目合并发版",
     RunStatus.WAITING_RETRY: "连接恢复后自动重试",
+    RunStatus.WAITING_ANALYSIS_SYNC: "分析完成，待同步交付",
     RunStatus.CAPTURING: "生成合并凭证",
     RunStatus.DELIVERING: "发送交付邮件",
     RunStatus.DELIVERED: "已交付",
@@ -138,6 +140,8 @@ STATUS_LABELS = {
 
 
 ANALYSIS_STATUS_LABELS = {
+    RunStatus.WAITING_ANALYSIS_SYNC: "分析完成，待同步交付",
+    RunStatus.WAITING_RETRY: "连接恢复后自动重试",
     RunStatus.QUEUED: "等待分析",
     RunStatus.VALIDATING: "问题准入校验",
     RunStatus.DEVELOPING: "DevCore 分析中",

@@ -13,6 +13,7 @@ const TERMINAL = new Set(['delivered','failed','rejected','cancelled']);
 STATUS.waiting_release='等待同项目合并发版';
 STATUS.waiting_retry='连接恢复后自动重试';
 ANALYSIS_STATUS.waiting_retry=STATUS.waiting_retry;
+STATUS.waiting_analysis_sync=ANALYSIS_STATUS.waiting_analysis_sync='分析完成，待同步交付';
 const escapeHtml = (value='') => String(value).replace(/[&<>'"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const fmt = value => value ? new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(value)) : '—';
 const fmtStepTime = value => value ? new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date(value)) : '—';
@@ -322,7 +323,8 @@ function renderDetail(d){
   const events=d.events.slice(0,20).map(e=>`<div class="event"><b>${escapeHtml(engineText(e.event_type))} · ${fmt(e.created_at)}</b><p>${escapeHtml(engineText(e.message))}</p></div>`).join('');
   const simulate=USER.role==='admin'&&d.status==='waiting_merge'&&d.policy_snapshot.simulation_mode?`<button class="btn btn-secondary" id="simulate-merge">模拟 PR 已合并</button>`:'';
   const cancel=TaskActions.render(d);
-  const retry=d.can_manage_request!==false&&d.status==='failed'&&!isJoint?`<button class="btn btn-secondary retry-run" id="retry-run">重新发起 ↻</button>`:'';
+  const reportSync=isAnalysisTask(d)&&d.current_step==='deliver'&&Object.keys(d.analysis_result||{}).length>0&&files.some(isAnalysisReport)&&['failed','waiting_analysis_sync'].includes(d.status);
+  const retry=d.can_manage_request!==false&&!isJoint&&(d.status==='failed'||reportSync)?`<button class="btn btn-secondary retry-run" id="retry-run">${reportSync?'重试报告同步':'重新发起'} ↻</button>`:'';
   const continuation=USER.role==='admin'&&(d.status==='waiting_approval'||d.can_continue_in_place)?renderContinuationPanel(d):'';
   const blockerBrief=d.status==='waiting_approval'?renderBlockerSummary(d):'';
   const live=d.status==='developing'?`<button class="btn btn-live" id="open-devcore-stream"><i></i>查看${isAnalysisTask(d)?'分析':'研发'}过程</button>`:'';
@@ -357,7 +359,7 @@ function renderDetail(d){
   document.querySelectorAll('[data-joint-child-id]').forEach(button=>button.onclick=()=>openDetail(button.dataset.jointChildId));
   document.querySelector('#open-devcore-stream')?.addEventListener('click',()=>openDevCoreStream(d.id,d.work_item_id,d));
   document.querySelector('#simulate-merge')?.addEventListener('click',async()=>{try{await api(`/api/requests/${d.id}/simulate-merge`,{method:'POST'});toast('已模拟合并，正在生成交付物');await refresh()}catch(e){toast(e.message)}});
-  document.querySelector('#retry-run')?.addEventListener('click',async event=>{if(!confirm('确认重新发起这个失败任务？系统会创建一条新的排队任务。'))return;const button=event.currentTarget;button.disabled=true;try{const result=await api(`/api/requests/${d.id}/retry`,{method:'POST'});toast('已重新发起，任务进入队列');await refresh();await openDetail(result.id)}catch(e){toast(e.message);button.disabled=false}});
+  document.querySelector('#retry-run')?.addEventListener('click',async event=>{if(!confirm(reportSync?'复用已有报告重试 TFS 同步和通知？不会重新分析或创建任务。':'确认重新发起这个失败任务？系统会创建一条新的排队任务。'))return;const button=event.currentTarget;button.disabled=true;try{const result=await api(`/api/requests/${d.id}/${reportSync?'retry-analysis-sync':'retry'}`,{method:'POST'});toast(result.reuse_report?'已安排报告同步，不重新执行分析':'已重新发起，任务进入队列');await refresh();await openDetail(result.id)}catch(e){toast(e.message);button.disabled=false}});
   document.querySelector('#continuation-prompt')?.addEventListener('input',event=>state.continuationDrafts.set(d.id,event.currentTarget.value));
   document.querySelector('#continuation-form')?.addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector('button[type="submit"]'),error=form.querySelector('.continuation-error'),prompt=form.elements.prompt.value.trim();error.hidden=true;button.disabled=true;try{await api(`/api/requests/${d.id}/continue`,{method:'POST',body:JSON.stringify({prompt})});state.continuationDrafts.delete(d.id);toast('已继续执行，将复用原工作区和 DevCore 会话');state.selectedTerminal=false;await refresh();await openDetail(d.id)}catch(e){error.textContent=e.message;error.hidden=false;button.disabled=false}});
   document.querySelector('#supplement-form')?.addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector('button[type="submit"]'),error=form.querySelector('.supplement-error');const answers=[...form.querySelectorAll('.supplement-answer')].map(input=>({id:input.dataset.id,answer:input.value.trim()})).filter(item=>item.answer);error.hidden=true;button.disabled=true;try{await api(`/api/requests/${d.id}/supplement`,{method:'POST',body:JSON.stringify({answers})});toast(`补充信息已提交，任务重新进入${isAnalysisTask(d)?'分析':'研发'}队列`);state.selectedTerminal=false;await refresh();await openDetail(d.id)}catch(e){error.textContent=e.message;error.hidden=false;button.disabled=false}});

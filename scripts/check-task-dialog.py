@@ -35,6 +35,10 @@ blocked_id = db.create_delivery_request(project, admin['id'], 881039, project['d
 db.update_request(blocked_id, title='【成都网络发令】复杂逻辑冲突确认', requirement_summary='1、修改当前调控班待办。', status='waiting_approval', error_message='重大代码逻辑冲突，需要明确业务取舍')
 restart_id = db.create_delivery_request(project, admin['id'], 881040, project['delivery_mode'], [])
 db.update_request(restart_id, title='重新开始测试', status='developing')
+analysis_id = db.create_delivery_request(project, admin['id'], 881041, 'local_package', [], [], task_type='analysis')
+db.update_request(analysis_id, title='分析已完成但 TFS 同步失败', status='failed', current_step='deliver',
+                  analysis_result={'decision':'completed','summary':'数据关联缺失，分析报告已生成'})
+db.add_artifact(analysis_id, 'analysis_report', 'TFS-881041-问题分析报告.md', external_url='https://example.invalid/report.md')
 process = subprocess.Popen([sys.executable,'-m','uvicorn','app.main:app','--host','127.0.0.1','--port','28769'],cwd=root,
                            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
 try:
@@ -140,6 +144,16 @@ try:
         page.locator('#confirm-task-action').click()
         page.locator('[data-control-status=pending]').wait_for()
         assert db.request_detail(request_id)['controls'][0]['action']=='rollback'
+        page.evaluate('(id)=>openDetail(id)',analysis_id)
+        page.locator('#retry-run').wait_for()
+        assert page.locator('#retry-run').inner_text() == '重试报告同步 ↻'
+        assert page.locator('#task-panel-overview .analysis-report-artifact').count() == 1
+        page.once('dialog',lambda d:d.accept())
+        page.locator('#retry-run').click()
+        page.wait_for_function("document.querySelector('.detail-head')?.textContent.includes('分析完成，待同步交付')")
+        assert db.request_detail(analysis_id)['status']=='waiting_analysis_sync'
+        assert len(db.request_detail(analysis_id)['artifacts'])==1
+        assert page.locator('#task-panel-overview .analysis-report-artifact').count()==1
         assert not errors,errors
         print('TASK_UI_OK: ordered tabs, products first, pass/fail, polling drafts, mobile width, keyboard, cancellation, restart, rollback confirmation; zero JS errors')
         browser.close()

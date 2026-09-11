@@ -818,7 +818,8 @@ class WorkflowTests(unittest.TestCase):
             patch_body,
         )
         self.assertIn({"op": "replace", "path": "/fields/System.State", "value": "已解决"}, patch_body)
-        self.assertFalse(any(item["path"] == f"/fields/{ACTUAL_DELIVERY_VERSION_FIELD}" for item in patch_body))
+        self.assertIn({"op": "add", "path": f"/fields/{ACTUAL_DELIVERY_VERSION_FIELD}",
+                       "value": "不适用（问题分析，无代码发版）"}, patch_body)
         self.assertEqual(result, {"previous_state": "已评审", "state": "已解决"})
         orchestrator_source = Path("app/orchestrator.py").read_text(encoding="utf-8")
         main_source = Path("app/main.py").read_text(encoding="utf-8")
@@ -2117,7 +2118,7 @@ else:
         self.assertEqual(visible["status"], "routing")
 
         page = self.client.get("/")
-        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.40"), 1)
+        self.assertEqual(page.text.count("SYSTEM V1.0-Alpha.41"), 1)
         self.assertIn("/static/editorial-ui.css", page.text)
         self.assertIn("AutoDev", page.text)
         self.assertIn("/static/brand/autodev-sidebar-mark.png", page.text)
@@ -2410,15 +2411,15 @@ else:
         self.assertIn("<span>自主项目</span>", admin_page.text)
         self.client.post("/api/auth/logout")
         login_page = self.client.get("/login")
-        self.assertIn("editorial-ui.css?v=1.0-Alpha.40-login", login_page.text)
-        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.40", login_page.text)
+        self.assertIn("editorial-ui.css?v=1.0-Alpha.41-login", login_page.text)
+        self.assertIn("autodev-sidebar-mark.png?v=1.0-Alpha.41", login_page.text)
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")
         self.assertNotIn("<span>自主项目</span>", pm_page.text)
         self.assertIn('id="project-guide"', pm_page.text)
         self.assertIn("支持项目与别名", pm_page.text)
-        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.40"), 1)
+        self.assertEqual(pm_page.text.count("SYSTEM V1.0-Alpha.41"), 1)
         self.assertNotIn("系统版本 / VERSION", pm_page.text)
         self.assertNotIn("sidebar-version", pm_page.text)
 

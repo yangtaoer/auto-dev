@@ -39,6 +39,7 @@ from .services.delivery import (
     run_command,
 )
 from .services.tfs import TfsClient, TfsConnectionError
+from .services.analysis_sync import report_ready
 from .services.pipeline_release import TfsPipelineReleaseService
 from .services.process_env import git_authenticated_env, sanitized_process_env
 from .project_catalog import load_project_presets, resolve_projects_for_work_item
@@ -747,6 +748,16 @@ class Worker:
 
     def poll_merge(self, request_id: str) -> None:
         detail = self.store.detail(request_id)
+        if detail and detail["status"] == RunStatus.WAITING_ANALYSIS_SYNC.value:
+            try:
+                if not report_ready(detail):
+                    raise RuntimeError("缺少已完成的分析结果或报告，不能重试同步")
+                self._complete_analysis(request_id, detail["analysis_result"])
+            except Cancelled:
+                self._cancel(request_id)
+            except Exception as exc:
+                self._fail(request_id, exc)
+            return
         if detail and detail["status"] == RunStatus.WAITING_RETRY.value:
             self.run_request(request_id)
             return
@@ -1708,7 +1719,6 @@ class Worker:
         detail = self.store.detail(request_id)
         if not detail:
             raise RuntimeError("问题分析任务不存在")
-        project = detail["policy_snapshot"]
         self.store.update_request(
             request_id,
             status=RunStatus.DELIVERING.value,
@@ -1722,22 +1732,43 @@ class Worker:
         self.store.update_step(request_id, "release", "skipped", "问题分析任务不构建、不审核、不发版")
         self.store.update_step(request_id, "deliver", "running", "正在生成分析报告并同步 TFS")
 
-        report_name = f"TFS-{detail['work_item_id']}-问题分析报告.md"
-        report_path = self.artifacts.request_dir(request_id) / report_name
-        report_path.write_text(self._analysis_report_markdown(detail, result), encoding="utf-8")
-        self.store.add_artifact(request_id, "analysis_report", report_name, str(report_path))
-        self.store.add_event(
-            request_id,
-            "analysis.report_generated",
-            "结构化问题分析报告已生成",
-            metadata={
-                "confidence": result.get("confidence"),
-                "is_data_issue": bool(result.get("is_data_issue")),
-                "code_change_needed": bool(result.get("code_change_needed")),
-            },
-        )
+        if not any(a.get("kind") == "analysis_report" for a in detail.get("artifacts", [])):
+            report_name = f"TFS-{detail['work_item_id']}-问题分析报告.md"
+            report_path = self.artifacts.request_dir(request_id) / report_name
+            report_path.write_text(self._analysis_report_markdown(detail, result), encoding="utf-8")
+            self.store.add_artifact(request_id, "analysis_report", report_name, str(report_path))
+            self.store.add_event(
+                request_id,
+                "analysis.report_generated",
+                "结构化问题分析报告已生成",
+                metadata={
+                    "confidence": result.get("confidence"),
+                    "is_data_issue": bool(result.get("is_data_issue")),
+                    "code_change_needed": bool(result.get("code_change_needed")),
+                },
+            )
         detail = self.store.detail(request_id) or detail
 
+        try:
+            self._sync_analysis_report(request_id, detail, result)
+        except Cancelled:
+            raise
+        except Exception as exc:
+            self._check_cancelled(request_id)
+            reason = "TFS 字段或状态规则校验未通过" if "TF401320" in str(exc) else "TFS 同步或邮件通知暂未完成"
+            message = f"分析已完成，报告可下载；{reason}，系统将在 5 分钟后自动重试，无需重新分析。"
+            self.store.update_request(
+                request_id, status=RunStatus.WAITING_ANALYSIS_SYNC.value,
+                error_message=message, completed_at=None,
+                next_poll_at=(datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
+            )
+            self.store.update_step(request_id, "deliver", "waiting", message)
+            self.store.add_event(request_id, "analysis.sync_pending", message, level="warning",
+                                 metadata={"error": str(exc)[:4000]})
+            logger.exception("分析报告交付待同步 request_id=%s", request_id)
+
+    def _sync_analysis_report(self, request_id: str, detail: dict, result: dict) -> None:
+        project = detail["policy_snapshot"]
         if not project.get("simulation_mode"):
             self._check_cancelled(request_id)
             manifest = self._analysis_manifest_html(detail, result)

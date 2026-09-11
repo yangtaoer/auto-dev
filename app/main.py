@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.40",
+    version="1.0-Alpha.41",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -1743,6 +1743,9 @@ def stop_devcore_watch(
 @app.post("/api/requests/{request_id}/retry")
 def retry_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
     original = can_access_request(user, request_id)
+    from .services.analysis_sync import report_ready, retry as retry_sync
+    if report_ready(original) and not original.get("joint_group_id"):
+        return learning_call(retry_sync, request_id, user)
     if original.get("joint_group_id"):
         raise HTTPException(status_code=409, detail="联合研发任务需要按原 TFS 编号整体重新发起，不能只重试其中一个项目")
     if original["status"] != RunStatus.FAILED.value:
@@ -1776,6 +1779,13 @@ def retry_request(request_id: str, user: Annotated[dict, Depends(current_user)])
             ),
         )
     return {"id": new_request_id, "status": RunStatus.QUEUED.value, "work_item_id": original["work_item_id"]}
+
+
+@app.post('/api/requests/{request_id}/retry-analysis-sync')
+def retry_analysis_sync(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
+    from .services.analysis_sync import retry
+    can_access_request(user, request_id)
+    return learning_call(retry, request_id, user)
 
 
 @app.post('/api/requests/{request_id}/restart')
@@ -2279,13 +2289,13 @@ def runner_pollable(runner_id: str) -> dict:
     lease_until = (datetime.now(UTC) + timedelta(seconds=max(60, settings.poll_seconds * 3))).isoformat()
     with transaction() as conn:
         item = conn.execute(
-            """SELECT id FROM delivery_requests WHERE runner_id=? AND status IN ('waiting_merge','waiting_release','waiting_retry')
+            """SELECT id FROM delivery_requests WHERE runner_id=? AND status IN ('waiting_merge','waiting_release','waiting_retry','waiting_analysis_sync')
                AND (next_poll_at IS NULL OR next_poll_at<=?) ORDER BY updated_at LIMIT 1""",
             (runner_id, now),
         ).fetchone()
         if item:
             conn.execute(
-                "UPDATE delivery_requests SET next_poll_at=?,updated_at=? WHERE id=? AND status IN ('waiting_merge','waiting_release','waiting_retry')",
+                "UPDATE delivery_requests SET next_poll_at=?,updated_at=? WHERE id=? AND status IN ('waiting_merge','waiting_release','waiting_retry','waiting_analysis_sync')",
                 (lease_until, now, item["id"]),
             )
     return {"request": request_detail(item["id"]) if item else None}
