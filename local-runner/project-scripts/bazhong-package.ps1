@@ -6,6 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+if ($PSStyle) { $PSStyle.OutputRendering = 'PlainText' }
 $RepositoryRoot = [System.IO.Path]::GetFullPath($RepositoryRoot)
 $GitDir = Join-Path $RepositoryRoot ".git"
 if (-not (Test-Path -LiteralPath $GitDir)) {
@@ -51,48 +52,18 @@ function Invoke-Checked {
     }
 }
 
-# Vite 6 不支持本机默认的 Node 14。优先从 nvm-windows 中选择已安装的最高版本。
-$NodeDirectory = $null
-if ($env:NVM_HOME -and (Test-Path -LiteralPath $env:NVM_HOME)) {
-    $NodeDirectory = Get-ChildItem -LiteralPath $env:NVM_HOME -Directory -Filter "v*" |
-        Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "node.exe") } |
-        Sort-Object { try { [version]$_.Name.TrimStart("v") } catch { [version]"0.0" } } -Descending |
-        Select-Object -First 1 -ExpandProperty FullName
-}
-if (-not $NodeDirectory) {
-    $NodeCommand = Get-Command node.exe -ErrorAction Stop
-    $NodeDirectory = Split-Path -Parent $NodeCommand.Source
-}
+# Do not select the highest nvm version: use a verified, project-pinned runtime.
+$NodeDirectory = & (Join-Path $PSScriptRoot 'frontend-node-runtime.ps1')
 $env:PATH = "$NodeDirectory;$env:PATH"
-$NodeMajor = [int]((& (Join-Path $NodeDirectory "node.exe") --version).TrimStart("v").Split(".")[0])
-if ($NodeMajor -lt 18) {
-    throw "前端构建需要 Node 18+，当前检测到 Node $NodeMajor"
-}
 
 $Maven = (Get-Command mvn.cmd -ErrorAction Stop).Source
-$Npm = Join-Path $NodeDirectory "npm.cmd"
-if (-not (Test-Path -LiteralPath $Npm)) {
-    throw "所选 Node 目录中缺少 npm.cmd：$NodeDirectory"
-}
 
 Write-Host "[1/4] 构建后端"
 Invoke-Checked -FilePath $Maven -Arguments @("clean", "package", "-DskipTests") -WorkingDirectory $RepositoryRoot
 
 $FrontendRoot = Join-Path $RepositoryRoot "th-dc-biz-bazhong-vue"
 Write-Host "[2/4] 安装前端依赖并构建（Node $(& (Join-Path $NodeDirectory 'node.exe') --version)）"
-Push-Location -LiteralPath $FrontendRoot
-try {
-    if (Test-Path -LiteralPath (Join-Path $FrontendRoot "package-lock.json") -PathType Leaf) {
-        Invoke-Checked -FilePath $Npm -Arguments @("ci", "--no-audit", "--no-fund") -WorkingDirectory $FrontendRoot
-    }
-    else {
-        Invoke-Checked -FilePath $Npm -Arguments @("install", "--no-audit", "--no-fund") -WorkingDirectory $FrontendRoot
-    }
-    Invoke-Checked -FilePath $Npm -Arguments @("run", "build") -WorkingDirectory $FrontendRoot
-}
-finally {
-    Pop-Location
-}
+& (Join-Path $PSScriptRoot 'bazhong-frontend-build.ps1') -FrontendRoot $FrontendRoot -NodeDirectory $NodeDirectory
 
 $JarSource = Join-Path $RepositoryRoot "target\th-dc-biz-bazhong-1.0.0-SNAPSHOT.jar"
 $FrontendDist = Join-Path $FrontendRoot "dist"

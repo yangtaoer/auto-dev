@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Alpha.41",
+    version="1.0-Alpha.42",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -406,6 +406,8 @@ def public_engine_text(value: Any) -> Any:
     """Remove implementation-engine branding from every user-facing payload."""
     if not isinstance(value, str):
         return value
+    from .services.command_logs import clean_log
+    value = clean_log(value)
     return re.sub(
         r"codex",
         lambda match: "DEVCORE" if match.group(0).isupper() else ("DevCore" if match.group(0)[0].isupper() else "devcore"),

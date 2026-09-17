@@ -27,6 +27,7 @@ from ..db import add_artifact, request_detail
 from ..domain import DELIVERY_MODE_LABELS, STATUS_LABELS, DeliveryMode, RunStatus, TaskType, visible_delivery_artifacts
 from .blocker_summary import summarize_blocker
 from .process_env import sanitized_process_env
+from .command_logs import clean_log, decode_output, command_failure
 
 
 BRAND_MARK_CID = "autodev-brand-mark"
@@ -47,7 +48,7 @@ def run_command(
     if cancel_check:
         cancel_check()
         with subprocess.Popen(command, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              text=True, encoding='utf-8', errors='replace', env=process_env,
+                              env=process_env,
                               start_new_session=os.name != 'nt',
                               creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0) as process:
             deadline = time.monotonic() + timeout_minutes * 60
@@ -78,23 +79,20 @@ def run_command(
                 raise
             cancel_check()
             if process.returncode:
-                raise RuntimeError(f'命令执行失败 ({process.returncode}): {(stdout + stderr)[-3000:]}')
-            return (stdout + '\n' + stderr)[-5000:]
+                raise command_failure(process.returncode, stdout, stderr, process_env.get('AUTODEV_REQUEST_ID', ''))
+            return clean_log(decode_output(stdout) + '\n' + decode_output(stderr))[-5000:]
     result = subprocess.run(
         command,
         cwd=cwd,
         shell=True,
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=timeout_minutes * 60,
         env=process_env,
         check=False,
     )
-    output = (result.stdout + "\n" + result.stderr).strip()
+    output = clean_log(decode_output(result.stdout) + "\n" + decode_output(result.stderr))
     if result.returncode:
-        raise RuntimeError(f"命令执行失败 ({result.returncode}): {command}\n{output[-3000:]}")
+        raise command_failure(result.returncode, result.stdout, result.stderr, process_env.get('AUTODEV_REQUEST_ID', ''))
     return output[-5000:]
 
 

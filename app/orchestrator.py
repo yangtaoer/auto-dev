@@ -40,6 +40,7 @@ from .services.delivery import (
 )
 from .services.tfs import TfsClient, TfsConnectionError
 from .services.analysis_sync import report_ready
+from .services.command_logs import bounded_log
 from .services.pipeline_release import TfsPipelineReleaseService
 from .services.process_env import git_authenticated_env, sanitized_process_env
 from .project_catalog import load_project_presets, resolve_projects_for_work_item
@@ -1481,6 +1482,33 @@ class Worker:
             )
         self._complete_delivery(request_id)
 
+    def resume_local_delivery(self, request_id: str) -> None:
+        """Maintenance recovery from a frozen pushed commit, with no new model turn."""
+        detail = self.store.detail(request_id)
+        if not detail or detail.get('status') != 'failed' or detail.get('current_step') != 'deliver':
+            raise RuntimeError('只有交付阶段失败的任务可以从已提交代码恢复')
+        if detail.get('task_type') == 'analysis' or detail.get('delivery_mode') != 'local_package' or detail.get('joint_group_id'):
+            raise RuntimeError('当前恢复入口仅支持独立的本地打包研发任务')
+        if any(c.get('status') in {'pending', 'running', 'waiting_merge'} for c in detail.get('controls', [])):
+            raise RuntimeError('任务有未完成的控制操作，不能恢复打包')
+        states = detail.get('repository_states') or []
+        if not states or any(s.get('status') != 'base_pushed' or not s.get('base_branch_commit') for s in states):
+            raise RuntimeError('没有可核对的已推送构建基线，拒绝恢复打包')
+        for state in states:
+            self._verify_build_baseline(Path(state['worktree_path']), state)
+        self._check_cancelled(request_id)
+        self.store.update_request(request_id, error_message='', completed_at=None, email_sent_at=None)
+        self.store.add_event(request_id, 'delivery.resumed', '复用已提交代码恢复交付，不重新研发、不再次提交代码',
+                             metadata={'build_commits': [s['base_branch_commit'] for s in states]})
+        try:
+            self._deliver_local_package(request_id, detail, detail['policy_snapshot'], Path(states[0]['worktree_path']),
+                                        {'id': detail['work_item_id']})
+        except Cancelled:
+            self._cancel(request_id)
+        except Exception as exc:
+            self._fail(request_id, exc)
+            raise
+
     @staticmethod
     def _build_environment(detail: dict, repository_states: list[dict]) -> dict[str, str]:
         changed_names = [
@@ -1762,7 +1790,7 @@ class Worker:
                 error_message=message, completed_at=None,
                 next_poll_at=(datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
             )
-            self.store.update_step(request_id, "deliver", "waiting", message)
+            self.store.update_step(request_id, "deliver", "pending", message)
             self.store.add_event(request_id, "analysis.sync_pending", message, level="warning",
                                  metadata={"error": str(exc)[:4000]})
             logger.exception("分析报告交付待同步 request_id=%s", request_id)
@@ -2410,13 +2438,16 @@ class Worker:
         if self.store.get_status(request_id) == 'cancelled':
             self._cancel(request_id)
             return
-        message = str(exc)[:3000]
+        message = bounded_log(str(exc), 1800)
         logger.exception("研发任务失败 request_id=%s: %s", request_id, message)
         detail = self.store.detail(request_id)
         self.store.update_request(request_id, status=RunStatus.FAILED.value, error_message=message, completed_at=utc_now())
         if detail and detail.get("current_step"):
             self.store.update_step(request_id, detail["current_step"], "failed", message[:1000])
-        self.store.add_event(request_id, "request.failed", message, level="error")
+        try:
+            self.store.add_event(request_id, "request.failed", message, level="error")
+        except Exception:
+            logger.exception('失败事件写入异常，仍继续发送终态通知 request_id=%s', request_id)
         if detail and detail.get("joint_group_id") and self.store.remote:
             self.store.finalize_joint(request_id)
             return

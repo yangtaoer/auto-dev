@@ -17,6 +17,7 @@ from .db import (
 )
 from .services.oss_storage import OssArtifactStorage, cleanup_local_deliveries
 from .services import project_learning, model_settings, release_coordination, task_controls
+from .services.command_logs import bounded_log
 
 
 logger = logging.getLogger("autodev.remote_store")
@@ -329,7 +330,7 @@ class RemoteStore:
             self._request(
                 "PATCH",
                 f"/api/runner/requests/{request_id}/steps/{step_code}",
-                json={"status": status, "message": message},
+                json={"status": status, "message": bounded_log(message)},
             )
         )
 
@@ -346,7 +347,7 @@ class RemoteStore:
             self._request(
                 "POST",
                 f"/api/runner/requests/{request_id}/events",
-                json={"event_type": event_type, "message": message, "level": level, "metadata": metadata or {}},
+                json={"event_type": event_type, "message": bounded_log(message), "level": level, "metadata": metadata or {}},
             )
         )
 
