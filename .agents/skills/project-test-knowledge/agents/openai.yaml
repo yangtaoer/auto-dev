@@ -1,0 +1,6 @@
+interface:
+  display_name: "项目测试知识库"
+  short_description: "按项目维护账号、动态岗位、主配管辖与回归经验，供自动测试参考"
+  default_prompt: "使用 $project-test-knowledge 记录本次项目测试经验并同步 GitHub，或读取对应项目知识规划回归测试。"
+policy:
+  allow_implicit_invocation: true
