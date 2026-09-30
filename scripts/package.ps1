@@ -16,6 +16,7 @@ $Archive = New-Object System.IO.Compression.ZipArchive($Stream, [System.IO.Compr
 try {
     $Files = Get-ChildItem -LiteralPath $ProjectRoot -Recurse -File -Force | Where-Object {
         $Relative = [System.IO.Path]::GetRelativePath($ProjectRoot, $_.FullName).Replace('\', '/')
+        $Relative -ne '.git' -and
         $Relative -notmatch '^(\.git|\.venv|\.venv-runner|data|dist)/' -and
         $Relative -notmatch '(^|/)__pycache__/' -and
         $Relative -notmatch '(^|/)node_modules/' -and
