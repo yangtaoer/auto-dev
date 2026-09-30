@@ -1,0 +1,9 @@
+{
+  "name": "three",
+  "version": "0.186.1",
+  "source": "https://registry.npmjs.org/three/-/three-0.186.1.tgz",
+  "upstream": "https://github.com/mrdoob/three.js",
+  "license": "MIT",
+  "files": ["three.module.js", "three.core.js", "LICENSE"],
+  "purpose": "Locally served, depth-tested brand character and botanical scene; no runtime CDN dependency."
+}

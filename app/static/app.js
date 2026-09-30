@@ -70,6 +70,10 @@ function switchView(name){
   titles.experiences=['项目记忆 / PROJECT MEMORY / 06','项目经验'];
   titles.models=['研发设置 / ENGINE DEFAULTS / 07','研发设置'];
   document.querySelector('#view-code').textContent=titles[name][0];document.querySelector('#view-title').textContent=titles[name][1];
+  document.body.dataset.view=name;
+  const chapters={dashboard:['01','TASK / OVERVIEW','从需求到交付，AutoDev 与你一起让想法成为可用的软件。','好的软件\n始于一个清晰的需求。'],requests:['02','DELIVERY / RECORDS','每一次交付，都有清晰可追溯的记录。','让过程透明，\n让结果可验证。'],projects:['03','AUTONOMOUS / PROJECTS','项目、仓库与交付策略，在这里连接起来。','从一个需求，\n到完整的项目协作。'],analytics:['04','PLATFORM / ANALYTICS','透过数据，看见研发与交付的全貌。','观察真实变化，\n持续改善交付。'],users:['05','ACCESS / REGISTRY','让每一位协作者，拥有清晰的身份与权限。','协作始于信任，\n权限保持清晰。'],experiences:['06','PROJECT / EXPERIENCE','沉淀可复用的研发经验，提升交付效率。','从真实项目中提炼经验，\n让每一次交付都更成熟。'],models:['07','ENGINE / DEFAULTS','为自主研发选择合适的模型与思考深度。','清晰的边界，\n可靠的自主执行。']};
+  const chapter=chapters[name];
+  if(chapter){const number=document.querySelector('#view-number'),english=document.querySelector('#view-english'),description=document.querySelector('#view-description'),quote=document.querySelector('#view-quote');if(number)number.textContent=chapter[0];if(english)english.textContent=chapter[1];if(description)description.textContent=chapter[2];if(quote){quote.textContent=chapter[3];quote.style.whiteSpace='pre-line';}}
   if(name==='experiences')window.ProjectLearning?.open();
   if(name==='models')window.ModelSettings?.open();
 }

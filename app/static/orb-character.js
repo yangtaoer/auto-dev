@@ -4,6 +4,7 @@
 
   const BRAND_ORANGE = '#f0522d';
   const EYE_INK = '#171813';
+  const instances = new Set();
   const STATE_PROFILES = {
     idle:      {energy: .12, attention: .24, success: 0, error: 0, sleep: 0},
     curious:   {energy: .20, attention: .72, success: 0, error: 0, sleep: 0},
@@ -197,9 +198,23 @@
       this._bind();
       this._resize();
       this._schedule();
+      instances.add(this);
+      if (global.AutoDevOrbScene) this.attachScene(global.AutoDevOrbScene);
+    }
+
+    attachScene(Scene) {
+      if (this.destroyed || this.scene || !this.root.closest('.mint-ui')) return;
+      try {
+        this.scene = new Scene(this);
+      } catch (error) {
+        // Keep the animated SVG fallback when WebGL2 is unavailable.
+        this.root.classList.remove('is-scene');
+        this.root.dataset.renderer = 'svg';
+      }
     }
 
     _initializeWebGL() {
+      if (this.root.closest('.mint-ui')) return false;
       try {
         const gl = this.canvas.getContext('webgl', {
           alpha: true, antialias: true, depth: false, stencil: false,
@@ -443,12 +458,14 @@
         this.lastFrameAt = performance.now();
         this._schedule();
       }
+      this.scene?.invalidate();
     }
 
     _onMotionChange(event) {
       this.reducedMotion = event.matches;
       if (this.fallbackCharacter) this.fallbackCharacter.setPaused(this.manualPaused || this.reducedMotion);
       this._schedule(this.reducedMotion);
+      this.scene?.invalidate();
     }
 
     _onContextLost(event) {
@@ -577,6 +594,7 @@
       if (caption) caption.textContent = label;
       if (this.options.interactive) this.root.setAttribute('aria-label', `AutoDev 动态角色，当前状态：${label}。按回车可互动。`);
       this._schedule();
+      this.scene?.invalidate();
     }
 
     lookAt(target, duration = 1200) {
@@ -638,10 +656,12 @@
       this.manualPaused = Boolean(paused);
       if (this.fallbackCharacter) this.fallbackCharacter.setPaused(this.manualPaused || this.reducedMotion);
       this._schedule(this.manualPaused);
+      this.scene?.invalidate();
     }
 
     setRunning(running) {
       this.root.classList.toggle('is-running', Boolean(running));
+      this.scene?.invalidate();
     }
 
     spinOnce(turns = 1) { this.motionDriver?.spinOnce(turns); }
@@ -651,6 +671,8 @@
     destroy() {
       if (this.destroyed) return;
       this.destroyed = true;
+      instances.delete(this);
+      this.scene?.destroy();
       if (this.frameRequest) cancelAnimationFrame(this.frameRequest);
       global.removeEventListener('pointermove', this._onPointerMove);
       if (this.canvas) this.canvas.removeEventListener('webglcontextlost', this._onContextLost);
@@ -673,5 +695,6 @@
   }
 
   AutoDevOrb.BRAND_ORANGE = BRAND_ORANGE;
+  AutoDevOrb.instances = instances;
   global.AutoDevOrb = AutoDevOrb;
 })(window);
