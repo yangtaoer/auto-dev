@@ -65,7 +65,7 @@ html{background:#f7f7ef}
 .mint-ui .autodev-orb:not(.is-scene) .autodev-orb-fallback{width:68%;height:68%;left:16%;top:8%}
 .orb-paper-note{position:absolute;right:12px;bottom:110px;z-index:4;min-width:104px;padding:12px 13px 7px;color:#123333;background:#fffbed;box-shadow:0 4px 10px #284b372a;transform:perspective(400px) rotateY(-7deg) rotate(-5deg);font:700 16px/1.7 var(--display);text-align:center;pointer-events:none}
 .orb-paper-note i{display:block;font:700 19px/1.5 Georgia,serif;color:#71817a}
-.mint-workspace .orb-paper-note{bottom:98px;right:13px;min-width:96px;padding:9px 12px;font-size:14px;line-height:1.7}
+.mint-workspace .orb-paper-note{bottom:128px;right:13px;min-width:96px;padding:9px 12px;font-size:14px;line-height:1.7}
 .mint-workspace .orb-paper-note i{display:none}
 .mint-workspace .orb-activity-console{position:relative;z-index:5;width:calc(100% - 28px);min-height:87px;padding:11px 12px;margin:6px 14px 10px;border:1px solid #a8c4b650;background:#eff7efba;color:#30534f;box-shadow:none;border-radius:5px;backdrop-filter:blur(7px)}
 .mint-workspace .orb-presence{gap:5px;min-width:0;padding:0;border:0;white-space:normal}
@@ -152,6 +152,7 @@ html{background:#f7f7ef}
 .mint-workspace .live-activity div{display:flex;gap:10px;min-width:0;align-items:start}
 .mint-workspace .live-activity span{flex:0 0 auto;font-size:10px;color:#80969a;margin:0}
 .mint-workspace .live-activity b{min-width:0;overflow-wrap:anywhere;color:#355b60;font-size:11px;font-weight:400;line-height:1.6;-webkit-line-clamp:2}
+.mint-workspace .live-activity b.activity-updated{animation:none}
 .mint-workspace .table-card{background:#fffefa;border:1px solid #dae2da;border-radius:6px;box-shadow:none;min-height:0;overscroll-behavior:contain}
 .mint-workspace table{min-width:800px;color:#23484f;font-size:12px}
 .mint-workspace th{color:#315863;background:#f5f8f3;border-bottom:1px solid #dfe8e0;font-size:11px;font-weight:700;padding:12px 14px;letter-spacing:0}
@@ -397,3 +398,4 @@ html{background:#f7f7ef}
 .mint-workspace .analytics-bar>i{background:#e6eee6!important}
 .mint-workspace .analytics-bar em{background:#8eb8a0!important}
 @media(min-height:821px) and (max-height:980px) and (min-width:901px){.mint-workspace .sidebar{padding-top:18px}.mint-workspace .sidebar .logo{min-height:78px;margin-bottom:16px}.mint-workspace .sidebar nav{gap:5px}.mint-workspace .nav-item{min-height:44px;font-size:15px}.mint-workspace .sidebar-character-stage{min-height:230px}}
+@media(max-height:820px){.mint-workspace .orb-paper-note{bottom:108px}}
