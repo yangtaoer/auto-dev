@@ -2501,7 +2501,7 @@ else:
         self.assertIn("timeline-energy-transfer", editorial_styles)
         self.assertIn("prefers-reduced-motion: reduce", editorial_styles)
 
-    def test_login_reserves_new_brand_video_without_loading_old_film(self) -> None:
+    def test_login_reuses_configured_film_without_exposing_demo_accounts(self) -> None:
         login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
         self.assertIn('class="login-film-video"', login_template)
         for attribute in ("muted", "loop", "playsinline", 'preload="metadata"'):
@@ -2512,7 +2512,10 @@ else:
         self.assertIn("prefers-reduced-motion: reduce", media_script)
         self.assertIn("connection?.saveData", media_script)
         self.assertEqual(json.loads(Path("app/static/brand-media.json").read_text(encoding="utf-8")),
-                         {"login": {"src": "", "poster": ""}, "sidebar": {"src": "", "poster": ""}})
+                         {"login": {"src": "/static/media/login-delivery-line.mp4",
+                                    "poster": "/static/media/login-delivery-line-poster.jpg",
+                                    "layout": "delivery-line"},
+                          "sidebar": {"src": "", "poster": ""}})
         self.assertNotIn("demo-credential", login_template)
         self.assertNotIn("login-entry-heading", login_template)
         self.assertIn("进入工作台", login_template)

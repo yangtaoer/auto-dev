@@ -180,6 +180,10 @@
       this.gazeTimer = 0;
       this.whisperTimer = 0;
       this.tapCycle = 0;
+      this.visible = true;
+      this.ambientTimer = 0;
+      this.lastGesture = '';
+      this.motionClip = null;
       this.reduceMotionQuery = global.matchMedia('(prefers-reduced-motion: reduce)');
       this.reducedMotion = this.reduceMotionQuery.matches;
 
@@ -200,6 +204,7 @@
       this._schedule();
       instances.add(this);
       if (global.AutoDevOrbScene) this.attachScene(global.AutoDevOrbScene);
+      this._scheduleAmbient(900);
     }
 
     attachScene(Scene) {
@@ -423,10 +428,49 @@
     _markReaction(name, duration = 900) {
       if (this.reactionClassTimer) clearTimeout(this.reactionClassTimer);
       this.root.dataset.reaction = name;
+      if (!this.reducedMotion && global.AutoDevOrbMotion) {
+        const gesture = {tap: 'wiggle', dispatch: 'hop', progress: 'nod', success: 'hop', blocked: 'tilt'}[name] || 'tilt';
+        this.motionClip = global.AutoDevOrbMotion.clip(gesture, performance.now(), Math.random() < .5 ? -1 : 1);
+        this.root.dataset.gesture = gesture;
+        this._scheduleAmbient(this.motionClip.duration + 1200);
+      }
       this.reactionClassTimer = global.setTimeout(() => {
         this.reactionClassTimer = 0;
         if (!this.destroyed) delete this.root.dataset.reaction;
       }, duration);
+    }
+
+    _scheduleAmbient(delay = 1100 + Math.random() * 1300) {
+      if (this.ambientTimer) clearTimeout(this.ambientTimer);
+      this.ambientTimer = 0;
+      if (!global.AutoDevOrbMotion || !this.options.ambient || this.destroyed || this.manualPaused || this.reducedMotion || document.hidden || !this.visible) return;
+      this.ambientTimer = global.setTimeout(() => {
+        this.ambientTimer = 0;
+        if (this.destroyed || this.manualPaused || this.reducedMotion || document.hidden || !this.visible) return;
+        // User/task reactions take priority; the random loop never changes the business state.
+        if (this.driverReactionTimer || this.reactionClassTimer) { this._scheduleAmbient(700); return; }
+        const motion = global.AutoDevOrbMotion;
+        const name = motion.pick(this.state, this.lastGesture);
+        this.lastGesture = name;
+        this.motionClip = motion.clip(name, performance.now(), Math.random() < .5 ? -1 : 1);
+        this.root.dataset.gesture = name;
+        this._temporaryDriverState(this.state === 'sleeping' ? 'sleeping' : motion.gestures[name].expression, this.motionClip.duration);
+        if (!this.scene) {
+          if (name === 'hop') this.motionDriver?.bounceOnce();
+          if (name === 'twirl') this.motionDriver?.spinOnce(.8);
+        }
+        this._scheduleAmbient(this.motionClip.duration + 850 + Math.random() * 1550);
+      }, delay);
+    }
+
+    sampleMotion(now) {
+      return global.AutoDevOrbMotion?.sample(this.reducedMotion || this.manualPaused ? null : this.motionClip, now);
+    }
+
+    setVisible(visible) {
+      this.visible = Boolean(visible);
+      this.motionDriver?.setPaused(!this.visible || document.hidden || this.manualPaused || this.reducedMotion);
+      this._scheduleAmbient();
     }
 
     _showWhisper(message) {
@@ -453,7 +497,8 @@
     }
 
     _onVisibilityChange() {
-      if (this.fallbackCharacter) this.fallbackCharacter.setPaused(document.hidden || this.manualPaused || this.reducedMotion);
+      if (this.fallbackCharacter) this.fallbackCharacter.setPaused(document.hidden || this.manualPaused || this.reducedMotion || !this.visible);
+      this._scheduleAmbient();
       if (!document.hidden) {
         this.lastFrameAt = performance.now();
         this._schedule();
@@ -463,7 +508,9 @@
 
     _onMotionChange(event) {
       this.reducedMotion = event.matches;
-      if (this.fallbackCharacter) this.fallbackCharacter.setPaused(this.manualPaused || this.reducedMotion);
+      if (this.fallbackCharacter) this.fallbackCharacter.setPaused(this.manualPaused || this.reducedMotion || document.hidden || !this.visible);
+      this.motionClip = null;
+      this._scheduleAmbient();
       this._schedule(this.reducedMotion);
       this.scene?.invalidate();
     }
@@ -577,7 +624,7 @@
       this.targetProfile = Object.assign({}, STATE_PROFILES[state]);
       if (immediate || this.reducedMotion) this.profile = Object.assign({}, this.targetProfile);
       if (this.motionDriver) {
-        const useOnboarding = state === 'curious' && (this.options.ambient || this.options.mode === 'onboarding');
+        const useOnboarding = !global.AutoDevOrbMotion && state === 'curious' && (this.options.ambient || this.options.mode === 'onboarding');
         const driverMode = useOnboarding ? 'onboarding' : 'manual';
         if (this.motionDriver.mode !== driverMode) {
           this.motionDriver.setMode(driverMode);
@@ -587,6 +634,8 @@
         if (state === 'success' && !this.reducedMotion) this.motionDriver.burstOnce();
       }
       this.root.dataset.state = state;
+      this.motionClip = null;
+      this._scheduleAmbient(1000);
       const label = STATE_LABELS[state] || STATE_LABELS.curious;
       const activityConsole = this.root.parentElement?.querySelector('.orb-activity-console');
       const caption = activityConsole?.querySelector('.orb-presence b');
@@ -654,7 +703,8 @@
 
     setPaused(paused) {
       this.manualPaused = Boolean(paused);
-      if (this.fallbackCharacter) this.fallbackCharacter.setPaused(this.manualPaused || this.reducedMotion);
+      if (this.fallbackCharacter) this.fallbackCharacter.setPaused(this.manualPaused || this.reducedMotion || document.hidden || !this.visible);
+      this._scheduleAmbient();
       this._schedule(this.manualPaused);
       this.scene?.invalidate();
     }
@@ -681,7 +731,7 @@
       this.reduceMotionQuery.removeEventListener('change', this._onMotionChange);
       this.root.removeEventListener('click', this._onInteract);
       this.root.removeEventListener('keydown', this._onInteractKey);
-      [this.driverReactionTimer, this.reactionClassTimer, this.gazeTimer, this.whisperTimer].forEach(timer => {
+      [this.driverReactionTimer, this.reactionClassTimer, this.gazeTimer, this.whisperTimer, this.ambientTimer].forEach(timer => {
         if (timer) clearTimeout(timer);
       });
       if (this.resizeObserver) this.resizeObserver.disconnect();

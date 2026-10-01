@@ -1,4 +1,4 @@
 {
-  "login": {"src": "", "poster": ""},
+  "login": {"src": "/static/media/login-delivery-line.mp4", "poster": "/static/media/login-delivery-line-poster.jpg", "layout": "delivery-line"},
   "sidebar": {"src": "", "poster": ""}
 }

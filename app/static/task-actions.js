@@ -24,7 +24,11 @@ window.TaskActions = (() => {
     let modal=document.querySelector('#task-action-confirm');
     if(!modal){modal=document.createElement('dialog');modal.id='task-action-confirm';modal.className='task-action-confirm';document.body.append(modal);}
     const copy={cancel:'将停止研发与后续交付，并关闭尚未合并的 PR。已合并代码和已经启动的外部发版不会自动撤销。',restart:`先等待当前${d.joint_group_id?'项目':''}任务停止，再从最新目标分支创建新会话和新工作区。原记录保留；已合并代码不会自动撤销。${d.joint_group_id?'联合任务中的其他项目不受影响。':''}`,rollback:'将针对本次任务的提交生成反向提交，按原项目的目标分支及审核策略执行。后续代码发生冲突时停止并保留现场，不强制覆盖。此操作仅回退代码，不回滚数据库，也不自动部署或重新发版。'};
-    modal.innerHTML=`<form method="dialog"><p class="eyebrow">TASK CONTROL / 操作确认</p><h2>${names[action]}</h2><p class="action-source">#${d.work_item_id} · ${escapeHtml(d.project_name)}</p><p class="action-explanation">${copy[action]}</p><p class="action-error" role="alert" hidden></p><div class="detail-actions"><button class="btn btn-ghost" value="cancel">暂不操作</button><button type="button" class="btn btn-primary" id="confirm-task-action">确认${names[action]} ↗</button></div></form>`;
+    const repositories=(d.repository_states||[]).filter(repo=>repo.changed_files?.length&&(repo.merge_commit||repo.commit_hash));
+    const facts=`<dl class="action-task-facts"><div><dt>所属项目</dt><dd>${escapeHtml(d.project_name)}</dd></div><div><dt>需求名称</dt><dd>${escapeHtml(d.title||`TFS #${d.work_item_id}`)}</dd></div><div><dt>TFS 编号</dt><dd>#${d.work_item_id}</dd></div><div><dt>当前状态</dt><dd><span class="status-dot" data-status="${escapeHtml(d.status)}">${escapeHtml(d.status_label||STATUS[d.status]||d.status)}</span></dd></div>${action==='cancel'?`<div><dt>最新输出</dt><dd>${escapeHtml(d.current_activity||d.result_summary||'暂无输出')}</dd></div>`:''}</dl>`;
+    const detail=action==='restart'?`<div class="restart-transition"><section><small>当前</small>${editorialIcon('network')}<b>#${d.work_item_id}</b><span>原会话与工作区保留</span></section>${editorialIcon('arrow-right')}<section><small>新的</small>${editorialIcon('network')}<b>#${d.work_item_id}</b><span>基于最新目标分支重新开始</span></section></div>`:action==='rollback'?`<section class="action-repositories"><h3>涉及的代码仓库（${repositories.length}）</h3>${repositories.map(repo=>`<div>${editorialIcon('code')}<b>${escapeHtml(repo.name||repo.repository_name||'代码仓库')}</b><span>原提交 <code>${escapeHtml((repo.merge_commit||repo.commit_hash).slice(0,12))}</code></span></div>`).join('')}</section>`:'';
+    modal.dataset.action=action;
+    modal.innerHTML=`<form method="dialog"><button class="modal-close" value="cancel" aria-label="关闭操作确认">×</button><h2><span class="action-symbol">${editorialIcon(action==='rollback'?'refresh':'help')}</span>${names[action]}确认</h2><p class="action-explanation">${copy[action]}</p>${facts}${detail}<p class="action-error" role="alert" hidden></p><div class="detail-actions"><button class="btn btn-ghost" value="cancel">暂不操作</button><button type="button" class="btn btn-primary" id="confirm-task-action">确认${names[action]} ↗</button></div></form>`;
     modal.showModal();
     modal.querySelector('#confirm-task-action').onclick=async event=>{
       const button=event.currentTarget;button.disabled=true;pending.add(d.id);
@@ -36,5 +40,14 @@ window.TaskActions = (() => {
       finally{pending.delete(d.id);}
     };
   }
-  return {render,bind};
+  function confirmRetry(d,reportSync=false) {
+    let modal=document.querySelector('#task-action-confirm');
+    if(!modal){modal=document.createElement('dialog');modal.id='task-action-confirm';modal.className='task-action-confirm';document.body.append(modal);}
+    const title=reportSync?'重试报告同步':'重新发起任务';
+    const reports=(d.artifacts||[]).filter(isAnalysisReport);
+    modal.dataset.action='retry';
+    modal.innerHTML=`<form method="dialog"><button class="modal-close" value="cancel" aria-label="关闭操作确认">×</button><h2><span class="action-symbol">${editorialIcon('refresh')}</span>${title}</h2><p class="action-explanation">${reportSync?'复用已生成报告，仅重试 TFS 状态同步与通知；不会重新分析或创建新任务。':'将保留原任务记录，并创建一条新的排队任务。新任务将按当前项目策略执行。'}</p><p class="action-source">#${d.work_item_id} · ${escapeHtml(d.project_name)}</p>${reportSync?`<div class="retry-report-files">${reports.map(file=>`<div>${editorialIcon('clipboard')}<span>${escapeHtml(file.name)}</span></div>`).join('')}</div>`:''}<div class="detail-actions"><button class="btn btn-ghost" value="cancel">暂不操作</button><button class="btn btn-primary" value="confirm">确认${reportSync?'重试':'重新发起'}</button></div></form>`;
+    return new Promise(resolve=>{modal.addEventListener('close',()=>resolve(modal.returnValue==='confirm'),{once:true});modal.returnValue='';modal.showModal();});
+  }
+  return {render,bind,confirmRetry};
 })();

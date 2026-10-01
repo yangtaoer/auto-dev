@@ -56,11 +56,12 @@ window.ProjectLearning = (() => {
       const result=await api(`/api/admin/project-experiences?${params}`);
       if(generation!==catalog.generation)return;
       catalog.items=list(result.items);catalog.total=Number(result.total)||0;catalog.loaded=true;
+      const counts=result.counts||{};
+      document.querySelector('#experience-metrics').innerHTML=[['经验',catalog.total,'clipboard'],['已验证',counts.verified,'check'],['待验证',counts.candidate,'clock'],['已废弃',counts.deprecated,'layers']].map(([label,value,icon],index)=>`<article><span class="project-symbol tone-${index}">${editorialIcon(icon)}</span><div><span>${label}</span><b>${value==null?'—':String(Number(value)||0).padStart(2,'0')}</b></div></article>`).join('');
       const maxPage=Math.max(1,Math.ceil(catalog.total/catalog.size));
       if(catalog.page>maxPage)return loadCatalog(maxPage);
       container.innerHTML=catalog.items.length?catalog.items.map(item=>{
-        const summary=item.acceptance_summary||{};
-        return `<article class="experience-card"><header><div><span class="learning-project">${H(item.project_name||item.project_key)}</span><h3><button type="button" data-experience-id="${H(item.id)}">${H(item.title||`需求 #${item.work_item_id}`)}</button></h3></div>${statusChip(item.status)}</header><p class="experience-scope">${H(item.scope_summary||'实现范围正在整理')}</p><footer><span>#${H(item.work_item_id)} · ${H(fmt(item.updated_at||item.created_at))}</span><span>验收 ${Number(summary.passed)||0}/${Number(summary.total)||0}${summary.failed?` · 未通过 ${Number(summary.failed)}`:''}</span><button type="button" class="text-button" data-experience-id="${H(item.id)}">查看积累 ↗</button></footer></article>`;
+        return `<article class="experience-card"><div class="experience-identity"><span class="project-symbol">${editorialIcon('clipboard')}</span><div><h3>${H(item.project_name||item.project_key)}</h3><small>来源任务</small><button type="button" data-experience-id="${H(item.id)}">#${H(item.work_item_id)}</button></div></div><section><h4>来源需求</h4><p title="${H(item.title)}">${H(item.title||`需求 #${item.work_item_id}`)}</p></section><section><h4>修改后的功能范围</h4><p title="${H(item.scope_summary)}">${H(item.scope_summary||'实现范围正在整理')}</p></section><section><h4>实现经验与教训</h4><p title="${H(item.implementation_summary)}">${H(item.implementation_summary||'尚无实现总结，待形成可复核记录')}</p></section><footer>${statusChip(item.status)}<small>记录时间<br>${H(fmt(item.updated_at||item.created_at))}</small><button type="button" class="text-button" data-experience-id="${H(item.id)}">查看详情 →</button></footer></article>`;
       }).join(''):empty('还没有匹配的项目经验','已完成需求将持续保留实现范围和验收反馈；可以调整项目、关键词或状态筛选。');
       container.querySelectorAll('[data-experience-id]').forEach(button=>button.onclick=()=>openExperience(button.dataset.experienceId));
       document.querySelector('#experience-total').textContent=`共 ${catalog.total} 条经验`;
@@ -69,6 +70,7 @@ window.ProjectLearning = (() => {
       pagination.querySelectorAll('[data-page]').forEach(button=>button.onclick=()=>loadCatalog(button.dataset.page));
     } catch(error) {
       if(generation!==catalog.generation)return;
+      document.querySelector('#experience-metrics').innerHTML='<span class="muted">经验统计暂不可用</span>';
       container.innerHTML=empty('项目经验暂时无法读取',error.message)+'<button type="button" class="btn btn-secondary learning-reload">重新读取</button>';
       container.querySelector('.learning-reload').onclick=()=>loadCatalog(catalog.page);
     } finally {if(generation===catalog.generation)container.setAttribute('aria-busy','false');}
@@ -112,6 +114,19 @@ window.ProjectLearning = (() => {
         section.innerHTML=`<h3>研发复盘与适用边界</h3><p class="learning-note">复盘由研发过程形成，结论需结合人工验收及当前代码验证。</p>${list(retrospective.lessons).map(lesson=>`<article class="learning-lesson"><b>${H(lesson.title||'经验条目')}</b>${fact('做法与原因',lesson.lesson)}${fact('适用条件',lesson.applies_to)}${fact('适用边界',lesson.limitations)}${list(lesson.acceptance_ids).length?fact('关联验收项',lesson.acceptance_ids.join('、')):''}${bullets(lesson.evidence)}</article>`).join('')}${list(retrospective.regression_suggestions).length?`<h4>后续回归建议</h4>${bullets(retrospective.regression_suggestions)}`:''}`;
         content.querySelector('.learning-section')?.before(section);
       }
+      // Keep the evidence and lifecycle in the same record, but give them separate reading columns.
+      const layout=document.createElement('div'),primary=document.createElement('div'),aside=document.createElement('aside');
+      layout.className='experience-detail-layout';primary.className='experience-detail-primary';aside.className='experience-detail-aside';
+      [...content.children].forEach(child=>{
+        if(child.matches('.learning-summary,.learning-status-form'))aside.append(child);
+        else if(child.matches('.learning-fact,.learning-section,.learning-repair-scope')){
+          const history=['验收与返修历史','经验版本记录'].includes(child.querySelector('h3')?.textContent);
+          (history?aside:primary).append(child);
+        }
+      });
+      const statusForm=aside.querySelector('.learning-status-form');
+      if(statusForm)aside.querySelector('.learning-summary')?.after(statusForm);
+      layout.append(primary,aside);content.append(layout);
       bindRequestLinks(content);
       const form=content.querySelector('#experience-status-form');
       wireSelect(form.querySelector('.ledger-select'),Object.entries(statusLabels),item.status||'candidate');
@@ -140,7 +155,7 @@ window.ProjectLearning = (() => {
     session.request=request;
     // Reattach the original node after task polling; typed text, focus state and preview survive.
     document.querySelector('#task-acceptance-mount')?.append(session.element);
-    document.querySelector('#task-experience-context').innerHTML=renderSimilar(request);
+    document.querySelector('#task-experience-context').innerHTML=renderSimilar(request)||'<p class="muted">本次尚未登记引用的历史经验。</p>';
     bindRequestLinks(document.querySelector('#task-experience-context'));
     renderRequirementPoints(session);
     if(!session.bundle&&!session.loading)loadAcceptance(session);

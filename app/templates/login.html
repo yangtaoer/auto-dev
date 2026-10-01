@@ -18,11 +18,12 @@
     <div class="login-film" data-film-stage aria-hidden="true">
       <video data-brand-video="login" class="login-film-video" muted loop playsinline preload="metadata" tabindex="-1" disablepictureinpicture hidden></video>
     </div>
-    <section class="login-brand-story" aria-label="AutoDev 自主研发交付">
+    <section class="login-brand-story" data-film-fallback aria-label="AutoDev 自主研发交付">
       <img class="login-story-mark" src="/static/brand/autodev-sidebar-mark.png?v={{ app_version }}" alt="">
       <strong>AutoDev</strong>
       <h1>编号进入，交付离场。</h1>
       <p class="login-story-caption">AUTONOMOUS<br>SOFTWARE DEVELOPMENT<br>AND DELIVERY PLATFORM</p>
+      <p class="login-story-motto">GOOD CODE<br>BRIGHTER<br>PEOPLE</p>
       <div class="login-character-stage">
         <div id="login-orb-character" class="autodev-orb" role="img" aria-label="AutoDev 橙色球体动态角色">
           <canvas class="autodev-orb-canvas" aria-hidden="true"></canvas>
@@ -36,13 +37,14 @@
         <div class="login-panel-logo" aria-label="AutoDev">
           <img src="/static/brand/autodev-sidebar-mark.png?v={{ app_version }}" alt="">
           <strong>AutoDev</strong>
+          <p class="login-panel-tagline">编号进入，交付离场。</p>
         </div>
       </div>
       <form id="login-form" class="form-stack">
-        <label><span>用户名</span><input name="username" autocomplete="username" placeholder="请输入用户名" required autofocus></label>
-        <label><span>密码</span><input name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required></label>
+        <label><span>用户名</span><span class="login-input-shell"><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#user"></use></svg><input name="username" autocomplete="username" placeholder="请输入用户名" required autofocus></span></label>
+        <label><span>密码</span><span class="login-input-shell"><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#lock"></use></svg><input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required><button class="password-visibility" type="button" aria-label="显示密码" aria-pressed="false" aria-controls="login-password"><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#eye"></use></svg></button></span></label>
         <p id="login-error" class="form-error" role="alert" hidden></p>
-        <button class="btn btn-primary btn-large" type="submit"><span>进入工作台</span><i aria-hidden="true">→</i></button>
+        <button class="btn btn-primary btn-large" type="submit"><span>进入工作台</span><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#arrow-right"></use></svg></button>
       </form>
     </section>
   </main>
@@ -54,15 +56,24 @@
   <script src="/static/grok-character/src/fx.js?v={{ app_version }}"></script>
   <script src="/static/grok-character/src/eyes.js?v={{ app_version }}"></script>
   <script src="/static/grok-character/src/character.js?v={{ app_version }}"></script>
+  <script src="/static/orb-motion.js?v={{ app_version }}"></script>
   <script src="/static/orb-character.js?v={{ app_version }}"></script>
   <script>
     const loginCharacter = new AutoDevOrb(document.querySelector('#login-orb-character'), {
       environment: 'light', mode: 'onboarding', ambient: true, followPointer: true, sizePx: 300, state: 'curious',
     });
     window.addEventListener('pagehide', () => loginCharacter.destroy(), {once:true});
+    document.querySelector('.password-visibility').addEventListener('click', event => {
+      const button = event.currentTarget, input = document.querySelector('#login-password');
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      button.setAttribute('aria-pressed', String(show));
+      button.setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
+      button.querySelector('use').setAttribute('href', '/static/editorial-icons.svg#' + (show ? 'eye-off' : 'eye'));
+    });
     document.querySelector('#login-form').addEventListener('submit', async event => {
       event.preventDefault();
-      const form = event.currentTarget, button = form.querySelector('button'), error = document.querySelector('#login-error');
+      const form = event.currentTarget, button = form.querySelector('button[type=submit]'), error = document.querySelector('#login-error');
       if (button.disabled) return;
       button.disabled = true;
       button.querySelector('span').textContent = '正在进入…';

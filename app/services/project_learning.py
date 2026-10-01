@@ -555,9 +555,12 @@ def list_experiences(project_id: int | None = None, query: str = "", status: str
     where = " WHERE " + " AND ".join(conditions) if conditions else ""
     with db.transaction() as conn:
         total = conn.execute("SELECT COUNT(*) FROM project_experiences" + where, tuple(params)).fetchone()[0]
+        counts = {"candidate": 0, "verified": 0, "deprecated": 0}
+        for row in conn.execute("SELECT status, COUNT(*) AS count FROM project_experiences" + where + " GROUP BY status", tuple(params)):
+            counts[row["status"]] = row["count"]
         ids = conn.execute("SELECT id FROM project_experiences" + where + " ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?",
                            (*params, max(1, min(100, int(limit))), max(0, int(offset)))).fetchall()
-        return {"items": [_experience(conn, item["id"]) for item in ids], "total": total}
+        return {"items": [_experience(conn, item["id"]) for item in ids], "total": total, "counts": counts}
 
 
 def get_experience(experience_id: int) -> dict[str, Any] | None:

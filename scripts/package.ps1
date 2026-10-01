@@ -20,6 +20,10 @@ try {
         $Relative -notmatch '^(\.git|\.venv|\.venv-runner|data|dist)/' -and
         $Relative -notmatch '(^|/)__pycache__/' -and
         $Relative -notmatch '(^|/)node_modules/' -and
+        $Relative -notmatch '^autodev-website/(data|dist)/' -and
+        $Relative -notmatch '^autodev-website/qa/(screenshots/|reference\.png$|dashboard-source\.png$)' -and
+        $Relative -notmatch '(^|/)secrets/' -and
+        ($Relative -notmatch '(^|/)\.env($|\.)' -or $Relative -match '(^|/)\.env[^/]*\.example$') -and
         $Relative -notmatch '\.pyc$' -and
         $Relative -ne '.env' -and
         $Relative -notmatch '(^|/)\.env\.runner$' -and

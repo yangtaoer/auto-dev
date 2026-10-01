@@ -191,6 +191,20 @@ class ProjectLearningTests(unittest.TestCase):
         self.assertEqual(self.learning.get_experience(experience["id"])["status"], "deprecated")
         self.assertEqual(self.learning.retrieve_lessons(self.project["project_key"], 901, "单位查询"), [])
 
+    def test_catalog_status_counts_follow_filters_not_page_size(self) -> None:
+        self.make_request(902)
+        result = self.learning.list_experiences(self.project["id"], limit=1)
+        self.assertEqual(len(result["items"]), 1)
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["counts"], {"candidate": 2, "verified": 0, "deprecated": 0})
+        self.feedback([{"id": "AC-1", "status": "passed"}, {"id": "AC-2", "status": "passed"}])
+        filtered = self.learning.list_experiences(self.project["id"], status="verified")
+        self.assertEqual(filtered["total"], 1)
+        self.assertEqual(filtered["counts"], {"candidate": 0, "verified": 1, "deprecated": 0})
+        empty = self.learning.list_experiences(self.project["id"], query="没有匹配的文字")
+        self.assertEqual(sum(empty["counts"].values()), 0)
+        self.assertEqual(empty["total"], 0)
+
     def test_related_different_requirement_retrieved_but_other_project_isolated(self) -> None:
         related = self.learning.retrieve_lessons(self.project["project_key"], 902, "副值待办与单位查询")
         self.assertEqual([item["request_id"] for item in related], [self.request_id])
