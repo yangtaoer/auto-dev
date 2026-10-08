@@ -182,6 +182,48 @@ class ExecutionPolicyTests(unittest.TestCase):
             self.db.init_db()
             self.assertEqual(model_settings.current(), payload)
 
+    def test_requested_sol_default_and_upgrade_preserve_existing_task_snapshot(self):
+        from app.services import model_settings
+        requested = {'model':'gpt-6.1-sol', 'effort':'xhigh'}
+        with patch.object(model_settings, 'settings', SimpleNamespace(
+                codex_model=requested['model'], codex_reasoning_effort=requested['effort'])):
+            self.assertEqual(model_settings.current(), requested)
+        old = {'model':'gpt-6-astra', 'effort':'high'}
+        with self.db.transaction() as conn:
+            conn.execute("INSERT INTO platform_settings(key,value,updated_at) VALUES ('codex',?,?)",
+                         (json.dumps(old), self.db.utc_now()))
+        first = self.request()
+        self.assertEqual(model_settings.for_request(first), old)
+        models = [dict(requested, name='GPT-6.1 Sol', efforts=['low','medium','high','xhigh','max'])]
+        with patch.object(model_settings, 'catalog', return_value=models):
+            self.assertEqual(model_settings.save(**requested, actor_id=self.admin['id']), requested)
+        self.assertEqual(model_settings.for_request(first), old)
+        self.assertEqual(model_settings.for_request(self.request()), requested)
+        self.db.init_db()
+        self.assertEqual(model_settings.current(), requested)
+        audit = self.db.row("SELECT detail FROM audit_logs WHERE action='model.settings_updated' ORDER BY id DESC LIMIT 1")
+        self.assertEqual(json.loads(audit['detail']), requested)
+
+    def test_sol_setting_cannot_be_saved_without_real_runner_catalog_confirmation(self):
+        from app.services import model_settings
+        for models in ([], [{'model':'gpt-6-astra', 'efforts':['high','xhigh']}],
+                       [{'model':'gpt-6.1-sol', 'efforts':['low','high']} ]):
+            with self.subTest(models=models), patch.object(model_settings, 'catalog', return_value=models):
+                with self.assertRaisesRegex(ValueError, '执行器已确认支持'):
+                    model_settings.save('gpt-6.1-sol', 'xhigh', self.admin['id'])
+        self.assertIsNone(self.db.row("SELECT * FROM platform_settings WHERE key='codex'"))
+        self.assertIsNone(self.db.row("SELECT * FROM audit_logs WHERE action='model.settings_updated'"))
+
+    def test_model_catalog_comes_only_from_runner_reports_not_code_defaults(self):
+        from app.services import model_settings
+        self.assertEqual(model_settings.catalog(), [])
+        models = [{'model':'gpt-6.1-sol','name':'GPT-6.1 Sol','efforts':['low','medium','high','xhigh','max'],
+                   'default_effort':'medium'}]
+        with self.db.transaction() as conn:
+            conn.execute("INSERT INTO runners(runner_id,last_seen_at,state,detail) VALUES (?,?,?,?)",
+                         ('model-test', self.db.utc_now(), 'idle', json.dumps({'codex_usage':{'models':models}})))
+        self.assertEqual(model_settings.catalog(), models)
+
     def test_transient_tfs_reads_retry_fresh_connection_but_never_replay_writes(self):
         from app.services.tfs import TfsClient, TfsConnectionError, TfsError
         client = TfsClient('https://tfs', pat='test-token')

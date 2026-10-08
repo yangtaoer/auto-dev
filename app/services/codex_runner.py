@@ -450,8 +450,10 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                 "优先自主查明并解决问题；仅在关键事实无法获得且继续开发必然不可靠时进入待补充。"
             )
         )
-        runtime = resolve_codex_runtime()
-        execution = model_config or {"model": settings.codex_model, "effort": "high"}
+        execution = model_config or {
+            "model": settings.codex_model, "effort": settings.codex_reasoning_effort,
+        }
+        runtime = resolve_codex_runtime(model=execution["model"])
         codex_config = CodexConfig(
             codex_bin=runtime["path"],
             cwd=str(cwd),

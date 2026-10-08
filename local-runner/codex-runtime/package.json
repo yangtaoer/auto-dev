@@ -2,6 +2,6 @@
   "name": "autodev-codex-runtime",
   "private": true,
   "dependencies": {
-    "@openai/codex": "0.153.4"
+    "@openai/codex": "0.161.0"
   }
 }

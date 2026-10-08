@@ -119,6 +119,9 @@
   align-items: center;
   justify-content: center;
   gap: 7px;
+  flex: 0 0 auto;
+  width: auto;
+  min-width: max-content;
   min-height: 38px;
   padding: 8px 13px;
   border-radius: var(--ui-control-radius);
@@ -127,8 +130,11 @@
   line-height: 1.5;
   white-space: nowrap;
 }
-.mint-workspace .top-actions .btn .ui-icon { width: 17px; height: 17px; }
+.mint-workspace .top-actions .btn .ui-icon { width: 17px; height: 17px; flex: 0 0 auto; }
 .mint-ui.mint-workspace .topbar .top-actions .analysis-launch {
+  min-width: 112px;
+  padding-inline: 14px;
+  letter-spacing: 0;
   border: 1px solid #adcfbc;
   background: #e4f1e8 !important;
   color: #39735a;
@@ -162,10 +168,21 @@
 }
 .mint-workspace #logout:hover { background: #e6efe1; color: #426b51; }
 .mint-workspace .project-guide-trigger {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 120px;
   min-height: 36px;
+  height: auto;
+  padding: 7px 5px;
+  gap: 9px;
   border-radius: 6px;
   color: #64846c;
+  white-space: nowrap;
 }
+.mint-workspace .project-guide { flex: 0 0 auto; }
+.mint-workspace .project-guide-trigger > span { font-size: 12px; line-height: 1.5; }
+.mint-workspace .project-guide-trigger :is(.ui-icon, b) { flex: 0 0 auto; }
 .mint-workspace .project-guide-trigger:hover { color: #3d6e52; }
 .mint-workspace .system-status { color: #648474; }
 
@@ -301,6 +318,67 @@
 .mint-workspace .table-card { border-radius: 9px; }
 .mint-workspace .table-card tbody tr:hover { background: #f0f6e9; }
 .mint-workspace :is(.recent-open, .text-action, .artifact-link) { border-radius: 5px; }
+
+/* File names used to overflow a 9% column because their flex container had a
+   fixed 210px minimum. Keep the table scroll inside its card and the labels
+   inside their own cell, with the complete original path available on hover. */
+.mint-workspace .delivery-table table { min-width: 1320px; }
+.mint-workspace .delivery-table th:nth-child(1) { width: 4%; }
+.mint-workspace .delivery-table th:nth-child(2) { width: 18%; }
+.mint-workspace .delivery-table th:nth-child(3) { width: 10%; }
+.mint-workspace .delivery-table th:nth-child(4) { width: 7%; }
+.mint-workspace .delivery-table th:nth-child(5) { width: 7%; }
+.mint-workspace .delivery-table th:nth-child(6) { width: 9%; }
+.mint-workspace .delivery-table th:nth-child(7) { width: 6%; }
+.mint-workspace .delivery-table th:nth-child(8),
+.mint-workspace .delivery-table th:nth-child(9) { width: 8%; }
+.mint-workspace .delivery-table th:nth-child(10) { width: 6%; }
+.mint-workspace .delivery-table th:nth-child(11) { width: 13%; }
+.mint-workspace .delivery-table th:nth-child(12) { width: 4%; }
+.mint-workspace .delivery-table td:nth-child(11) { white-space: normal; }
+.mint-workspace .artifact-links {
+  align-items: flex-start;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  gap: 6px;
+}
+.mint-workspace .artifact-links > * { min-width: 0; max-width: 100%; }
+.mint-workspace .artifact-links .artifact-link {
+  padding: 5px 7px;
+  border-color: #c4d8c6;
+  background: #f8fbf4;
+  line-height: 1.55;
+  font-size: 11px;
+}
+.mint-workspace .artifact-links .artifact-link:hover {
+  border-color: #8eb49b;
+  background: #edf5e8;
+}
+.mint-workspace .artifact-links .artifact-file-link {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) 11px;
+  align-items: start;
+  gap: 5px;
+  width: 100%;
+  white-space: normal;
+  text-decoration: none;
+}
+.mint-workspace .artifact-file-link > .ui-icon {
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  color: #769b86;
+}
+.mint-workspace .artifact-file-link .artifact-file-name {
+  display: -webkit-box;
+  min-width: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.mint-workspace .artifact-file-link .artifact-file-arrow { color: #759886; }
 
 .mint-workspace .recent-task-table :is(th, td):first-child {
   padding-left: 7px;
@@ -447,6 +525,18 @@
   .mint-workspace .version-chip { padding-top: 2px; font-size: 9px; }
 }
 
+/* Short desktop windows still reserve a real stage for the enlarged mascot. */
+@media (min-width: 901px) and (min-height: 561px) and (max-height: 680px) {
+  .mint-workspace .sidebar .logo { min-height: 55px; margin-bottom: 10px; }
+  .mint-workspace .sidebar-brand-mark { width: 90px; height: 30px; }
+  .mint-workspace .logo .sidebar-brand-name { font-size: 25px; }
+  .mint-workspace .sidebar nav { gap: 3px; }
+  .mint-workspace .sidebar .nav-item { min-height: 34px; padding-block: 6px; font-size: 14px; }
+  .mint-workspace .sidebar-character-stage .autodev-orb { height: 125px; flex-basis: 125px; }
+  .mint-workspace .sidebar-character-stage .orb-activity-console { padding: 7px 10px; }
+  .mint-workspace #orb-current-output { -webkit-line-clamp: 1; }
+}
+
 @media (min-width: 901px) and (max-height: 560px) {
   .mint-workspace .sidebar { padding-block: 8px; }
   .mint-workspace .sidebar .logo { min-height: 49px; margin-bottom: 8px; gap: 0; }
@@ -502,6 +592,8 @@
   .mint-workspace .top-actions { width: 100%; gap: 7px; }
   .mint-workspace .top-actions .btn { min-height: 35px; padding: 7px 9px; font-size: 10px; }
   .mint-workspace .top-actions .btn .ui-icon { width: 15px; height: 15px; }
+  .mint-ui.mint-workspace .topbar .top-actions .analysis-launch { min-width: 99px; padding-inline: 10px; font-size: 11px; }
+  .mint-workspace .top-actions #open-request { min-width: 119px; font-size: 11px; }
   .mint-workspace .top-actions .profile { margin-left: auto; padding-left: 6px; }
   .mint-workspace :is(#record-filters, #experience-filters) { gap: 10px; padding: 11px; }
   .mint-workspace :is(#record-filters, #experience-filters) > label { flex: 1 1 124px; }

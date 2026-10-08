@@ -9,7 +9,9 @@ from ..db import row, rows, transaction, utc_now
 
 def current() -> dict:
     saved = row("SELECT value FROM platform_settings WHERE key='codex'")
-    return json.loads(saved["value"]) if saved else {"model": settings.codex_model, "effort": "high"}
+    return json.loads(saved["value"]) if saved else {
+        "model": settings.codex_model, "effort": settings.codex_reasoning_effort,
+    }
 
 
 def catalog() -> list[dict]:

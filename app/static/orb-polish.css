@@ -1,6 +1,15 @@
 /* The mascot's quiet mint habitat and viewport-level conversation layer. */
 .mint-ui .orb-paper-note { display: none !important; }
-.mint-ui .autodev-orb-scene { filter: none; }
+.mint-ui .autodev-orb-scene {
+  filter: none;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+  image-rendering: auto;
+}
+/* Do not downsample the WebGL silhouette through a legacy CSS scale/filter. */
+.mint-ui .autodev-orb.is-scene { isolation: isolate; }
 .mint-ui .autodev-orb-canvas,
 .mint-ui .sidebar-character-stage .autodev-orb-canvas,
 .mint-ui .autodev-orb:not(.is-scene) .autodev-orb-fallback {

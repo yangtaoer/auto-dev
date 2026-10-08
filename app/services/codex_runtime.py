@@ -12,6 +12,8 @@ from ..config import ROOT, settings
 
 
 MIN_ASTRA_VERSION = (0, 153, 4)
+# Platform-tested CLI baseline: model/list confirms GPT-6.1 Sol and xhigh on 0.161.0.
+MIN_SOL_VERSION = (0, 161, 0)
 
 
 def managed_binary(runtime_dir: Path) -> Path | None:
@@ -36,7 +38,7 @@ def managed_binary(runtime_dir: Path) -> Path | None:
     return None
 
 
-def resolve_codex_runtime() -> dict[str, str]:
+def resolve_codex_runtime(*, model: str | None = None) -> dict[str, str]:
     explicit = os.getenv("CODEX_BIN", "").strip()
     binary = Path(explicit) if explicit else managed_binary(ROOT / "local-runner/codex-runtime")
     if binary is None:
@@ -49,6 +51,9 @@ def resolve_codex_runtime() -> dict[str, str]:
     match = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", result.stdout)
     if result.returncode or not match:
         raise RuntimeError("无法确认 Codex CLI 版本；请检查 CODEX_BIN 或重新安装平台运行器。")
-    if settings.codex_model == "gpt-6-astra" and tuple(map(int, match.groups())) < MIN_ASTRA_VERSION:
+    requested_model = model or settings.codex_model
+    if requested_model == "gpt-6-astra" and tuple(map(int, match.groups())) < MIN_ASTRA_VERSION:
         raise RuntimeError(f"Codex 运行器 {match.group()} 过旧；GPT-6 Astra 需使用平台已验证的 0.153.4 或更新版本，请运行 local-runner/install.ps1 后重试。")
+    if requested_model == "gpt-6.1-sol" and tuple(map(int, match.groups())) < MIN_SOL_VERSION:
+        raise RuntimeError(f"Codex 运行器 {match.group()} 过旧；GPT-6.1 Sol 需使用平台已验证的 0.161.0 或更新版本，请运行 local-runner/install.ps1 后重试；不会自动替换模型。")
     return {"path": str(binary), "version": match.group()}

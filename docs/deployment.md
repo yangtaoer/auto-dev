@@ -65,7 +65,8 @@ Set-Location "C:\你的路径\全自助需求研发交付"
 ```dotenv
 AUTODEV_CLOUD_URL=https://auto.yangtaoer.com.cn
 AUTODEV_RUNNER_ID=yangtao-pc
-CODEX_MODEL=gpt-6-astra
+CODEX_MODEL=gpt-6.1-sol
+CODEX_REASONING_EFFORT=xhigh
 ```
 
 然后：
@@ -76,7 +77,9 @@ CODEX_MODEL=gpt-6-astra
 4. 确认当前 Windows 用户可以正常使用 Codex；默认复用本机已有登录态。
 5. 先运行 `.\local-runner\start.ps1`，云端左下角应在约 20 秒内显示 `yangtao-pc` 在线。
 
-执行器使用独立锁定的 CLI（`local-runner/codex-runtime/package.json`），不再使用 Python SDK 附带的旧版 CLI。已有 `.venv` 的电脑升级时，也必须在执行器空闲并停止后重新运行 `install.ps1` 同步依赖，再重启。可用 `CODEX_BIN` 指定其他已验证的原生 CLI 路径；模型保持 GPT-6 Astra，升级失败不会自动降级。`scripts/codex_smoke.py` 使用同一配置进行只读真实模型连通性检查。
+执行器使用独立锁定的 CLI（`local-runner/codex-runtime/package.json`），不再使用 Python SDK 附带的旧版 CLI。已有 `.venv` 的电脑升级时，也必须在执行器空闲并停止后重新运行 `install.ps1` 同步依赖，再重启。可用 `CODEX_BIN` 指定其他已验证的原生 CLI 路径；默认模型为 GPT-6.1 Sol / xhigh，升级失败不会自动降级。`scripts/codex_smoke.py` 使用同一配置进行只读真实模型连通性检查。
+
+管理员已保存的全局配置不会被代码默认值覆盖；升级现有平台时，需在执行器真实上报支持 GPT-6.1 Sol / xhigh 后，于“研发设置”显式保存新配置。新开工任务使用此配置；运行中或原会话续作任务继续使用已有 `run_model_configs` 快照。
 
 如启用 OSS 交付，在 `local-runner/.env.runner` 中配置 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ALIYUN_OSS_REGION`、`ALIYUN_OSS_ENDPOINT` 和 `ALIYUN_OSS_BUCKET`。默认对象前缀为 `autodev`，签名链接和产物保留期为 3 天，Runner 每 72 小时执行一次 OSS 与本机交付目录清理。
 

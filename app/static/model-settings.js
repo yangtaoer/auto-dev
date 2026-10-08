@@ -15,12 +15,17 @@
   }
   choice.addEventListener('keydown', event => {
     const buttons = [...choice.querySelectorAll('[role="option"]')];
-    if (event.key === 'Escape') {closeLedgerPopovers();choice.querySelector(':scope > button').focus();}
+    if (event.key === 'Escape') {event.preventDefault();closeLedgerPopovers();choice.querySelector(':scope > button').focus();}
     if (['ArrowDown','ArrowUp'].includes(event.key) && buttons.length) {
       event.preventDefault();
       if (!choice.classList.contains('open')) choice.querySelector(':scope > button').click();
       const index = buttons.indexOf(document.activeElement);
-      buttons[(index+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length].focus();
+      const next = index < 0 ? (event.key==='ArrowDown'?0:buttons.length-1) : (index+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length;
+      buttons[next].focus();
+    }
+    if (['Home','End'].includes(event.key) && choice.classList.contains('open') && buttons.length) {
+      event.preventDefault();
+      buttons[event.key==='Home'?0:buttons.length-1].focus();
     }
   });
   async function open(force=false) {
@@ -33,7 +38,7 @@
       choice.querySelectorAll('[role="option"]').forEach(option => {
         if (option.dataset.modelBound) return;
         option.dataset.modelBound='1';
-        option.addEventListener('click',()=>efforts(saved.effort));
+        option.addEventListener('click',()=>efforts(form.querySelector('input[name="effort"]:checked')?.value || saved.effort));
       });
       if (!models.some(item=>item.model===saved.model)) choice.querySelector('b').textContent=saved.model;
       efforts(saved.effort);

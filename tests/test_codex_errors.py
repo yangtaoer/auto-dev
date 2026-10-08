@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 def event(method, **payload):
@@ -87,10 +87,40 @@ class CodexErrorTests(unittest.TestCase):
 
     def test_default_model_and_runtime_dependency_are_pinned(self):
         from app.config import ROOT, settings
-        self.assertEqual(settings.codex_model, "gpt-6-astra")
+        self.assertEqual(settings.codex_model, "gpt-6.1-sol")
+        self.assertEqual(settings.codex_reasoning_effort, "xhigh")
         spec = json.loads((ROOT / "local-runner/codex-runtime/package.json").read_text())
-        self.assertEqual(spec["dependencies"]["@openai/codex"], "0.153.4")
+        self.assertEqual(spec["dependencies"]["@openai/codex"], "0.161.0")
         self.assertIn("openai-codex==0.147.0", (ROOT / "requirements-runner.txt").read_text())
+
+    def test_runner_uses_requested_default_or_frozen_model_without_silent_substitution(self):
+        from app.services.codex_runner import CodexRunner
+        defaults = SimpleNamespace(codex_model="gpt-6.1-sol", codex_reasoning_effort="xhigh", codex_api_key="")
+        for frozen in (None, {"model":"gpt-6-astra", "effort":"high"}):
+            execution = frozen or {"model":defaults.codex_model, "effort":defaults.codex_reasoning_effort}
+            with self.subTest(frozen=frozen), tempfile.TemporaryDirectory() as directory:
+                client = MagicMock()
+                thread = MagicMock(id="model-test-thread")
+                client.thread_start.return_value = thread
+                client.thread_resume.return_value = thread
+                thread.turn.return_value.stream.return_value = iter([
+                    event("item/completed", item={"type":"agentMessage", "text":'{}'}),
+                    event("turn/completed", turn={"status":"completed"}),
+                ])
+                with patch("openai_codex.Codex") as codex, \
+                        patch("app.services.codex_runner.settings", defaults), \
+                        patch("app.services.codex_runner.resolve_codex_runtime", return_value={"path":"codex.exe","version":"0.161.0"}) as runtime, \
+                        patch("app.services.codex_runner.discover_dm7_plugin", return_value=SimpleNamespace(
+                            available=False, message="test", config_overrides={})):
+                    codex.return_value.__enter__.return_value = client
+                    CodexRunner().run(cwd=Path(directory), work_item={"id":1,"title":"测试"}, project={},
+                                      on_event=lambda *args: None, model_config=frozen,
+                                      resume_thread_id="old-thread" if frozen else None)
+                    runtime.assert_called_once_with(model=execution["model"])
+                    start = client.thread_resume if frozen else client.thread_start
+                    self.assertEqual(start.call_args.kwargs['model'], execution['model'])
+                    self.assertEqual(thread.turn.call_args.kwargs['model'], execution['model'])
+                    self.assertEqual(thread.turn.call_args.kwargs['effort'], execution['effort'])
 
     def test_failure_email_shows_upstream_reason(self):
         from app.services.codex_runner import CodexRunner
@@ -121,7 +151,20 @@ class CodexErrorTests(unittest.TestCase):
         with tempfile.NamedTemporaryFile() as executable, patch.dict(os.environ, {"CODEX_BIN": executable.name}), \
                 patch("app.services.codex_runtime.subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="codex-cli 0.147.0")):
             with self.assertRaisesRegex(RuntimeError, "过旧.*GPT-6 Astra"):
-                resolve_codex_runtime()
+                resolve_codex_runtime(model="gpt-6-astra")
+
+    def test_sol_runtime_baseline_checks_actual_model_and_preserves_astra_snapshots(self):
+        from app.services.codex_runtime import resolve_codex_runtime
+        with tempfile.NamedTemporaryFile() as executable, patch.dict(os.environ, {"CODEX_BIN": executable.name}):
+            for version in ("0.153.4", "0.160.0"):
+                with self.subTest(version=version), patch("app.services.codex_runtime.subprocess.run",
+                        return_value=SimpleNamespace(returncode=0, stdout=f"codex-cli {version}")):
+                    with self.assertRaisesRegex(RuntimeError, "过旧.*GPT-6.1 Sol.*0.161.0.*不会自动替换"):
+                        resolve_codex_runtime(model="gpt-6.1-sol")
+                    self.assertEqual(resolve_codex_runtime(model="gpt-6-astra")['version'], version)
+            with patch("app.services.codex_runtime.subprocess.run",
+                    return_value=SimpleNamespace(returncode=0, stdout="codex-cli 0.161.0")):
+                self.assertEqual(resolve_codex_runtime(model="gpt-6.1-sol")['version'], "0.161.0")
 
 
 if __name__ == "__main__":

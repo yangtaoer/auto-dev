@@ -62,6 +62,29 @@ test('clip variations change pace and travel without making sampling nondetermin
   assert.ok(motion.sample(slow, sampleAt).sway * motion.sample(quick, quick.startedAt + quick.duration * .3).sway < 0);
 });
 
+test('botanical habitats cross-fade smoothly and cycle through leaves, flowers and canopy', () => {
+  assert.deepEqual(motion.habitats, ['meadow', 'blossom', 'canopy']);
+  const period = 31200;
+  for (let index = 0; index < 6; index++) {
+    const start = motion.habitatAt(index * period);
+    assert.equal(start.current, motion.habitats[index % 3]);
+    assert.equal(start.next, motion.habitats[(index + 1) % 3]);
+    assert.equal(start.mix, 0);
+    assert.equal(motion.habitatAt(index * period + 26000).mix, 0);
+    assert.equal(motion.habitatAt(index * period + 28600).mix, .5);
+    const end = motion.habitatAt((index + 1) * period - .01);
+    assert.ok(end.mix > .999999);
+    assert.equal(end.next, motion.habitatAt((index + 1) * period).current);
+  }
+});
+
+test('reduced motion preserves a single still habitat and invalid times are harmless', () => {
+  for (const time of [0, 31000, 62000, 120000, NaN, Infinity, -1]) {
+    assert.deepEqual(motion.habitatAt(time, true), {current: 'meadow', next: 'blossom', mix: 0});
+  }
+  for (const time of [NaN, Infinity, -1]) assert.deepEqual(motion.habitatAt(time), motion.habitatAt(0));
+});
+
 function controller() {
   let now = 100, serial = 0;
   const timers = new Map();

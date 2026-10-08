@@ -155,7 +155,19 @@
     ['hop', 'sway', 'depth', 'pitch', 'gazeX', 'gazeY'].forEach(key => { pose[key] *= amplitude; });
     return pose;
   }
-  const api = {gestures, pools, pick, clip, sample};
+  const habitats = ['meadow', 'blossom', 'canopy'];
+  // Keep scene changes independent of polling/task updates. Cross-fades have
+  // zero velocity at either endpoint, including the last-to-first transition.
+  function habitatAt(elapsedMs, reduced = false) {
+    if (reduced) return {current: 'meadow', next: 'blossom', mix: 0};
+    const hold = 26000, fade = 5200, period = hold + fade;
+    const time = Math.max(0, Number.isFinite(elapsedMs) ? elapsedMs : 0);
+    const segment = Math.floor(time / period);
+    const progress = Math.max(0, Math.min(1, (time % period - hold) / fade));
+    return {current: habitats[segment % habitats.length], next: habitats[(segment + 1) % habitats.length],
+      mix: progress * progress * (3 - 2 * progress)};
+  }
+  const api = {gestures, pools, pick, clip, sample, habitats, habitatAt};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else global.AutoDevOrbMotion = api;
 })(typeof window === 'undefined' ? globalThis : window);
