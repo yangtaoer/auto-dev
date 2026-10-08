@@ -31,6 +31,7 @@
   async function open(force=false) {
     if ((loaded && !force) || loading) return; // Polling must never reset a user's draft.
     loading = true;
+    const loader=LoadingUI.begin('#view-models',{kind:'settings',label:'正在读取研发设置',preserve:loaded});
     try {
       const data = await api('/api/admin/model-settings');
       models = data.models || []; saved = data.settings;
@@ -45,7 +46,8 @@
       document.querySelector('#model-settings-current').textContent = `当前配置：${saved.model} / ${labels[saved.effort]||saved.effort}`;
       message.textContent = models.length ? '仅保存后生效；不会改变运行中任务。' : '执行器尚未上报模型列表，请等待上线后刷新。当前配置保持不变。';
       loaded = true;
-    } catch(error) {message.textContent = error.message;}
+      loader.finish();
+    } catch(error) {message.textContent = error.message;loader.fail(error,()=>open(true));}
     finally {loading=false;}
   }
   form.addEventListener('submit', async event => {

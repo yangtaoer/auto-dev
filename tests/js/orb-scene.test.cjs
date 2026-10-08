@@ -5,15 +5,16 @@ const path = require('node:path');
 const {pathToFileURL} = require('node:url');
 const vm = require('node:vm');
 
-async function gardenScene() {
+async function gardenScene({seed = 17, cryptoSeed = 4321} = {}) {
   // All three modules use the real Three geometry, materials and transforms.
   // Only browser ownership and the GPU renderer are stubbed for Node.
   const moduleURL = file => pathToFileURL(path.join(__dirname, '../../app/static', file));
-  const [THREE, {AutoDevGarden}, {GardenDirector, sampleGarden}] = await Promise.all([
+  const [THREE, {AutoDevGarden}, gardenMotion] = await Promise.all([
     import(moduleURL('vendor/three/three.module.js')),
     import(moduleURL('orb-garden.js')),
     import(moduleURL('garden-motion.js')),
   ]);
+  const {GardenDirector, sampleGarden, gardenEpisodes, gardenDuration, GARDEN_DURATIONS} = gardenMotion;
   let rendererOptions, canceled = 0, now = 100;
   class Renderer {
     constructor(options) { rendererOptions = options; this.shadowMap = {}; }
@@ -27,7 +28,7 @@ async function gardenScene() {
     getContext() { return {createRadialGradient() { return {addColorStop() {}}; }, fillRect() {}}; },
     setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {},
   }; }};
-  const window = {devicePixelRatio: 1};
+  const window = {devicePixelRatio: 1, crypto: {getRandomValues(values) {values[0] = cryptoSeed; return values;}}};
   const classes = new Set();
   const root = {dataset: {}, classList: {
     add(...names) {names.forEach(name => classes.add(name));},
@@ -35,7 +36,7 @@ async function gardenScene() {
     contains: name => classes.has(name),
   }, closest: selector => selector === '.sidebar-character-stage', append() {},
   getBoundingClientRect: () => ({width: 204, height: 180})};
-  const orb = {root, pointer: {targetX: 0, targetY: 0}, state: 'idle', gardenSuccessToken: 0, setVisible() {}};
+  const orb = {root, options: {gardenSeed: seed}, pointer: {targetX: 0, targetY: 0, near: false}, state: 'idle', gardenSuccessToken: 0, setVisible() {}};
   const Observer = class {observe() {} disconnect() {this.disconnected = true;}};
   const source = fs.readFileSync(path.join(__dirname, '../../app/static/orb-scene.js'), 'utf8')
     .replace(/^import .*$/gm, '').replace('export class AutoDevOrbScene', 'class AutoDevOrbScene');
@@ -45,7 +46,8 @@ async function gardenScene() {
   const scene = new window.AutoDevOrbScene(orb);
   const drawAfter = ms => { now += ms; scene.draw(now); };
   const advance = ms => { for (let time = 0; time < ms; time += 40) drawAfter(Math.min(40, ms - time)); };
-  return {scene, orb, root, window, document, THREE, sampleGarden, rendererOptions, advance, drawAfter, canceled: () => canceled};
+  return {scene, orb, root, window, document, THREE, sampleGarden, gardenEpisodes, gardenDuration, GARDEN_DURATIONS,
+    rendererOptions, advance, drawAfter, canceled: () => canceled};
 }
 
 test('orange body keeps one soft highlight and a smooth, enlarged sidebar silhouette', async () => {
@@ -94,11 +96,14 @@ test('leaves and petals use shaped, lit opaque geometry rather than flat transpa
 });
 
 test('one leaf transfers from its branch onto the head and follows rebound and tilt without drifting', async () => {
-  const {scene, sampleGarden, THREE} = await gardenScene();
+  const {scene, sampleGarden, gardenEpisodes, THREE} = await gardenScene();
   const leaf = scene.garden.heroLeaf;
-  scene.renderGardenFrame(sampleGarden({mode: 'idle', elapsed: 5000}));
+  const episode = gardenEpisodes(0).find(item => item.kind === 'leaf-hat');
+  assert.ok(episode, 'the longer garden sequence preserves the designed leaf-hat interaction');
+  const at = progress => episode.start + (episode.end - episode.start) * progress;
+  scene.renderGardenFrame(sampleGarden({mode: 'idle', elapsed: at(.31)}));
   assert.equal(leaf.userData.headContact, false);
-  for (const elapsed of [8000, 8250, 8900, 9200, 9700]) {
+  for (const elapsed of [.52, .57, .61, .655, .68].map(at)) {
     scene.renderGardenFrame(sampleGarden({mode: 'idle', elapsed}));
     assert.equal(scene.garden.heroLeaf, leaf);
     assert.equal(leaf.userData.headContact, true);
@@ -106,7 +111,7 @@ test('one leaf transfers from its branch onto the head and follows rebound and t
     assert.ok(leaf.position.distanceTo(expected) < .000001, `head contact at ${elapsed}`);
     assert.ok(scene.garden.heroLeafMesh.morphTargetInfluences[0] > .99, 'leaf drapes over the curved head');
   }
-  scene.renderGardenFrame(sampleGarden({mode: 'idle', elapsed: 14000}));
+  scene.renderGardenFrame(sampleGarden({mode: 'idle', elapsed: at(.99)}));
   assert.equal(leaf.userData.headContact, false);
   const branchTip = scene.garden.heroAnchor.getWorldPosition(new THREE.Vector3());
   assert.ok(leaf.position.distanceTo(branchTip) < .000001, 'the same leaf returns to its branch');
@@ -134,22 +139,22 @@ test('working light tracks are absent at rest and only enabled by the running ta
 });
 
 test('a completion token celebrates once even while another task continues running', async () => {
-  const {scene, root, orb, advance} = await gardenScene();
+  const {scene, root, orb, advance, GARDEN_DURATIONS} = await gardenScene();
   root.classList.add('is-running');
   advance(2000);
   orb.gardenSuccessToken = 1;
-  advance(2200);
+  advance(3200);
   assert.equal(scene.director.mode, 'success');
   assert.equal(scene.garden.crown.visible, true);
   assert.ok(scene.gardenFrame.bloom > .99);
   assert.equal(scene.garden.orbit.visible, false);
-  advance(8000);
+  advance(GARDEN_DURATIONS.success);
   assert.equal(scene.director.mode, 'working');
   assert.equal(scene.garden.crown.visible, false);
   assert.equal(scene.garden.petals.visible, false);
   assert.equal(scene.director.pendingSuccesses, 0);
   orb.gardenSuccessToken = 2;
-  advance(2000);
+  advance(3200);
   assert.equal(scene.garden.crown.visible, true);
   scene.destroy();
 });
@@ -200,6 +205,7 @@ test('destroy releases shared garden geometry, materials, shadow resources and o
   assert.equal(scene.intersection.disconnected, true);
   assert.equal(root.dataset.gardenMode, undefined);
   assert.equal(root.dataset.gardenPhase, undefined);
+  assert.equal(root.dataset.gardenEpisode, undefined);
   assert.ok(canceled() > 0);
   scene.destroy();
   assert.equal(disposed, count);
@@ -211,15 +217,67 @@ test('eye morphs release replaced GPU attributes and reuse same-sized buffers', 
   let released = 0;
   eye.addEventListener('dispose', () => {released++;});
   const initial = eye.getAttribute('position');
-  scene.renderGardenFrame(sampleGarden({mode: 'success', elapsed: 2400}));
+  scene.renderGardenFrame(sampleGarden({mode: 'success', elapsed: 3000}));
   assert.equal(released, 1, 'changing the triangulation releases both old buffers');
   const smile = eye.getAttribute('position');
   assert.notEqual(smile, initial);
-  scene.renderGardenFrame(sampleGarden({mode: 'success', elapsed: 2500}));
+  scene.renderGardenFrame(sampleGarden({mode: 'success', elapsed: 3100}));
   assert.equal(released, 1);
   assert.equal(eye.getAttribute('position'), smile, 'matching geometry is updated in place');
   scene.renderGardenFrame(sampleGarden({mode: 'idle', elapsed: 0}));
   assert.equal(released, 2, 'returning to normal also releases the replaced pair');
   scene.destroy();
   assert.equal(released, 3);
+});
+
+test('each garden receives its own seed while explicit seeds make component reviews reproducible', async () => {
+  const first = await gardenScene({seed: NaN, cryptoSeed: 1007});
+  const second = await gardenScene({seed: NaN, cryptoSeed: 1703});
+  const repeat = await gardenScene({seed: 1007, cryptoSeed: 9876});
+  assert.equal(first.scene.motionSeed, 1007);
+  assert.equal(second.scene.motionSeed, 1703);
+  assert.equal(repeat.scene.motionSeed, 1007);
+  assert.notEqual(first.scene.director.variant, second.scene.director.variant);
+  assert.equal(first.scene.director.variant, repeat.scene.director.variant);
+  for (const {scene} of [first, second, repeat]) scene.destroy();
+});
+
+test('component taps preserve scene time and task state, and suspended scenes reject reactions', async () => {
+  const {scene, orb, root, document, advance} = await gardenScene();
+  advance(200);
+  const clock = scene.director.clock;
+  assert.equal(scene.react('tap'), true);
+  advance(800);
+  assert.equal(scene.director.clock, clock + 800, 'a tap does not reset the running clock');
+  assert.equal(scene.gardenFrame.episode, 'tap-rebound');
+  assert.equal(root.dataset.gardenEpisode, 'tap-rebound');
+  assert.equal(orb.state, 'idle');
+  assert.equal(orb.gardenSuccessToken, 0);
+  for (const property of ['manualPaused', 'reducedMotion', 'hidden', 'visible']) {
+    if (property === 'hidden') document.hidden = true;
+    else if (property === 'visible') scene.visible = false;
+    else orb[property] = true;
+    assert.equal(scene.react('approach'), false, property);
+    if (property === 'hidden') document.hidden = false;
+    else if (property === 'visible') scene.visible = true;
+    else orb[property] = false;
+  }
+  scene.destroy();
+  assert.equal(scene.react('tap'), false);
+});
+
+test('nearby gaze stays responsive during leaf-hat choreography without loosening head attachment', async () => {
+  const {scene, orb, THREE, sampleGarden, gardenEpisodes} = await gardenScene();
+  const episode = gardenEpisodes(0).find(item => item.kind === 'leaf-hat');
+  const frame = sampleGarden({mode: 'idle', elapsed: episode.start + (episode.end - episode.start) * .52});
+  orb.pointer.targetX = 1;
+  for (let step = 0; step < 30; step++) scene.renderGardenFrame(frame);
+  const distantGaze = scene.gaze.x;
+  orb.pointer.near = true;
+  for (let step = 0; step < 30; step++) scene.renderGardenFrame(frame);
+  assert.ok(scene.gaze.x > distantGaze + .2, 'the nearby person can still get the character’s attention');
+  assert.equal(scene.garden.heroLeaf.userData.headContact, true);
+  const expected = new THREE.Vector3(-.48, 1.07, .12).applyMatrix4(scene.ball.matrixWorld);
+  assert.ok(scene.garden.heroLeaf.position.distanceTo(expected) < .000001);
+  scene.destroy();
 });

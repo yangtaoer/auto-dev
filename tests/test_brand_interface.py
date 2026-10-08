@@ -142,7 +142,10 @@ class BrandInterfaceTests(unittest.TestCase):
                 form = next(index for index, href in enumerate(styles) if href.startswith('/static/task-form-ui.css'))
                 self.assertLess(polish, form)
                 self.assertLess(form, refinements)
-                self.assertTrue(styles[-1].startswith('/static/ui-refinements.css'))
+                loading = next(index for index, href in enumerate(styles) if href.startswith('/static/loading-ui.css'))
+                self.assertLess(refinements, loading)
+                self.assertTrue(styles[-1].startswith('/static/loading-ui.css'))
+                self.assertLess(text.index('loading-ui.js'), text.index('src="/static/app.js'))
             else:
                 self.assertTrue(styles[-1].startswith('/static/login-polish.css'))
             self.assertLess(text.index('orb-character.js'), text.index('orb-scene.js'))
@@ -275,7 +278,7 @@ class BrandInterfaceTests(unittest.TestCase):
         self.assertIn('this.crown.scale.copy(this.worldScale)', garden)
         self.assertLess(motion.index('if (reduced) {', motion.index('  update(')),
                         motion.index('if (paused) return this.frame', motion.index('  update(')))
-        self.assertIn("return sampleGarden({mode: 'quiet', reduced: true})", motion)
+        self.assertRegex(motion, r"return sampleGarden\(\{(?:mode: 'quiet', )?reduced: true\}\)")
 
 
 if __name__ == '__main__':

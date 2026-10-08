@@ -171,7 +171,7 @@
       this.stateStartedAt = this.startedAt;
       this.lastFrameAt = this.startedAt;
       this.state = 'curious';
-      this.pointer = {x: 0, y: 0, targetX: 0, targetY: 0};
+      this.pointer = {x: 0, y: 0, targetX: 0, targetY: 0, near: false};
       this.profile = Object.assign({}, STATE_PROFILES.curious);
       this.targetProfile = Object.assign({}, STATE_PROFILES.curious);
       this.driverTurn = 0;
@@ -189,6 +189,7 @@
       this.reducedMotion = this.reduceMotionQuery.matches;
 
       this._onPointerMove = this._onPointerMove.bind(this);
+      this._onPointerLeave = this._onPointerLeave.bind(this);
       this._onVisibilityChange = this._onVisibilityChange.bind(this);
       this._onMotionChange = this._onMotionChange.bind(this);
       this._onContextLost = this._onContextLost.bind(this);
@@ -373,7 +374,10 @@
     }
 
     _bind() {
-      if (this.options.followPointer) global.addEventListener('pointermove', this._onPointerMove, {passive: true});
+      if (this.options.followPointer) {
+        global.addEventListener('pointermove', this._onPointerMove, {passive: true});
+        this.root.addEventListener('pointerleave', this._onPointerLeave, {passive: true});
+      }
       if (this.canvas) this.canvas.addEventListener('webglcontextlost', this._onContextLost);
       document.addEventListener('visibilitychange', this._onVisibilityChange);
       this.reduceMotionQuery.addEventListener('change', this._onMotionChange);
@@ -403,7 +407,8 @@
       ];
       const [driverState, action] = reactions[this.tapCycle % reactions.length];
       this.tapCycle += 1;
-      action();
+      if (this.scene?.garden) this.scene.react('tap');
+      else if (!this.reducedMotion) action();
       this._temporaryDriverState(driverState, 1250);
       this._markReaction('tap', 620);
       const messages = {
@@ -542,14 +547,30 @@
     }
 
     _onPointerMove(event) {
+      if (this.destroyed || document.hidden || !this.visible || event.pointerType === 'touch') return;
       const rect = this.root.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
-      this.pointer.targetX = Math.max(-1, Math.min(1, (event.clientX - (rect.left + rect.width / 2)) / (rect.width * 1.7)));
-      this.pointer.targetY = Math.max(-1, Math.min(1, ((rect.top + rect.height / 2) - event.clientY) / (rect.height * 1.7)));
+      const near = event.clientX >= rect.left && event.clientX <= rect.left + rect.width &&
+        event.clientY >= rect.top && event.clientY <= rect.top + rect.height;
+      if (near !== Boolean(this.pointer.near)) this.scene?.react(near ? 'approach' : 'leave');
+      this.pointer.near = near;
+      const reach = near ? .65 : 1.7;
+      this.pointer.targetX = Math.max(-1, Math.min(1, (event.clientX - (rect.left + rect.width / 2)) / (rect.width * reach)));
+      this.pointer.targetY = Math.max(-1, Math.min(1, ((rect.top + rect.height / 2) - event.clientY) / (rect.height * reach)));
+    }
+
+    _onPointerLeave() {
+      if (this.pointer.near) this.scene?.react('leave');
+      this.pointer.near = false;
+      this.pointer.targetX = 0;
+      this.pointer.targetY = 0;
     }
 
     _onVisibilityChange() {
-      if (document.hidden) this._hideWhisper();
+      if (document.hidden) {
+        this._hideWhisper();
+        this._onPointerLeave();
+      }
       if (this.fallbackCharacter) this.fallbackCharacter.setPaused(document.hidden || this.manualPaused || this.reducedMotion || !this.visible);
       this._scheduleAmbient();
       if (!document.hidden) {
@@ -765,7 +786,9 @@
     }
 
     setRunning(running) {
-      this.root.classList.toggle('is-running', Boolean(running));
+      const active = Boolean(running);
+      if (this.root.classList.contains('is-running') === active) return;
+      this.root.classList.toggle('is-running', active);
       this.scene?.invalidate();
     }
 
@@ -780,6 +803,7 @@
       this.scene?.destroy();
       if (this.frameRequest) cancelAnimationFrame(this.frameRequest);
       global.removeEventListener('pointermove', this._onPointerMove);
+      this.root.removeEventListener('pointerleave', this._onPointerLeave);
       if (this.canvas) this.canvas.removeEventListener('webglcontextlost', this._onContextLost);
       global.removeEventListener('resize', this._resize);
       global.removeEventListener('resize', this._positionWhisper);

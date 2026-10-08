@@ -48,8 +48,7 @@ window.ProjectLearning = (() => {
     if(!container)return;
     const generation=++catalog.generation;
     catalog.page=Math.max(1,Number(page)||1);
-    container.setAttribute('aria-busy','true');
-    container.innerHTML=empty('正在读取项目经验…');
+    const loader=LoadingUI.begin(container,{kind:'cards',label:'正在读取项目经验',preserve:catalog.loaded});
     const params=new URLSearchParams({limit:String(catalog.size),offset:String((catalog.page-1)*catalog.size)});
     Object.entries(catalog.filters).forEach(([name,value])=>{if(value)params.set(name,value);});
     try {
@@ -68,12 +67,12 @@ window.ProjectLearning = (() => {
       const pagination=document.querySelector('#experience-pagination');
       pagination.innerHTML=`<span>第 ${catalog.page} / ${maxPage} 页</span><div><button type="button" data-page="${catalog.page-1}" ${catalog.page<=1?'disabled':''}>← 上一页</button><button type="button" data-page="${catalog.page+1}" ${catalog.page>=maxPage?'disabled':''}>下一页 →</button></div>`;
       pagination.querySelectorAll('[data-page]').forEach(button=>button.onclick=()=>loadCatalog(button.dataset.page));
+      loader.finish();
     } catch(error) {
       if(generation!==catalog.generation)return;
-      document.querySelector('#experience-metrics').innerHTML='<span class="muted">经验统计暂不可用</span>';
-      container.innerHTML=empty('项目经验暂时无法读取',error.message)+'<button type="button" class="btn btn-secondary learning-reload">重新读取</button>';
-      container.querySelector('.learning-reload').onclick=()=>loadCatalog(catalog.page);
-    } finally {if(generation===catalog.generation)container.setAttribute('aria-busy','false');}
+      if(!catalog.loaded)document.querySelector('#experience-metrics').innerHTML='<span class="muted">经验统计暂不可用</span>';
+      loader.fail(error,()=>loadCatalog(catalog.page));
+    }
   }
 
   function renderRounds(rounds) {
@@ -93,7 +92,8 @@ window.ProjectLearning = (() => {
     const modal=document.querySelector('#experience-modal'),content=document.querySelector('#experience-detail-content');
     if(!modal||!content)return;
     const generation=++experienceGeneration;modal.hidden=false;
-    content.innerHTML='<h2 id="experience-detail-title">项目经验</h2>'+empty('正在读取经验详情…');
+    content.innerHTML='<h2 id="experience-detail-title" class="sr-only">项目经验</h2>';
+    const loader=LoadingUI.begin(content,{kind:'detail',label:'正在打开项目经验'});
     document.querySelector('#close-experience').focus();
     try {
       const result=await api(`/api/admin/project-experiences/${encodeURIComponent(id)}`);
@@ -135,7 +135,8 @@ window.ProjectLearning = (() => {
         try {await api(`/api/admin/project-experiences/${encodeURIComponent(id)}`,{method:'PATCH',body:JSON.stringify({status:form.elements.status.value,reason:form.elements.reason.value.trim()})});toast('经验状态已更新');await openExperience(id);await loadCatalog(catalog.page);}
         catch(err){error.textContent=err.message;error.hidden=false;button.disabled=false;}
       };
-    } catch(error) {if(generation===experienceGeneration)content.innerHTML='<h2 id="experience-detail-title">项目经验</h2>'+empty('无法读取经验详情',error.message);}
+      loader.finish();
+    } catch(error) {if(generation===experienceGeneration&&!modal.hidden)loader.fail(error,()=>openExperience(id));}
   }
 
   function developmentLabel(status) {
@@ -158,14 +159,15 @@ window.ProjectLearning = (() => {
     document.querySelector('#task-experience-context').innerHTML=renderSimilar(request)||'<p class="muted">本次尚未登记引用的历史经验。</p>';
     bindRequestLinks(document.querySelector('#task-experience-context'));
     renderRequirementPoints(session);
-    if(!session.bundle&&!session.loading)loadAcceptance(session);
+    if(!session.bundle&&!session.loading&&!session.loadFailed)loadAcceptance(session);
     else if((session.status!==request.status||session.reload)&&!session.loading){session.reload=false;loadAcceptance(session);}
     session.status=request.status;
   }
 
   async function loadAcceptance(session) {
     session.loading=true;
-    if(!session.bundle)session.element.innerHTML=renderSimilar(session.request)+empty('正在读取验收账本…');
+    session.loadFailed=false;
+    const loader=!session.bundle?LoadingUI.begin(session.element,{kind:'settings',label:'正在读取验收信息'}):null;
     try {
       const result=await api(`/api/requests/${encodeURIComponent(session.request.id)}/acceptance`);
       session.bundle=result;
@@ -175,9 +177,11 @@ window.ProjectLearning = (() => {
       }
       renderRequirementPoints(session);
       drawAcceptance(session);
+      loader?.finish();
     } catch(error) {
-      session.element.innerHTML=renderSimilar(session.request)+empty('验收账本暂时无法读取',error.message)+'<button type="button" class="btn btn-secondary acceptance-reload">重新读取</button>';
-      session.element.querySelector('.acceptance-reload').onclick=()=>loadAcceptance(session);
+      session.loadFailed=true;
+      if(loader)loader.fail(error,()=>loadAcceptance(session));
+      else toast('验收信息暂未更新，已保留填写内容。');
     } finally {session.loading=false;}
   }
 

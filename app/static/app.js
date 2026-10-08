@@ -57,11 +57,17 @@ function openArtifactPreview(url,downloadUrl,title,repository){const overlay=doc
 function closeArtifactPreview(){const overlay=document.querySelector('#artifact-preview'),image=document.querySelector('#artifact-preview-image');if(overlay.hidden)return;overlay.hidden=true;image.onload=null;image.classList.remove('loaded');image.removeAttribute('src');document.body.classList.remove('preview-open')}
 
 async function api(url, options={}) {
-  const response = await fetch(url,{headers:{'Content-Type':'application/json',...(options.headers||{})},...options});
-  if (response.status===401) { location.href='/login'; throw new Error('登录已过期'); }
-  const data = await response.json().catch(()=>({}));
-  if (!response.ok) throw new Error(data.detail || '请求失败');
-  return data;
+  // Bound read requests only. A timeout must not imply a write was cancelled.
+  const controller=(!options.method||options.method==='GET')&&!options.signal?new AbortController():null;
+  const timeout=controller?setTimeout(()=>controller.abort(),30000):null;
+  try {
+    const response = await fetch(url,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})},...(controller?{signal:controller.signal}:{})});
+    if (response.status===401) { location.href='/login'; throw new Error('登录已过期'); }
+    const data = await response.json().catch(error=>{if(controller?.signal.aborted)throw error;return {}});
+    if (!response.ok) throw new Error(data.detail || '请求失败');
+    return data;
+  } catch(error) {if(controller?.signal.aborted)throw new Error('读取超时，请检查网络后重试。');throw error;}
+  finally {if(timeout)clearTimeout(timeout);}
 }
 function toast(message){const el=document.querySelector('#toast');el.textContent=message;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2600)}
 
@@ -79,16 +85,25 @@ function switchView(name){
   if(name==='models')window.ModelSettings?.open();
 }
 
-async function refresh(){
+let refreshPromise=null, workspaceLoaded=false, recordsGeneration=0, recordsPending=false, detailGeneration=0, detailPending=false;
+const workspaceLoadingRegions=[['dashboard','dashboard','正在准备任务总览'],['requests','table','正在整理交付记录'],['projects','cards','正在读取自主项目'],['analytics','analytics','正在汇总任务统计'],['users','table','正在读取账号列表']];
+function refresh({background=false}={}){
+  if(refreshPromise)return refreshPromise;
+  const loaders=!workspaceLoaded&&!background?workspaceLoadingRegions.map(([name,kind,label])=>LoadingUI.begin(`#view-${name}`,{kind,label})):[];
+  refreshPromise=refreshWorkspace().then(()=>{workspaceLoaded=true;loaders.forEach(loader=>loader.finish());workspaceLoadingRegions.forEach(([name])=>{const host=document.querySelector(`#view-${name}`);if(host?.classList.contains('loading-failed'))LoadingUI.cancel(host);});}).catch(error=>{loaders.forEach(loader=>loader.fail(error,()=>refresh().catch(()=>{})));throw error;}).finally(()=>{refreshPromise=null;});
+  return refreshPromise;
+}
+async function refreshWorkspace(){
   const userRequest=USER.role==='admin'?api('/api/users'):Promise.resolve({users:[]});
   const analyticsRequest=USER.role==='admin'?api('/api/admin/analytics'):Promise.resolve(null);
   const projectRequest=api('/api/projects');
   const recipientRequest=api('/api/notification-recipients');
-  const recordsRequest=api(deliveryRecordsUrl());
+  const recordsVersion=recordsGeneration,recordsUrl=deliveryRecordsUrl(),recordsRequest=recordsPending?Promise.resolve(null):api(recordsUrl);
   const [dashboard,projects,me,users,analytics,recipients,records]=await Promise.all([api('/api/dashboard'),projectRequest,api('/api/me'),userRequest,analyticsRequest,recipientRequest,recordsRequest]);
-  Object.assign(USER,me.user);state.dashboard=dashboard;state.projects=projects.projects;state.users=users.users||[];state.notificationUsers=recipients.users||[];state.analytics=analytics;applyDeliveryRecords(records);renderDashboard();renderProjects();renderProjectGuide();renderAnalytics();renderUsers();renderRequestEmailOptions(false);renderRecordFilterOptions();renderAllTable();
+  Object.assign(USER,me.user);state.dashboard=dashboard;state.projects=projects.projects;state.users=users.users||[];state.notificationUsers=recipients.users||[];state.analytics=analytics;renderDashboard();renderProjects();renderProjectGuide();renderAnalytics();renderUsers();renderRequestEmailOptions(false);renderRecordFilterOptions();
+  if(records&&!recordsPending&&recordsVersion===recordsGeneration&&recordsUrl===deliveryRecordsUrl()){applyDeliveryRecords(records);renderAllTable();const table=document.querySelector('.delivery-table');if(table?.classList.contains('loading-failed'))LoadingUI.cancel(table);}
   window.ProjectLearning?.syncProjects();
-  if(state.selectedRequest&&!state.selectedTerminal) refreshDetail(state.selectedRequest,true);
+  if(state.selectedRequest&&!state.selectedTerminal&&!detailPending) refreshDetail(state.selectedRequest,true);
 }
 const ORB_RUNNING_STATUSES=new Set(['routing','validating','developing','submitting','building','releasing','capturing','delivering']);
 function renderSidebarOrbActivity(activeRuns){
@@ -264,7 +279,14 @@ function renderAllTable(){
 
 function deliveryRecordsUrl(){const query=new URLSearchParams({page:String(state.records.page||1),page_size:String(state.records.pageSize||10)});Object.entries(state.records.filters||{}).forEach(([key,value])=>{if(String(value??'').trim())query.set(key,String(value).trim())});return `/api/delivery-records?${query}`}
 function applyDeliveryRecords(result){const pagination=result?.pagination||{};state.records.items=result?.items||[];state.records.page=Number(pagination.page)||1;state.records.pageSize=Number(pagination.page_size)||10;state.records.total=Number(pagination.total)||0;state.records.totalPages=Number(pagination.total_pages)||1}
-async function loadDeliveryRecords(page=state.records.page){state.records.page=Math.max(1,Number(page)||1);const result=await api(deliveryRecordsUrl());applyDeliveryRecords(result);renderAllTable()}
+async function loadDeliveryRecords(page=state.records.page){
+  state.records.page=Math.max(1,Number(page)||1);
+  recordsPending=true;
+  const generation=++recordsGeneration,loader=LoadingUI.begin(document.querySelector('.delivery-table'),{kind:'table',label:'正在读取交付记录',preserve:workspaceLoaded});
+  try{const result=await api(deliveryRecordsUrl());if(generation!==recordsGeneration)return;applyDeliveryRecords(result);renderAllTable();loader.finish();}
+  catch(error){if(generation===recordsGeneration)loader.fail(error,()=>loadDeliveryRecords(state.records.page));}
+  finally{if(generation===recordsGeneration)recordsPending=false;}
+}
 const RECORD_FILTER_OPTIONS={
   task_type:[['','全部类型'],['development','自主研发'],['analysis','问题分析']],
   status:[['','全部状态'],['waiting_merge','等待 PR 合并'],['waiting_input','待补充信息'],['developing','研发中'],['delivered','已交付'],['failed','执行失败'],['rejected','准入驳回'],['cancelled','已取消']]
@@ -279,7 +301,16 @@ function setLedgerDateValue(control,value){const input=control.querySelector('in
 function positionLedgerCalendar(control){const panel=control.querySelector('.ledger-calendar'),button=control.querySelector(':scope > button');control.classList.remove('open-up');const availableBelow=window.innerHeight-button.getBoundingClientRect().bottom-12;if(panel.getBoundingClientRect().height>availableBelow&&button.getBoundingClientRect().top>panel.getBoundingClientRect().height+12)control.classList.add('open-up')}
 function renderLedgerCalendar(control){const panel=control.querySelector('.ledger-calendar'),selected=control.querySelector('input').value,today=new Date(),view=control._viewDate||new Date(today.getFullYear(),today.getMonth(),1),first=new Date(view.getFullYear(),view.getMonth(),1),offset=(first.getDay()+6)%7,start=new Date(view.getFullYear(),view.getMonth(),1-offset),days=[];for(let index=0;index<42;index+=1){const day=new Date(start.getFullYear(),start.getMonth(),start.getDate()+index),value=dateIso(day);days.push(`<button type="button" class="${day.getMonth()!==view.getMonth()?'outside ':''}${value===selected?'selected ':''}${value===dateIso(today)?'today':''}" data-date="${value}" aria-label="${day.getFullYear()}年${day.getMonth()+1}月${day.getDate()}日"><span>${day.getDate()}</span></button>`)}panel.innerHTML=`<div class="ledger-calendar-head"><button type="button" data-month="-1" aria-label="上个月">←</button><b>${view.getFullYear()} / ${String(view.getMonth()+1).padStart(2,'0')}</b><button type="button" data-month="1" aria-label="下个月">→</button></div><div class="ledger-calendar-week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div><div class="ledger-calendar-days">${days.join('')}</div><div class="ledger-calendar-foot"><button type="button" data-today>今天</button><button type="button" data-clear>清空</button></div>`;panel.querySelectorAll('[data-month]').forEach(button=>button.onclick=event=>{event.stopPropagation();control._viewDate=new Date(view.getFullYear(),view.getMonth()+Number(button.dataset.month),1);renderLedgerCalendar(control)});panel.querySelectorAll('[data-date]').forEach(button=>button.onclick=event=>{event.stopPropagation();setLedgerDateValue(control,button.dataset.date);closeLedgerPopovers()});panel.querySelector('[data-today]').onclick=event=>{event.stopPropagation();setLedgerDateValue(control,dateIso(new Date()));closeLedgerPopovers()};panel.querySelector('[data-clear]').onclick=event=>{event.stopPropagation();setLedgerDateValue(control,'');closeLedgerPopovers()};}
 function initLedgerDate(control,value=''){if(!control)return;setLedgerDateValue(control,value);if(control.dataset.ready)return;control.dataset.ready='1';const button=control.querySelector(':scope > button'),panel=control.querySelector('.ledger-calendar');button.onclick=event=>{event.stopPropagation();const opening=!control.classList.contains('open');closeLedgerPopovers(control);control.classList.toggle('open',opening);panel.hidden=!opening;button.setAttribute('aria-expanded',String(opening));if(opening){renderLedgerCalendar(control);positionLedgerCalendar(control)}};panel.onclick=event=>event.stopPropagation();}
-function renderRecordFilterOptions(){setLedgerSelectOptions(document.querySelector('[data-filter-select="task_type"]'),RECORD_FILTER_OPTIONS.task_type,state.records.filters.task_type);setLedgerSelectOptions(document.querySelector('[data-filter-select="status"]'),RECORD_FILTER_OPTIONS.status,state.records.filters.status);setLedgerSelectOptions(document.querySelector('#record-project-filter'),[['','全部项目'],...state.projects.map(project=>[project.project_key,project.name])],state.records.filters.project_key);setLedgerSelectOptions(document.querySelector('#record-requester-filter'),[['','全部提交人'],...state.users.map(user=>[String(user.id),user.display_name])],state.records.filters.requester_id);initLedgerDate(document.querySelector('[data-filter-date="date_from"]'),state.records.filters.date_from);initLedgerDate(document.querySelector('[data-filter-date="date_to"]'),state.records.filters.date_to)}
+function renderRecordFilterOptions(){
+  // Unsaved filter choices are a draft too: polling updates choices, not their selected value.
+  const selection=(selector,key)=>{const control=document.querySelector(selector);return control?.dataset.ready?control.querySelector('input').value:state.records.filters[key];};
+  setLedgerSelectOptions(document.querySelector('[data-filter-select="task_type"]'),RECORD_FILTER_OPTIONS.task_type,selection('[data-filter-select="task_type"]','task_type'));
+  setLedgerSelectOptions(document.querySelector('[data-filter-select="status"]'),RECORD_FILTER_OPTIONS.status,selection('[data-filter-select="status"]','status'));
+  setLedgerSelectOptions(document.querySelector('#record-project-filter'),[['','全部项目'],...state.projects.map(project=>[project.project_key,project.name])],selection('#record-project-filter','project_key'));
+  setLedgerSelectOptions(document.querySelector('#record-requester-filter'),[['','全部提交人'],...state.users.map(user=>[String(user.id),user.display_name])],selection('#record-requester-filter','requester_id'));
+  initLedgerDate(document.querySelector('[data-filter-date="date_from"]'),selection('[data-filter-date="date_from"]','date_from'));
+  initLedgerDate(document.querySelector('[data-filter-date="date_to"]'),selection('[data-filter-date="date_to"]','date_to'));
+}
 function resetRecordFilterControls(){document.querySelectorAll('[data-filter-select]').forEach(control=>setLedgerSelectValue(control,''));document.querySelectorAll('[data-filter-date]').forEach(control=>setLedgerDateValue(control,''));closeLedgerPopovers()}
 function renderRecordPagination(){const pagination=document.querySelector('#record-pagination'),total=document.querySelector('#record-total');if(!pagination)return;const page=state.records.page,totalPages=state.records.totalPages;if(total)total.textContent=`共 ${state.records.total} 条`;const pages=[];for(let value=Math.max(1,page-2);value<=Math.min(totalPages,page+2);value+=1)pages.push(value);pagination.innerHTML=`<span>第 ${page} / ${totalPages} 页</span><div><button type="button" data-page="${page-1}" ${page<=1?'disabled':''}>← 上一页</button>${pages.map(value=>`<button type="button" data-page="${value}" class="${value===page?'active':''}">${value}</button>`).join('')}<button type="button" data-page="${page+1}" ${page>=totalPages?'disabled':''}>下一页 →</button></div>`;pagination.querySelectorAll('[data-page]').forEach(button=>button.onclick=()=>loadDeliveryRecords(button.dataset.page).catch(error=>toast(error.message)))}
 function bindRows(){document.querySelectorAll('.clickable-row').forEach(el=>el.onclick=()=>el.dataset.intakeId?openRoutingDetail(el.dataset.intakeId,el.dataset.workItemId,'routing',el.dataset.taskType):openDetail(el.dataset.id))}
@@ -386,6 +417,7 @@ function renderRoutingState(intakeId,workItemId,status='routing',message='',task
   TaskDialog.bind();
 }
 async function openRoutingDetail(intakeId,workItemId,initialStatus='routing',taskType='development'){
+  detailGeneration+=1;detailPending=false;LoadingUI.cancel('#detail-content');
   state.selectedIntake=intakeId;state.selectedRequest=null;state.selectedTerminal=false;
   const generation=++state.routingGeneration;
   showDetailDrawer();renderRoutingState(intakeId,workItemId,initialStatus,'',taskType);
@@ -402,25 +434,34 @@ async function openRoutingDetail(intakeId,workItemId,initialStatus='routing',tas
     document.querySelector('#retry-new-run')?.addEventListener('click',()=>{closeDetail();openRequestModal(taskType)});
   }
 }
-async function openDetail(id){window.ProjectLearning?.willOpenRequest(id);state.selectedIntake=null;state.selectedRequest=id;state.selectedTerminal=false;showDetailDrawer();await refreshDetail(id)}
+async function openDetail(id){window.ProjectLearning?.willOpenRequest(id);state.routingGeneration+=1;state.selectedIntake=null;state.selectedRequest=id;state.selectedTerminal=false;showDetailDrawer();await refreshDetail(id)}
 async function refreshDetail(id,silent=false){
+  if(silent&&detailPending)return;
+  const generation=++detailGeneration;detailPending=true;
+  const loader=silent?null:LoadingUI.begin('#detail-content',{kind:'detail',label:'正在打开任务详情'});
   const drawer=document.querySelector('#detail-drawer'),eventList=document.querySelector('#detail-content .event-list');
   const drawerScroll=silent?drawer.scrollTop:0,eventScroll=silent&&eventList?eventList.scrollTop:0;
   try{
-    const d=(await api(`/api/requests/${id}`)).request;if(state.selectedRequest!==id)return;
+    const d=(await api(`/api/requests/${id}`)).request;if(state.selectedRequest!==id||generation!==detailGeneration)return;
     const active=document.activeElement,continuationFocused=silent&&active?.id==='continuation-prompt';
     const focusedTab=silent&&active?.dataset?.taskTab;
     const learningFocused=silent&&active?.closest?.('.request-learning-panel');
-    const selectionStart=continuationFocused||learningFocused?active.selectionStart:null,selectionEnd=continuationFocused||learningFocused?active.selectionEnd:null,textareaScroll=continuationFocused||learningFocused?active.scrollTop:0;
+    const supplementFocused=silent&&active?.matches?.('.supplement-answer');
+    const supplementDrafts=silent?[...drawer.querySelectorAll('#supplement-form .supplement-answer')].map(input=>({id:input.dataset.id,value:input.value})):[];
+    const selectionStart=continuationFocused||learningFocused||supplementFocused?active.selectionStart:null,selectionEnd=continuationFocused||learningFocused||supplementFocused?active.selectionEnd:null,textareaScroll=continuationFocused||learningFocused||supplementFocused?active.scrollTop:0;
     renderDetail(d);
+    supplementDrafts.forEach(draft=>{const input=drawer.querySelector(`.supplement-answer[data-id="${CSS.escape(draft.id)}"]`);if(input)input.value=draft.value;});
+    LoadingUI.cancel('#detail-content');
     if(silent)requestAnimationFrame(()=>{
+      if(generation!==detailGeneration||state.selectedRequest!==id)return;
       drawer.scrollTop=drawerScroll;
       const refreshedEvents=document.querySelector('#detail-content .event-list');if(refreshedEvents)refreshedEvents.scrollTop=eventScroll;
-      const prompt=continuationFocused?document.querySelector('#continuation-prompt'):learningFocused&&active.isConnected?active:null;
+      const prompt=continuationFocused?document.querySelector('#continuation-prompt'):supplementFocused?drawer.querySelector(`.supplement-answer[data-id="${CSS.escape(active.dataset.id)}"]`):learningFocused&&active.isConnected?active:null;
       if(prompt){prompt.focus({preventScroll:true});if(selectionStart!==null&&typeof prompt.setSelectionRange==='function')prompt.setSelectionRange(selectionStart,selectionEnd);prompt.scrollTop=textareaScroll;}
       else if(focusedTab)document.querySelector(`[data-task-tab="${focusedTab}"]`)?.focus({preventScroll:true});
     });
-  }catch(e){if(!silent)toast(e.message)}
+  }catch(e){if(!silent&&generation===detailGeneration&&state.selectedRequest===id)loader.fail(e,()=>openDetail(id));}
+  finally{if(generation===detailGeneration)detailPending=false;}
 }
 function renderAnalysisPanel(d){
   const result=d.analysis_result&&typeof d.analysis_result==='object'?d.analysis_result:{},hasResult=Object.keys(result).length>0;
@@ -511,7 +552,7 @@ function renderDevCoreMarkdown(target,value){target.className='chat-rendered';le
 function appendDevCoreEvent(event){const live=state.live,chat=document.querySelector('#devcore-chat'),kind=event.kind||'status',analysis=live.taskType==='analysis';if(kind==='status')return;const group=event.group||`seq-${event.seq}`;let bubble=live.lastBubble;if(!event.delta||group!==live.lastGroup||kind!==live.lastKind||!bubble){bubble=document.createElement('article');bubble.className=`chat-message ${kind}`;const labels={assistant:analysis?'DEVCORE 问题分析结论':'DEVCORE 研发结论',reasoning:'分析摘要',command:'终端执行',file:'文件变更',plan:analysis?'分析计划':'研发计划'};const label=document.createElement('div');label.className='chat-label';const name=document.createElement('span');name.textContent=labels[kind]||(analysis?'分析过程':'研发过程');const time=document.createElement('time');time.textContent=new Date(event.at).toLocaleTimeString('zh-CN',{hour12:false});label.append(name,time);bubble.appendChild(label);const content=document.createElement(event.format==='markdown'?'div':'pre');bubble.appendChild(content);chat.appendChild(bubble);live.lastBubble=bubble}const content=bubble.lastElementChild;if(event.format==='markdown'&&!event.delta){renderDevCoreMarkdown(content,event.content)}else{content.textContent+=engineText(event.content||'')}live.lastGroup=group;live.lastKind=kind;while(chat.children.length>140)chat.removeChild(chat.firstElementChild);chat.scrollTop=chat.scrollHeight}
 function appendDevCoreSystem(message,type='status'){const chat=document.querySelector('#devcore-chat'),el=document.createElement('div');el.className=`chat-system ${type}`;el.innerHTML=`<i></i><span>${escapeHtml(engineText(message))}</span>`;chat.appendChild(el);chat.scrollTop=chat.scrollHeight}
 function closeDevCoreStream(){const live=state.live,requestId=live.requestId,watcherId=live.watcherId;live.generation+=1;if(live.timer)clearTimeout(live.timer);live.timer=null;live.watcherId=null;live.requestId=null;live.cursor=0;live.lastBubble=null;const panel=document.querySelector('#devcore-stream-panel');panel.classList.remove('open');panel.setAttribute('aria-hidden','true');document.querySelector('#devcore-chat').innerHTML='';if(requestId&&watcherId)fetch(`/api/requests/${requestId}/devcore-watch/${watcherId}/stop`,{method:'POST',headers:{'Content-Type':'application/json'},keepalive:true}).catch(()=>{})}
-function closeDetail(){state.routingGeneration+=1;state.selectedIntake=null;state.selectedRequest=null;state.selectedTerminal=false;closeDevCoreStream();document.querySelector('#detail-backdrop').hidden=true;document.querySelector('#detail-drawer').classList.remove('open');document.querySelector('#detail-drawer').setAttribute('aria-hidden','true');TaskDialog.close()}
+function closeDetail(){state.routingGeneration+=1;detailGeneration+=1;detailPending=false;LoadingUI.cancel('#detail-content');state.selectedIntake=null;state.selectedRequest=null;state.selectedTerminal=false;closeDevCoreStream();document.querySelector('#detail-backdrop').hidden=true;document.querySelector('#detail-drawer').classList.remove('open');document.querySelector('#detail-drawer').setAttribute('aria-hidden','true');TaskDialog.close()}
 
 function addEmailRow(value=''){const editor=document.querySelector('#user-email-editor'),row=document.createElement('div');row.className='email-row';row.innerHTML=`<span class="email-order">${String(editor.children.length+1).padStart(2,'0')}</span><input type="email" class="user-email-input" value="${escapeHtml(value)}" placeholder="name@example.com" required><button type="button" title="移除邮箱">×</button>`;row.querySelector('button').onclick=()=>{if(editor.children.length===1){row.querySelector('input').value='';return}row.remove();[...editor.children].forEach((item,index)=>item.querySelector('.email-order').textContent=String(index+1).padStart(2,'0'))};editor.appendChild(row)}
 function openUser(user=null){const form=document.querySelector('#user-form');form.reset();form.elements.id.value=user?.id||'';form.elements.username.value=user?.username||'';form.elements.display_name.value=user?.display_name||'';form.elements.role.value=user?.role||'pm';form.elements.active.checked=user?.active??true;form.elements.password.required=!user;form.elements.password.value='';form.elements.role.disabled=user?.id===USER.id;form.elements.active.disabled=user?.id===USER.id;document.querySelector('#user-modal-title').textContent=user?'编辑账号':'新建内部账号';document.querySelector('#password-label').textContent=user?'重置密码（留空不修改）':'初始密码';document.querySelector('#save-user').textContent=user?'保存修改':'创建账号';document.querySelector('#user-email-editor').innerHTML='';(user?.emails||['']).forEach(addEmailRow);document.querySelector('#user-error').hidden=true;const modal=document.querySelector('#user-modal');modal.dataset.mode=user?'edit':'create';modal.hidden=false}
@@ -567,6 +608,6 @@ document.querySelector('#request-form').addEventListener('submit',async e=>{e.pr
 document.querySelector('#user-form')?.addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget,error=document.querySelector('#user-error');error.hidden=true;const id=Number(form.elements.id.value)||null;const emails=[...form.querySelectorAll('.user-email-input')].map(input=>input.value.trim()).filter(Boolean);const data={username:form.elements.username.value.trim(),display_name:form.elements.display_name.value.trim(),emails,password:form.elements.password.value,role:form.elements.role.value,active:form.elements.active.checked};if(!data.password)delete data.password;try{const result=await api(id?`/api/users/${id}`:'/api/users',{method:id?'PUT':'POST',body:JSON.stringify(data)});if(result.user.id===USER.id)Object.assign(USER,result.user);closeModals();form.reset();toast(id?'账号已更新':'账号已创建');await refresh()}catch(err){error.textContent=err.message;error.hidden=false}});
 
 setInterval(()=>{document.querySelector('#clock').textContent=new Intl.DateTimeFormat('zh-CN',{dateStyle:'medium',timeStyle:'medium',hour12:false}).format(new Date())},1000);
-refresh().catch(e=>toast(e.message));setInterval(()=>refresh().catch(()=>{}),5000);
+refresh().catch(()=>{});setInterval(()=>refresh({background:true}).catch(()=>{}),5000);
 window.addEventListener('beforeunload',()=>{const live=state.live;if(live.requestId&&live.watcherId)fetch(`/api/requests/${live.requestId}/devcore-watch/${live.watcherId}/stop`,{method:'POST',keepalive:true})});
 window.addEventListener('keydown',event=>{if(event.key!=='Escape')return;if(!document.querySelector('#artifact-preview').hidden)closeArtifactPreview();else closeLedgerPopovers()});

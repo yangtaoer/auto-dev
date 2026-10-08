@@ -1,0 +1,56 @@
+/* Mint glass, quiet skeletons and a CSS-only companion: no second WebGL renderer. */
+.loading-region {position:relative;min-width:0}
+.loading-region.loading-empty > :not(.loading-panel) {display:none!important}
+.loading-panel {width:100%;min-width:0;padding:26px 28px 22px;border:1px solid #ccded1;border-radius:18px;background:linear-gradient(135deg,#fafcf7 0%,#f1f7ee 100%);box-sizing:border-box;color:#1b4540;overflow:hidden}
+.loading-empty {min-height:330px}
+.loading-panel-heading {display:flex;align-items:center;gap:16px;min-width:0;margin-bottom:22px}
+.loading-panel-heading > div {min-width:0}
+.loading-eyebrow {display:block;color:#6f8c7b;font-size:9px;font-weight:600;letter-spacing:.15em;margin-bottom:6px}
+.loading-label {font-size:17px;font-weight:650;margin:0!important;line-height:1.5;color:#214e44}
+.loading-caption {display:block;margin-top:4px;color:#729185;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.loading-orb-scene {position:relative;display:block;flex:0 0 58px;width:58px;height:64px;isolation:isolate}
+.loading-orb {position:absolute;width:42px;height:42px;left:8px;top:10px;border-radius:50%;background:radial-gradient(ellipse at 30% 23%,#ffc780 0%,#ff9135 18%,#ff6720 48%,#e9450d 75%,#b8340e 100%);box-shadow:inset -3px -4px 7px #91340f24;animation:loading-orb-float 3.8s cubic-bezier(.45,0,.25,1) infinite;transform-origin:50% 95%}
+.loading-orb > i {position:absolute;top:20px;left:12px;width:5px;height:8px;border-radius:60%;background:#153d2b;animation:loading-orb-eyes 5.9s infinite}
+.loading-orb > i+i {left:25px;animation-delay:.12s}
+.loading-orb-shadow {position:absolute;bottom:5px;left:10px;width:40px;height:8px;border-radius:50%;background:#456b4930;filter:blur(3px);animation:loading-orb-shadow 3.8s ease-in-out infinite}
+.loading-orb-leaf {position:absolute;z-index:2;left:34px;top:2px;width:15px;height:8px;border-radius:95% 0 95% 0;background:linear-gradient(150deg,#a5c591,#5e8d61);box-shadow:inset 0 -1px #e2eebf99;transform:rotate(-15deg);animation:loading-orb-leaf 5.3s ease-in-out infinite}
+.loading-bone {display:block;width:var(--bone-width,100%);height:10px;border-radius:5px;background:#e0ebe0;position:relative;overflow:hidden}
+.loading-bone::after {content:'';position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(100deg,transparent,#ffffffa6,transparent);animation:loading-bone-shimmer 2.3s ease-in-out infinite}
+.loading-skeleton {contain:paint}
+.loading-skeleton-metrics {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:15px;margin-bottom:24px}
+.loading-skeleton-metrics .loading-bone {height:58px;background:#e5eee1}
+.loading-skeleton-row {display:grid;grid-template-columns:.8fr 2.6fr 1fr 1fr;gap:28px;align-items:center;height:45px;border-top:1px solid #dde8db}
+.loading-skeleton-row:nth-child(2n) .loading-bone {opacity:.75}
+.loading-skeleton-row:nth-child(2n) .loading-bone::after {animation-delay:.15s}
+.loading-skeleton-cards {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
+.loading-skeleton-cards article {min-width:0;border:1px solid #d8e5d8;border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:22px;min-height:165px;background:#fcfdf955}
+.loading-skeleton-cards article .loading-bone:first-child {height:36px}
+.loading-skeleton-settings {display:flex;flex-direction:column;gap:25px}
+.loading-skeleton-settings > .loading-bone:nth-child(2) {height:46px}
+.loading-skeleton-settings > div {display:flex;gap:16px}
+.loading-skeleton-settings > div .loading-bone {height:90px}
+.loading-skeleton-chart {height:180px;display:flex;gap:3%;align-items:flex-end;border-bottom:1px solid #d0dfd0;margin:16px 0 24px;padding:0 16px}
+.loading-skeleton-chart .loading-bone {border-radius:5px 5px 0 0;background:#dce9d6}
+.loading-retained > .loading-panel {position:absolute;z-index:8;right:12px;top:10px;width:auto;max-width:min(360px,calc(100% - 24px));padding:9px 16px;box-shadow:0 6px 24px #244a2e12;background:#f7fbf4;pointer-events:none}
+.loading-retained .loading-panel-heading {gap:10px;margin:0}
+.loading-retained .loading-orb-scene {width:40px;height:40px;flex-basis:40px;transform:scale(.68);transform-origin:left center;margin-right:-10px}
+.loading-retained .loading-eyebrow,.loading-retained .loading-caption,.loading-retained .loading-skeleton {display:none}
+.loading-retained .loading-label {font-size:12px}
+.loading-failed > .loading-panel {pointer-events:auto}
+.loading-failed .loading-panel-heading {margin-bottom:14px}
+.loading-failed.loading-retained .loading-caption {display:block}
+.loading-failed .loading-orb,.loading-failed .loading-orb > i,.loading-failed .loading-orb-leaf,.loading-failed .loading-orb-shadow {animation-play-state:paused}
+.loading-retry {display:inline-flex;align-items:center;gap:32px;background:#23594b;border:1px solid #23594b;border-radius:7px;color:#fff;font:inherit;font-size:12px;padding:9px 14px;cursor:pointer}
+.loading-retry:hover {background:#174738}
+.loading-retry:focus-visible {outline:2px solid #e87136;outline-offset:3px}
+#detail-content.loading-empty {height:100%;min-height:340px;padding:24px;box-sizing:border-box}
+#detail-content.loading-empty > .loading-panel {height:100%;border:0;border-radius:12px}
+#view-models.loading-empty {width:100%}
+.experience-list-scroll.loading-empty {display:block}
+@keyframes loading-orb-float {0%,100%{transform:translateY(0) rotate(-5deg) scale(1.02,.98)}45%{transform:translateY(-5px) rotate(5deg) scale(.98,1.02)}75%{transform:translateY(0) rotate(0deg)}}
+@keyframes loading-orb-eyes {0%,42%,46%,72%,77%,100%{transform:scaleY(1)}44%,74%{transform:scaleY(.12)}}
+@keyframes loading-orb-shadow {0%,100%{transform:scaleX(1);opacity:.7}45%{transform:scaleX(.76);opacity:.4}}
+@keyframes loading-orb-leaf {0%,100%{transform:translate(0,0) rotate(-15deg)}50%{transform:translate(-6px,3px) rotate(20deg)}}
+@keyframes loading-bone-shimmer {0%,15%{transform:translateX(-100%)}80%,100%{transform:translateX(100%)}}
+@media(max-width:700px){.loading-panel{padding:20px 16px}.loading-skeleton-cards{grid-template-columns:1fr}.loading-skeleton-cards article:nth-child(n+2){display:none}.loading-skeleton-row{gap:14px;grid-template-columns:.7fr 2fr 1fr}.loading-skeleton-row .loading-bone:last-child{display:none}.loading-skeleton-metrics{gap:9px}.loading-label{font-size:15px}#detail-content.loading-empty{padding:16px}}
+@media(prefers-reduced-motion:reduce){.loading-panel *,.loading-panel *::after{animation:none!important}.loading-bone::after{display:none}}

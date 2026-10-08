@@ -1,9 +1,13 @@
 /* The orange character and its physically connected miniature garden. */
 import * as THREE from './vendor/three/three.module.js';
-import {AutoDevGarden} from './orb-garden.js?v=1.0-Beta.4';
-import {GardenDirector} from './garden-motion.js?v=1.0-Beta.4';
+import {AutoDevGarden} from './orb-garden.js?v=1.0-Beta.5';
+import {GardenDirector} from './garden-motion.js?v=1.0-Beta.5';
 
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+const instanceSeed = () => {
+  if (window.crypto?.getRandomValues) return window.crypto.getRandomValues(new Uint32Array(1))[0];
+  return Math.floor(Math.random() * 0x100000000);
+};
 
 export class AutoDevOrbScene {
   constructor(orb) {
@@ -16,7 +20,10 @@ export class AutoDevOrbScene {
     this.sceneLastAt = null;
     this.gaze = {x: 0, y: 0};
     this.resources = new Set();
-    this.director = new GardenDirector();
+    // Each mounted component grows its own, reproducible motion sequence. It is
+    // never tied to wall-clock time or shared with the character on another page.
+    this.motionSeed = Number.isFinite(orb.options?.gardenSeed) ? orb.options.gardenSeed : instanceSeed();
+    this.director = new GardenDirector({seed: this.motionSeed});
     this.isLogin = Boolean(this.root.closest('.login-character-stage'));
     this.isSidebar = Boolean(this.root.closest('.sidebar-character-stage'));
     this.radius = this.isSidebar ? .87 : .83;
@@ -236,6 +243,12 @@ export class AutoDevOrbScene {
     if (['blocked', 'error', 'sleeping'].includes(this.orb.state)) return 'quiet';
     return 'idle';
   }
+  react(kind) {
+    if (this.disposed || this.paused()) return false;
+    // The running render loop picks up interaction intent. Restarting it on
+    // pointer events would continually zero the elapsed time and freeze motion.
+    return this.director.react(kind);
+  }
   draw(now) {
     if (this.disposed || !this.renderer) return;
     const delta = this.sceneLastAt === null ? 0 : clamp(now - this.sceneLastAt, 0, 100);
@@ -248,7 +261,10 @@ export class AutoDevOrbScene {
     this.gardenFrame = frame;
     const pose = frame.body, driver = this.orb.motionDriver;
     const intent = Math.max(frame.peek, frame.hat, frame.crown, frame.work * .7);
-    const pointerWeight = .23 * (1 - intent);
+    // Keep choreography readable while still acknowledging a nearby person,
+    // even when a leaf is resting on the head. Attachments follow ball.matrixWorld.
+    const nearby = Boolean(this.orb.pointer.near);
+    const pointerWeight = nearby ? .64 - intent * .25 : .18 * (1 - intent * .6);
     const gazeX = clamp(pose.gazeX + this.orb.pointer.targetX * pointerWeight, -1.2, 1.2);
     const gazeY = clamp(pose.gazeY + this.orb.pointer.targetY * pointerWeight, -1.1, 1.1);
     this.gaze.x += (gazeX - this.gaze.x) * .20;
@@ -267,6 +283,7 @@ export class AutoDevOrbScene {
     this.garden.update({...frame, reduced: Boolean(this.orb.reducedMotion)});
     this.root.dataset.gardenMode = this.mode();
     this.root.dataset.gardenPhase = frame.phase;
+    this.root.dataset.gardenEpisode = frame.episode || frame.phase;
     this.renderer.render(this.scene, this.camera);
   }
   destroy() {
@@ -283,7 +300,7 @@ export class AutoDevOrbScene {
     this.renderer?.dispose();
     this.canvas?.remove();
     this.root.classList.remove('is-scene');
-    for (const key of ['gardenMode', 'gardenPhase']) delete this.root.dataset[key];
+    for (const key of ['gardenMode', 'gardenPhase', 'gardenEpisode']) delete this.root.dataset[key];
   }
 }
 window.AutoDevOrbScene = AutoDevOrbScene;
