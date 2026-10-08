@@ -17,6 +17,9 @@
   <link rel="stylesheet" href="/static/task-actions.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/model-settings.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/mint-ui.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/orb-polish.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/task-form-ui.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/ui-refinements.css?v={{ app_version }}">
 </head>
 <body class="mint-ui mint-workspace" data-view="dashboard">
   <div class="app-shell">
@@ -38,8 +41,7 @@
           <canvas class="autodev-orb-canvas" aria-hidden="true"></canvas>
           <svg class="autodev-orb-fallback" aria-hidden="true"></svg>
         </div>
-        <div class="orb-paper-note" aria-hidden="true"><span>编号进入，<br>交付离场。</span><i>〈∞〉</i></div>
-        <button type="button" class="orb-activity-console" id="orb-activity-console" aria-expanded="false" aria-controls="sidebar-task-popover" aria-haspopup="dialog" aria-label="展开任务列表">
+        <button type="button" class="orb-activity-console" id="orb-activity-console" aria-expanded="false" aria-controls="sidebar-task-popover" aria-haspopup="dialog" aria-label="展开任务列表" hidden>
           <span class="orb-presence"><i aria-hidden="true"></i><b>观察流水线</b><span id="orb-task-index">暂无任务</span></span>
           <span class="orb-task-summary"><small id="orb-current-task">当前输出</small><span id="orb-current-output">等待新的研发或问题分析任务</span></span>
           <span class="orb-task-disclosure">查看任务 <svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#chevron-right"></use></svg></span>
@@ -62,7 +64,7 @@
               <div class="project-guide-list" id="project-guide-list"><div class="project-guide-loading">正在读取项目目录…</div></div>
             </section>
           </div>
-          <span class="clock" id="clock" hidden></span><button class="btn btn-secondary analysis-launch" id="open-analysis"><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#help"></use></svg>问题分析</button><button class="btn btn-primary" id="open-request"><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#plus"></use></svg>发起自主研发</button>
+          <span class="clock" id="clock" hidden></span><button class="btn btn-secondary analysis-launch" id="open-analysis"><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#search"></use></svg>问题分析</button><button class="btn btn-primary" id="open-request"><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#plus"></use></svg>发起自主研发</button>
           <div class="profile"><div class="avatar">{{ user.display_name[0] }}</div><div><b>{{ user.display_name }}</b><span>{{ '管理员' if user.role == 'admin' else '项目经理' }}</span></div><button id="logout" title="退出登录" aria-label="退出登录">↪</button></div>
           <div class="system-status offline" id="runner-status"><i></i><span>执行器离线</span></div>
         </div>
@@ -80,6 +82,12 @@
           <div class="run-grid" id="active-runs"></div>
         </section>
         <div class="section-heading compact"><div class="heading-copy"><p class="eyebrow">最近动态 / RECENT SIGNALS</p><h2>最近任务</h2><span class="section-summary" id="recent-summary"></span></div><button class="text-button" data-view-link="requests">查看全部任务 <svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#arrow-right"></use></svg></button></div>
+        <form class="recent-filters" id="recent-filters" aria-label="最近任务筛选">
+          <label class="recent-search"><span class="sr-only">筛选近期任务</span><input id="recent-keyword" type="search" name="keyword" placeholder="筛选近期任务：编号、标题或项目"></label>
+          <div class="ledger-select" id="recent-project-filter"><input type="hidden" name="project_key"><button type="button" aria-label="近期任务项目" aria-haspopup="listbox" aria-expanded="false"><b>全部项目</b><i></i></button><div class="ledger-select-menu" role="listbox" hidden></div></div>
+          <div class="ledger-select" id="recent-status-filter"><input type="hidden" name="status"><button type="button" aria-label="近期任务状态" aria-haspopup="listbox" aria-expanded="false"><b>全部状态</b><i></i></button><div class="ledger-select-menu" role="listbox" hidden></div></div>
+          <button type="button" class="btn btn-ghost" id="reset-recent-filters">重置</button>
+        </form>
         <div class="table-card recent-task-table"><table><thead><tr><th>#</th><th>需求名称</th><th>所属项目</th><th>交付方式</th><th>状态</th><th>最新输出</th><th>耗时</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="recent-table"></tbody></table></div>
       </section>
 
@@ -155,28 +163,45 @@
   </section>
 
   <div class="modal-backdrop" id="request-modal" hidden>
-    <section class="modal request-modal" role="dialog" aria-modal="true" aria-labelledby="request-modal-title"><button class="modal-close" data-close aria-label="关闭新任务">×</button><p class="eyebrow" id="request-modal-eyebrow">新任务 / NEW AUTONOMOUS RUN</p><h2 id="request-modal-title">发起自主研发</h2>
+    <section class="modal request-modal" role="dialog" aria-modal="true" aria-labelledby="request-modal-title" aria-describedby="request-modal-description">
+      <button class="modal-close" data-close aria-label="关闭新任务">×</button>
+      <header class="request-form-heading">
+        <p class="eyebrow" id="request-modal-eyebrow">新任务 / NEW AUTONOMOUS RUN</p>
+        <h2 id="request-modal-title">发起自主研发</h2>
+        <p class="muted" id="request-modal-description">输入 TFS 用户情景编号，系统会自动识别一个或多个项目，并统一完成研发、审核与交付。</p>
+      </header>
       <form id="request-form" class="form-grid">
-        <div class="span-2 task-type-selector" role="radiogroup" aria-label="任务类型">
-          <label class="task-type-choice development"><input type="radio" name="task_type" value="development" checked><span class="task-type-symbol"><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#network"></use></svg></span><span><b>自主研发</b><small>修改代码并按项目策略完成提交、审核、构建与交付</small></span><i>01</i></label>
-          <label class="task-type-choice analysis"><input type="radio" name="task_type" value="analysis"><span class="task-type-symbol"><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#help"></use></svg></span><span><b>问题分析</b><small>结合代码、TFS 与开发库定位原因，保持工作区零改动</small></span><i>02</i></label>
-        </div>
-        <p class="muted span-2" id="request-modal-description">输入 TFS 用户情景编号，系统会自动识别一个或多个项目，并统一完成研发、审核与交付。</p>
-        <label class="span-2 request-number-field"><span>TFS 用户情景编号</span><input type="number" name="work_item_id" min="1" placeholder="例如：1551572" required></label>
-        <div class="span-2 field-block"><div class="field-label">通知邮箱 <small>可选择当前账号及所有启用项目经理的邮箱</small></div><div class="recipient-choice-list" id="request-email-options"></div></div>
-        <div class="span-2 field-block delivery-option-block" id="request-delivery-block">
-          <div class="field-label">交付产物 <small>适用于 PR 审核类项目；本地打包项目仍按项目定义交付</small></div>
-          <div class="delivery-choice-grid" id="request-delivery-options">
-            <label class="delivery-choice"><input type="checkbox" name="delivery_options" value="merge_screenshot"><span class="choice-index">01</span><span><b>代码合并截图</b><small>每个仓库一张 PR 已合并页面原图</small></span><i>✓</i></label>
-            <label class="delivery-choice"><input type="checkbox" name="delivery_options" value="license_request"><span class="choice-index">02</span><span><b>自动填写 License 申请</b><small>创建申请并在说明中直接嵌入合并截图</small></span><i>✓</i></label>
-            <label class="delivery-choice featured"><input type="checkbox" name="delivery_options" value="auto_release" checked><span class="choice-index">03</span><span><b>自动发版</b><small>PR 合并后运行交付流水线并返回发布产物页</small></span><i>✓</i></label>
+        <div class="span-2 request-basics">
+          <label class="request-number-field"><span>TFS 用户情景编号</span><span class="request-number-input"><span aria-hidden="true">#</span><input type="number" name="work_item_id" min="1" inputmode="numeric" placeholder="例如：1551572" required></span></label>
+          <div class="request-kind-field">
+            <span class="field-label">任务类型</span>
+            <div class="task-type-selector" role="radiogroup" aria-label="任务类型">
+              <label class="task-type-choice development"><input type="radio" name="task_type" value="development" checked><span class="task-type-symbol"><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#network"></use></svg></span><span><b>自主研发</b><small>修改代码并按项目策略完成提交、审核、构建与交付</small></span><i>01</i></label>
+              <label class="task-type-choice analysis"><input type="radio" name="task_type" value="analysis"><span class="task-type-symbol"><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#help"></use></svg></span><span><b>问题分析</b><small>结合代码、TFS 与开发库定位原因，保持工作区零改动</small></span><i>02</i></label>
+            </div>
           </div>
         </div>
+        <fieldset class="field-block request-email-field" aria-labelledby="request-email-label">
+          <legend class="field-label" id="request-email-label">通知邮箱 <small>可多选</small></legend>
+          <p class="request-field-caption">当前账号及启用项目经理的邮箱</p>
+          <div class="recipient-choice-list" id="request-email-options"></div>
+        </fieldset>
+        <fieldset class="field-block delivery-option-block" id="request-delivery-block" aria-labelledby="request-delivery-label">
+          <legend class="field-label" id="request-delivery-label">交付产物 <small>可多选</small></legend>
+          <p class="request-field-caption">适用于 PR 审核类项目；本地打包按项目定义交付</p>
+          <div class="delivery-choice-grid" id="request-delivery-options">
+            <label class="delivery-choice"><input type="checkbox" name="delivery_options" value="merge_screenshot"><span class="choice-index" aria-hidden="true"><svg class="ui-icon"><use href="/static/editorial-icons.svg#layers"></use></svg></span><span><b>代码合并截图</b><small>每个仓库一张 PR 已合并页面原图</small></span><i aria-hidden="true">✓</i></label>
+            <label class="delivery-choice"><input type="checkbox" name="delivery_options" value="license_request"><span class="choice-index" aria-hidden="true"><svg class="ui-icon"><use href="/static/editorial-icons.svg#clipboard"></use></svg></span><span><b>自动填写 License 申请</b><small>创建申请并在说明中直接嵌入合并截图</small></span><i aria-hidden="true">✓</i></label>
+            <label class="delivery-choice featured"><input type="checkbox" name="delivery_options" value="auto_release" checked><span class="choice-index" aria-hidden="true"><svg class="ui-icon"><use href="/static/editorial-icons.svg#cube"></use></svg></span><span><b>自动发版</b><small>PR 合并后运行交付流水线并返回发布产物页</small></span><i aria-hidden="true">✓</i></label>
+          </div>
+        </fieldset>
         <p class="form-error span-2" id="request-error" hidden></p>
-        <div class="span-2 analysis-mode-note" id="analysis-mode-note" hidden><i>READ ONLY</i><span><b>分析任务以报告作为成功产物</b>不会提交代码、创建 PR、构建、发版或申请 License；如果证据不足会进入待补充。</span></div>
-        <div class="span-2 queue-note"><i></i><div><b>最多同时运行 5 个项目任务</b><span>按项目并发规则调度，执行器离线或并发已满时自动排队。</span></div></div>
+        <div class="analysis-mode-note" id="analysis-mode-note" hidden><i><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#clipboard"></use></svg></i><span><b>分析任务以报告作为成功产物</b>不会提交代码、创建 PR、构建、发版或申请 License；如果证据不足会进入待补充。</span></div>
         <details class="span-2 request-alias-help"><summary>多项目标题示例</summary><p class="joint-title-tip"><code>【网络发令APP】【四川省调网络发令】新增联合功能</code></p></details>
-        <div class="modal-actions span-2"><button type="button" class="btn btn-ghost" data-close>取消</button><button type="submit" class="btn btn-primary" id="request-submit-button">确认并进入队列 ↗</button></div>
+        <div class="span-2 request-form-footer">
+          <div class="queue-note"><i aria-hidden="true"></i><div><b>最多同时运行 5 个项目任务</b><span>执行器离线或并发已满时自动排队</span></div></div>
+          <div class="modal-actions"><button type="button" class="btn btn-ghost" data-close>取消</button><button type="submit" class="btn btn-primary" id="request-submit-button">确认并进入队列 ↗</button></div>
+        </div>
       </form>
     </section>
   </div>

@@ -1,0 +1,551 @@
+/* Shared workbench finish: one typeface, compact filters and a responsive mint shell. */
+.mint-workspace {
+  --ui-font: "Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  --ui-mono: Consolas, "Cascadia Code", "Noto Sans Mono CJK SC", monospace;
+  --sans: var(--ui-font);
+  --display: var(--ui-font);
+  --ui-control-border: #c3d5ca;
+  --ui-control-focus: #408e73;
+  --ui-control-surface: #fffefb;
+  --ui-control-hover: #f0f7ee;
+  --ui-control-radius: 7px;
+  font-family: var(--ui-font);
+}
+
+/* Earlier themes set families through both longhand and font shorthands. */
+.mint-workspace,
+.mint-workspace :where(*),
+.mint-workspace :where(*)::before,
+.mint-workspace :where(*)::after {
+  font-family: var(--ui-font) !important;
+}
+.mint-workspace :is(code, pre, kbd, samp),
+.mint-workspace :is(code, pre, kbd, samp) * {
+  font-family: var(--ui-mono) !important;
+}
+.mint-workspace :is(.metric-value, .quota-number, .duration-cell, .ledger-calendar, .record-pagination) {
+  font-variant-numeric: tabular-nums;
+}
+.mint-workspace :is(th, .eyebrow, .detail-caption small, .learning-project) { letter-spacing: .02em; }
+
+.mint-workspace :is(button, a, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--ui-control-focus);
+  outline-offset: 3px;
+}
+.mint-workspace .main-stage :is(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="hidden"]) {
+  border-color: var(--ui-control-border);
+  border-radius: var(--ui-control-radius);
+  background: var(--ui-control-surface);
+  color: #315747;
+  box-shadow: none;
+  transition: border-color .16s, box-shadow .16s;
+}
+.mint-workspace .main-stage :is(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):hover {
+  border-color: #9ebba8;
+}
+.mint-workspace .main-stage :is(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):focus {
+  border-color: var(--ui-control-focus);
+  outline: 0;
+  box-shadow: 0 0 0 3px #91c6ac28;
+}
+.mint-workspace .main-stage :is(input, textarea, select):disabled {
+  opacity: .55;
+  cursor: not-allowed;
+  background: #f2f5ee;
+}
+.mint-workspace :is(.ledger-select, .ledger-date) > button {
+  border-color: var(--ui-control-border);
+  border-radius: var(--ui-control-radius);
+  background: var(--ui-control-surface);
+  color: #426856;
+  box-shadow: none;
+  transition: border-color .16s, background .16s, box-shadow .16s;
+}
+.mint-workspace :is(.ledger-select, .ledger-date) > button:hover {
+  border-color: #a5bea9;
+  background: var(--ui-control-hover);
+}
+.mint-workspace :is(.ledger-select, .ledger-date).open > button {
+  border-color: var(--ui-control-focus);
+  background: #fbfdf7;
+  box-shadow: 0 0 0 3px #91c6ac22;
+}
+.mint-workspace :is(.ledger-select-menu, .ledger-calendar) {
+  border-color: #c6d9cb;
+  border-radius: 9px;
+  background: #fffefb;
+  box-shadow: 0 10px 28px #294e391f;
+}
+.mint-workspace .ledger-select-menu button {
+  border-radius: 5px;
+  color: #496b56;
+}
+.mint-workspace .ledger-select-menu button:hover,
+.mint-workspace .ledger-select-menu button[aria-selected="true"] {
+  background: #eaf4e4;
+  color: #37624b;
+}
+
+.mint-workspace .topbar {
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 66px;
+}
+.mint-workspace .workspace-name {
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 330px;
+  color: #80958b;
+  font-size: 9px;
+  line-height: 1.7;
+  letter-spacing: .055em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mint-workspace .top-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 1 auto;
+  gap: 9px;
+  max-width: 100%;
+  min-width: 0;
+}
+.mint-workspace .top-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 8px 13px;
+  border-radius: var(--ui-control-radius);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.mint-workspace .top-actions .btn .ui-icon { width: 17px; height: 17px; }
+.mint-ui.mint-workspace .topbar .top-actions .analysis-launch {
+  border: 1px solid #adcfbc;
+  background: #e4f1e8 !important;
+  color: #39735a;
+  box-shadow: 0 1px 2px #305d4610;
+}
+.mint-ui.mint-workspace .topbar .top-actions .analysis-launch:hover {
+  border-color: #7fad93;
+  background: #d7ecdd !important;
+  color: #275d47;
+  box-shadow: 0 2px 6px #305d4614;
+}
+.mint-workspace .top-actions #open-request {
+  border-color: #ff6336;
+  background: #ff6336;
+  color: #fff;
+  box-shadow: 0 2px 5px #d86e4020;
+}
+.mint-workspace .top-actions #open-request:hover {
+  border-color: #ea552b;
+  background: #ea552b;
+}
+.mint-workspace .top-actions .profile { padding-left: 11px; }
+.mint-workspace #logout {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  color: #759182;
+}
+.mint-workspace #logout:hover { background: #e6efe1; color: #426b51; }
+.mint-workspace .project-guide-trigger {
+  min-height: 36px;
+  border-radius: 6px;
+  color: #64846c;
+}
+.mint-workspace .project-guide-trigger:hover { color: #3d6e52; }
+.mint-workspace .system-status { color: #648474; }
+
+/* Intrinsic control widths keep date and keyword fields from stretching across rows. */
+.mint-workspace .recent-filters {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 12px;
+  min-width: 0;
+}
+.mint-workspace .recent-filters .recent-search { flex: 0 1 300px; min-width: 180px; margin: 0; }
+.mint-workspace .recent-filters .ledger-select { flex: 0 1 170px; min-width: 140px; }
+.mint-workspace .recent-filters :is(input[type="search"], .ledger-select > button, .btn) { height: 37px; min-height: 37px; font-size: 12px; padding: 8px 11px; border-radius: 7px; }
+.mint-workspace .recent-filters .ledger-select > button > b { font-weight: 400; }
+.mint-workspace .recent-filters .btn { color: #6b887a; background: #fffefb; border: 1px solid #d1dfd0; }
+.mint-workspace :is(#record-filters, #experience-filters) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 11px 12px;
+  flex: 0 0 auto;
+  min-width: 0;
+  margin: 0 0 16px;
+  padding: 13px 15px;
+  border: 1px solid #d5e2d5;
+  border-radius: 9px;
+  background: #fffefb;
+}
+.mint-workspace :is(#record-filters, #experience-filters) > label {
+  display: grid;
+  flex: 0 0 136px;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  grid-column: auto;
+  grid-row: auto;
+}
+.mint-workspace :is(#record-filters, #experience-filters) > label > span {
+  position: static;
+  width: auto;
+  height: auto;
+  clip: auto;
+  overflow: visible;
+  color: #728870 !important;
+  font-size: 11px !important;
+  line-height: 1.5;
+}
+.mint-workspace #record-filters > .record-search {
+  flex: 0 1 236px;
+  min-width: 210px;
+  max-width: 270px;
+}
+.mint-workspace #experience-filters > .record-search {
+  flex: 0 1 310px;
+  min-width: 240px;
+  max-width: 340px;
+}
+.mint-workspace :is(#record-filters, #experience-filters) > label:has(#record-project-filter, #experience-project-filter) {
+  flex-basis: 174px;
+}
+.mint-workspace #record-filters > :is(.record-date-from, .record-date-to) {
+  flex: 0 0 138px;
+  grid-column: auto;
+  grid-row: auto;
+}
+.mint-workspace :is(#record-filters, #experience-filters) input[type="search"],
+.mint-workspace :is(#record-filters, #experience-filters) :is(.ledger-select, .ledger-date) > button {
+  width: 100%;
+  height: 38px;
+  min-height: 38px;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.mint-workspace :is(#record-filters, #experience-filters) :is(.ledger-select, .ledger-date) > button > b {
+  font-weight: 400;
+  line-height: 1.5;
+}
+.mint-workspace :is(#record-filters, #experience-filters) .record-filter-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  align-self: flex-end;
+  justify-content: flex-start;
+  gap: 7px;
+  margin: 0 0 0 auto;
+  padding: 0;
+  grid-column: auto;
+  grid-row: auto;
+}
+.mint-workspace :is(#record-filters, #experience-filters) .record-filter-actions .btn {
+  min-height: 38px;
+  padding: 8px 14px;
+  border-radius: var(--ui-control-radius);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mint-workspace :is(#record-filters, #experience-filters) .record-filter-actions .btn-secondary {
+  border-color: #b0caa8;
+  background: #edf5e8;
+  color: #64805b;
+  font-weight: 600;
+}
+.mint-workspace :is(#record-filters, #experience-filters) .record-filter-actions .btn-secondary:hover {
+  border-color: #91b182;
+  background: #e1efda;
+  color: #4e7142;
+}
+.mint-workspace :is(#record-filters, #experience-filters) .record-filter-actions .btn-ghost {
+  border-color: #dbe5d3;
+  color: #8b9f7f;
+  background: #fffefb;
+}
+.mint-workspace :is(#record-filters, #experience-filters) .record-filter-actions .btn-ghost:hover {
+  border-color: #b7c9ad;
+  color: #688459;
+  background: #f2f7ec;
+}
+
+.mint-workspace :is(.run-card, .project-card, .experience-card, .analytics-card) {
+  border-radius: 9px;
+  transition: border-color .16s, box-shadow .16s;
+}
+.mint-workspace :is(.run-card, .project-card, .experience-card):focus-within {
+  border-color: #aac6a9;
+  box-shadow: 0 2px 9px #3f6c4310;
+}
+.mint-workspace .run-card:hover { border-color: #a4c19f; transform: none; }
+.mint-workspace .table-card { border-radius: 9px; }
+.mint-workspace .table-card tbody tr:hover { background: #f0f6e9; }
+.mint-workspace :is(.recent-open, .text-action, .artifact-link) { border-radius: 5px; }
+
+.mint-workspace .recent-task-table :is(th, td):first-child {
+  padding-left: 7px;
+  padding-right: 7px;
+  text-align: center;
+  white-space: nowrap;
+  text-overflow: clip;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The existing inline bar height carries the value; rotating it preserves the scale. */
+.mint-workspace #analytics-status.status-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  align-items: stretch;
+  justify-content: stretch;
+  gap: 2px;
+  height: auto;
+  max-height: 254px;
+  min-height: 0;
+  padding: 0 7px 0 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.mint-workspace #analytics-status .status-column {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 145px 28px;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  min-width: 0;
+  max-width: none;
+  min-height: 35px;
+  margin: 0;
+  padding: 6px 0;
+  border-bottom: 1px solid #e9eee4;
+}
+.mint-workspace #analytics-status .status-column:last-child { border-bottom: 0; }
+.mint-workspace #analytics-status .status-column::before {
+  content: "";
+  position: absolute;
+  left: calc(100% - 185px);
+  top: calc(50% - 4px);
+  width: 145px;
+  height: 8px;
+  border-radius: 5px;
+  background: #edf2e6;
+}
+.mint-workspace #analytics-status .status-column > i {
+  position: absolute;
+  left: calc(100% - 185px);
+  top: calc(50% - 4px);
+  width: 8px;
+  min-height: 0;
+  margin: 0;
+  border-radius: 5px;
+  transform: rotate(-90deg);
+  transform-origin: 4px 4px;
+  z-index: 1;
+}
+.mint-workspace #analytics-status .status-column > b {
+  grid-column: 3;
+  grid-row: 1;
+  color: #4b6e58;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.mint-workspace #analytics-status .status-column > span {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  color: #67836a;
+  font-size: 12px;
+  line-height: 1.7;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.mint-workspace #analytics-status > .muted { margin: 12px 0; }
+
+@media (min-width: 901px) {
+  .mint-workspace .sidebar {
+    min-height: 0;
+    height: 100dvh;
+    padding-top: 20px;
+    padding-bottom: 13px;
+  }
+  .mint-workspace .sidebar .logo {
+    flex: 0 0 auto;
+    min-height: 80px;
+    margin-bottom: 18px;
+  }
+  .mint-workspace .sidebar nav {
+    flex: 0 0 auto;
+    gap: 6px;
+  }
+  .mint-workspace .sidebar .nav-item {
+    min-height: 45px;
+    padding-block: 9px;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  .mint-workspace .sidebar-character-stage {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    justify-content: flex-end;
+    overflow: hidden;
+  }
+  .mint-workspace .sidebar-character-stage .autodev-orb {
+    width: var(--sidebar-width);
+    height: 180px;
+    min-height: 0;
+    max-height: none;
+    flex: 0 1 180px;
+  }
+  .mint-workspace .sidebar-character-stage .orb-activity-console {
+    flex: 0 0 auto;
+    min-height: 0;
+    margin-top: 4px;
+    margin-bottom: 9px;
+    padding: 10px 12px;
+    border-radius: 7px;
+  }
+  .mint-workspace .sidebar-foot { padding-top: 7px; }
+}
+
+@media (min-width: 901px) and (max-height: 760px) {
+  .mint-workspace .sidebar { padding-top: 12px; padding-bottom: 10px; }
+  .mint-workspace .sidebar .logo { min-height: 66px; margin-bottom: 12px; }
+  .mint-workspace .sidebar-brand-mark { width: 98px; height: 34px; }
+  .mint-workspace .logo .sidebar-brand-name { font-size: 28px; }
+  .mint-workspace .sidebar nav { gap: 4px; }
+  .mint-workspace .sidebar .nav-item { min-height: 38px; padding-block: 7px; font-size: 14px; }
+  .mint-workspace .sidebar-character-stage .autodev-orb { height: 145px; flex-basis: 145px; }
+  .mint-workspace .sidebar-character-stage .orb-activity-console { padding: 8px 10px; margin-bottom: 5px; }
+  .mint-workspace .sidebar-edition { display: none; }
+  .mint-workspace .version-chip { padding-top: 2px; font-size: 9px; }
+}
+
+@media (min-width: 901px) and (max-height: 560px) {
+  .mint-workspace .sidebar { padding-block: 8px; }
+  .mint-workspace .sidebar .logo { min-height: 49px; margin-bottom: 8px; gap: 0; }
+  .mint-workspace .sidebar-brand-mark { width: 82px; height: 26px; }
+  .mint-workspace .logo .sidebar-brand-name { font-size: 23px; }
+  .mint-workspace .sidebar nav { gap: 3px; }
+  .mint-workspace .sidebar .nav-item { min-height: 32px; padding-block: 5px; font-size: 13px; }
+  .mint-workspace .sidebar-character-stage .autodev-orb { height: 95px; flex-basis: 95px; }
+  .mint-workspace .sidebar-character-stage .orb-activity-console { padding: 7px 10px; }
+  .mint-workspace #orb-current-output { -webkit-line-clamp: 1; }
+  .mint-workspace .sidebar-foot { padding-top: 4px; }
+}
+
+@media (min-width: 901px) and (max-height: 460px) {
+  .mint-workspace .sidebar { padding-block: 6px; }
+  .mint-workspace .sidebar .logo { min-height: 40px; margin-bottom: 6px; }
+  .mint-workspace .sidebar-brand-mark { width: 75px; height: 22px; }
+  .mint-workspace .logo .sidebar-brand-name { font-size: 20px; }
+  .mint-workspace .sidebar nav { flex: 0 1 auto; min-height: 0; gap: 2px; overflow-y: auto; }
+  .mint-workspace .sidebar .nav-item { min-height: 30px; padding-block: 4px; font-size: 12px; }
+  .mint-workspace .sidebar-character-stage { min-height: 70px; }
+  .mint-workspace .sidebar-character-stage .autodev-orb { height: 60px; flex-basis: 60px; }
+  .mint-workspace #orb-current-task { display: none; }
+  .mint-workspace .sidebar-foot { display: none; }
+}
+
+@media (max-width: 1200px) {
+  .mint-workspace .workspace-name { display: none; }
+  .mint-workspace .topbar { justify-content: flex-end; }
+}
+
+@media (max-width: 900px) {
+  .mint-workspace .model-settings-fields { order: -1; }
+  .mint-workspace .topbar { padding-block: 10px; min-height: 58px; }
+  .mint-workspace .top-actions { gap: 8px; }
+  .mint-workspace .top-actions .btn { min-height: 36px; padding: 8px 11px; font-size: 11px; }
+  .mint-workspace .sidebar .nav-item { line-height: 1.5; }
+  .mint-workspace .top-actions .profile { padding-left: 8px; }
+}
+
+@media (max-width: 900px) and (max-height: 700px) {
+  .mint-workspace .sidebar { padding-top: 12px; padding-bottom: 12px; }
+  .mint-workspace .sidebar .logo { margin-bottom: 15px; }
+  .mint-workspace .sidebar nav { gap: 5px; }
+  .mint-workspace .sidebar .nav-item { min-height: 44px; gap: 3px; padding-block: 4px; }
+}
+
+@media (max-width: 900px) and (max-height: 460px) {
+  .mint-workspace .sidebar nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+}
+
+@media (max-width: 650px) {
+  .mint-workspace .top-actions { width: 100%; gap: 7px; }
+  .mint-workspace .top-actions .btn { min-height: 35px; padding: 7px 9px; font-size: 10px; }
+  .mint-workspace .top-actions .btn .ui-icon { width: 15px; height: 15px; }
+  .mint-workspace .top-actions .profile { margin-left: auto; padding-left: 6px; }
+  .mint-workspace :is(#record-filters, #experience-filters) { gap: 10px; padding: 11px; }
+  .mint-workspace :is(#record-filters, #experience-filters) > label { flex: 1 1 124px; }
+  .mint-workspace #record-filters > .record-search,
+  .mint-workspace #experience-filters > .record-search {
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: none;
+  }
+  .mint-workspace :is(#record-filters, #experience-filters) > label:has(#record-project-filter, #experience-project-filter) { flex-basis: 124px; }
+  .mint-workspace #record-filters > :is(.record-date-from, .record-date-to) { flex: 1 1 124px; }
+  .mint-workspace :is(#record-filters, #experience-filters) .record-filter-actions { margin-left: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mint-workspace :is(.run-card, .project-card, .experience-card, .analytics-card),
+  .mint-workspace .main-stage :is(input, textarea, select),
+  .mint-workspace :is(.ledger-select, .ledger-date) > button { transition: none; }
+}
+
+/* Keep routine account editing on one screen; only long email lists need scrolling. */
+.mint-ui.mint-workspace #user-modal .modal,
+.mint-ui.mint-workspace #user-modal[data-mode=create] .modal {
+  width: min(760px, calc(100vw - 40px));
+  padding: 26px 30px;
+  border-radius: 14px;
+}
+.mint-ui.mint-workspace #user-modal h2 { font-size: 24px; padding-bottom: 15px; margin: 0 0 18px; }
+.mint-ui.mint-workspace #user-modal #user-form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px 20px; }
+.mint-ui.mint-workspace #user-modal #user-form > label:not(.toggle-line),
+.mint-ui.mint-workspace #user-modal #user-form > .field-block { display: grid; grid-template-columns: minmax(0,1fr); gap: 7px; }
+.mint-ui.mint-workspace #user-form .field-label { padding: 0; }
+.mint-ui.mint-workspace #user-form .field-label small { display: inline; margin-left: 10px; font-size: 11px; }
+.mint-ui.mint-workspace #user-form .add-email { grid-column: 1; padding: 7px 12px; font-size: 12px; }
+.mint-ui.mint-workspace #user-form .email-editor { max-height: 140px; overflow-y: auto; }
+.mint-ui.mint-workspace #user-form > label > span,
+.mint-ui.mint-workspace #user-form .field-label { font-size: 13px; }
+.mint-ui.mint-workspace #user-form .toggle-line { justify-content: space-between; padding: 6px 0; }
+.mint-ui.mint-workspace #user-form .toggle-line input:checked { background: #69a486; }
+.mint-ui.mint-workspace #user-form .modal-actions .btn { min-height: 42px; font-size: 13px; }
+@media (max-width: 650px) {
+  .mint-ui.mint-workspace #user-modal #user-form { grid-template-columns: 1fr; }
+  .mint-ui.mint-workspace #user-modal #user-form > * { grid-column: 1; }
+  .mint-ui.mint-workspace #user-modal .modal { padding: 22px; }
+  .mint-workspace .recent-filters .recent-search { flex-basis: 100%; min-width: 0; }
+  .mint-workspace .recent-filters .ledger-select { flex: 1 1 100px; min-width: 0; }
+}

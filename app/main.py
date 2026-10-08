@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.1",
+    version="1.0-Beta.2",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -769,6 +769,30 @@ def request_deep_link(request: Request) -> str:
     return f"?request={request_id}" + ("&acceptance=1" if request.query_params.get("acceptance") == "1" else "")
 
 
+def login_brand_media() -> dict[str, str]:
+    """Put the configured local film in the first response, without a layout flash."""
+    empty = {"src": "", "poster": "", "layout": ""}
+    try:
+        config = json.loads((ROOT / "app/static/brand-media.json").read_text(encoding="utf-8"))
+        media = config.get("login", {})
+        if not isinstance(media, dict):
+            return empty
+    except (OSError, ValueError, AttributeError):
+        return empty
+
+    def local_file(value: Any) -> str:
+        if not isinstance(value, str) or not re.fullmatch(r"/static/media/[\w./-]+", value) or ".." in value:
+            return ""
+        path = ROOT / "app" / value.lstrip("/")
+        return value if path.is_file() else ""
+
+    return {
+        "src": local_file(media.get("src")),
+        "poster": local_file(media.get("poster")),
+        "layout": "delivery-line" if media.get("layout") == "delivery-line" else "",
+    }
+
+
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
     if get_session_user(request.cookies.get("autodev_session")):
@@ -776,7 +800,8 @@ def login_page(request: Request):
     return templates.TemplateResponse(
         request,
         "login.html",
-        {"demo_enabled": settings.seed_demo, "app_version": settings.runner_version},
+        {"demo_enabled": settings.seed_demo, "app_version": settings.runner_version,
+         "login_media": login_brand_media()},
     )
 
 

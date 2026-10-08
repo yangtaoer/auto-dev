@@ -12,13 +12,17 @@
   <link rel="stylesheet" href="/static/brand-ui.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/editorial-ui.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/mint-ui.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/orb-polish.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/ui-refinements.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/login-polish.css?v={{ app_version }}">
 </head>
 <body class="login-body mint-ui">
-  <main class="login-shell">
+  {% set login_media = login_media | default({}) %}
+  <main class="login-shell"{% if login_media.layout %} data-login-layout="{{ login_media.layout }}"{% endif %}>
     <div class="login-film" data-film-stage aria-hidden="true">
-      <video data-brand-video="login" class="login-film-video" muted loop playsinline preload="metadata" tabindex="-1" disablepictureinpicture hidden></video>
+      <video data-brand-video="login" class="login-film-video" muted loop playsinline autoplay preload="auto" tabindex="-1" disablepictureinpicture{% if login_media.src %} src="{{ login_media.src }}"{% else %} hidden{% endif %}{% if login_media.poster %} poster="{{ login_media.poster }}"{% endif %}></video>
     </div>
-    <section class="login-brand-story" data-film-fallback aria-label="AutoDev 自主研发交付">
+    <section class="login-brand-story" data-film-fallback aria-label="AutoDev 自主研发交付"{% if login_media.src and login_media.layout == 'delivery-line' %} hidden{% endif %}>
       <img class="login-story-mark" src="/static/brand/autodev-sidebar-mark.png?v={{ app_version }}" alt="">
       <strong>AutoDev</strong>
       <h1>编号进入，交付离场。</h1>
@@ -29,7 +33,6 @@
           <canvas class="autodev-orb-canvas" aria-hidden="true"></canvas>
           <svg class="autodev-orb-fallback" aria-hidden="true"></svg>
         </div>
-        <div class="orb-paper-note" aria-hidden="true"><span>让想法<br>变成可运行的软件。</span><i>〈∞〉</i></div>
       </div>
     </section>
     <section class="login-panel" aria-label="进入工作台">

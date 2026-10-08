@@ -11,31 +11,39 @@
     stretch: {duration: 3100, expression: 'proud'},
     wink: {duration: 2400, expression: 'happy'},
     breathe: {duration: 4200, expression: 'sleeping'},
+    roam: {duration: 4900, expression: 'curious'},
+    slalom: {duration: 4100, expression: 'playful'},
+    leafchase: {duration: 4400, expression: 'searching'},
+    tumble: {duration: 3700, expression: 'excited'},
+    float: {duration: 5300, expression: 'proud'},
+    inspect: {duration: 3900, expression: 'thinking'},
+    settle: {duration: 4600, expression: 'listening'},
   };
   const pools = {
-    idle: ['peek', 'tilt', 'hop', 'wiggle', 'wink', 'stretch', 'twirl'],
-    curious: ['peek', 'tilt', 'hop', 'wiggle', 'wink', 'stretch', 'twirl'],
-    reading: ['peek', 'nod', 'tilt'],
-    thinking: ['tilt', 'peek', 'nod'],
-    working: ['nod', 'hop', 'peek', 'wiggle', 'stretch'],
-    building: ['stretch', 'hop', 'nod', 'peek'],
-    delivering: ['nod', 'wink', 'hop'],
-    listening: ['peek', 'tilt', 'nod'],
-    blocked: ['tilt', 'peek', 'nod'],
-    error: ['peek', 'tilt'],
-    success: ['hop', 'twirl', 'wink', 'wiggle'],
-    sleeping: ['breathe', 'tilt'],
+    idle: ['peek', 'tilt', 'hop', 'wiggle', 'wink', 'stretch', 'twirl', 'roam', 'slalom', 'leafchase', 'tumble', 'float'],
+    curious: ['peek', 'tilt', 'hop', 'wiggle', 'wink', 'stretch', 'twirl', 'roam', 'leafchase', 'slalom', 'float'],
+    reading: ['peek', 'nod', 'tilt', 'inspect', 'leafchase'],
+    thinking: ['tilt', 'peek', 'nod', 'inspect', 'float'],
+    working: ['nod', 'hop', 'peek', 'wiggle', 'stretch', 'slalom', 'roam'],
+    building: ['stretch', 'hop', 'nod', 'peek', 'inspect', 'slalom'],
+    delivering: ['nod', 'wink', 'hop', 'float', 'roam'],
+    listening: ['peek', 'tilt', 'nod', 'inspect', 'settle'],
+    blocked: ['tilt', 'peek', 'nod', 'inspect', 'settle'],
+    error: ['peek', 'tilt', 'settle'],
+    success: ['hop', 'twirl', 'wink', 'wiggle', 'tumble', 'slalom', 'leafchase'],
+    sleeping: ['breathe', 'settle'],
   };
   function pick(state, previous, random = Math.random) {
     const choices = (pools[state] || pools.curious).filter(name => name !== previous);
     return choices[Math.min(choices.length - 1, Math.max(0, Math.floor(random() * choices.length)))];
   }
-  function clip(name, startedAt, direction = 1) {
+  function clip(name, startedAt, direction = 1, variation = Math.random()) {
     const kind = gestures[name] ? name : 'tilt';
-    return {name: kind, startedAt, duration: gestures[kind].duration, direction: direction < 0 ? -1 : 1};
+    const seed = Math.max(0, Math.min(1, Number.isFinite(variation) ? variation : .5));
+    return {name: kind, startedAt, duration: gestures[kind].duration * (.88 + seed * .24), direction: direction < 0 ? -1 : 1, variation: seed};
   }
   function sample(animation, now) {
-    const pose = {hop: 0, sway: 0, roll: 0, pitch: 0, yaw: 0, stretch: 1, gazeX: 0, gazeY: 0, wink: 1};
+    const pose = {hop: 0, sway: 0, depth: 0, roll: 0, pitch: 0, yaw: 0, stretch: 1, gazeX: 0, gazeY: 0, wink: 1, leaf: 0};
     if (!animation) return pose;
     const p = (now - animation.startedAt) / animation.duration;
     if (p <= 0 || p >= 1) return pose;
@@ -45,6 +53,8 @@
         pose.gazeX = Math.sin(p * Math.PI * 2) * envelope * .7;
         pose.yaw = pose.gazeX * .3; pose.roll = -pose.gazeX * .14;
         pose.gazeY = envelope * .18;
+        pose.sway = direction * envelope * .09;
+        pose.depth = envelope * .05;
         break;
       case 'tilt':
         pose.roll = direction * envelope * .22; pose.pitch = -.08 * envelope;
@@ -58,6 +68,8 @@
         pose.hop = Math.abs(Math.sin(p * Math.PI * 2)) * envelope * .27;
         pose.stretch = 1 - Math.cos(p * Math.PI * 4) * envelope * .10;
         pose.roll = direction * wave * envelope * .10;
+        pose.sway = direction * Math.sin(p * Math.PI * 2) * envelope * .15;
+        pose.depth = envelope * -.08;
         break;
       case 'wiggle':
         pose.sway = wave * envelope * .10; pose.roll = -wave * envelope * .19;
@@ -66,6 +78,8 @@
       case 'twirl':
         pose.yaw = direction * Math.PI * 2 * p * p * (3 - 2 * p);
         pose.hop = envelope * .18; pose.roll = wave * envelope * .07;
+        pose.sway = Math.sin(p * Math.PI * 2) * envelope * .16;
+        pose.depth = (1 - Math.cos(p * Math.PI * 2)) * envelope * -.08;
         break;
       case 'stretch':
         pose.stretch = 1 + envelope * .12; pose.hop = envelope * .06;
@@ -79,7 +93,66 @@
       case 'breathe':
         pose.stretch = 1 + envelope * .025; pose.roll = direction * envelope * .025;
         break;
+      case 'roam':
+        pose.sway = direction * Math.sin(p * Math.PI * 2) * envelope * .38;
+        pose.depth = Math.sin(p * Math.PI) * envelope * -.24;
+        pose.hop = Math.abs(wave) * envelope * .07;
+        pose.roll = -pose.sway * .5;
+        pose.yaw = direction * wave * envelope * .24;
+        pose.gazeX = direction * Math.cos(p * Math.PI * 2) * envelope * .45;
+        break;
+      case 'slalom':
+        pose.sway = direction * wave * envelope * .3;
+        pose.depth = Math.sin(p * Math.PI * 2) * envelope * .15;
+        pose.hop = Math.abs(wave) * envelope * .15;
+        pose.roll = -direction * wave * envelope * .3;
+        pose.stretch = 1 - Math.cos(p * Math.PI * 8) * envelope * .065;
+        pose.gazeX = direction * wave * envelope * .4;
+        break;
+      case 'leafchase':
+        pose.sway = direction * Math.sin(p * Math.PI * 2) * envelope * .32;
+        pose.depth = -envelope * .16;
+        pose.hop = envelope * .22;
+        pose.roll = -direction * envelope * .19;
+        pose.pitch = -.16 * envelope;
+        pose.gazeX = direction * wave * envelope * .6;
+        pose.gazeY = envelope * .6;
+        pose.leaf = envelope;
+        break;
+      case 'tumble':
+        pose.sway = direction * Math.sin(p * Math.PI * 2) * envelope * .3;
+        pose.roll = direction * Math.PI * 2 * p * p * (3 - 2 * p);
+        pose.hop = envelope * .27;
+        pose.depth = -envelope * .12;
+        pose.stretch = 1 - Math.cos(p * Math.PI * 4) * envelope * .075;
+        break;
+      case 'float':
+        pose.sway = direction * Math.sin(p * Math.PI * 2) * envelope * .22;
+        pose.depth = envelope * .2;
+        pose.hop = envelope * .25;
+        pose.pitch = -.11 * envelope;
+        pose.roll = direction * wave * envelope * .11;
+        pose.stretch = 1 + envelope * .04;
+        pose.gazeY = envelope * .3;
+        break;
+      case 'inspect':
+        pose.sway = direction * envelope * .13;
+        pose.depth = envelope * .14;
+        pose.pitch = Math.sin(p * Math.PI * 3) * envelope * .14;
+        pose.yaw = direction * envelope * .25;
+        pose.gazeX = direction * envelope * .4;
+        pose.gazeY = Math.sin(p * Math.PI * 2) * envelope * .3;
+        break;
+      case 'settle':
+        pose.sway = direction * Math.sin(p * Math.PI * 2) * envelope * .04;
+        pose.depth = -envelope * .04;
+        pose.roll = direction * envelope * .06;
+        pose.stretch = 1 - envelope * .025;
+        pose.gazeY = -envelope * .18;
+        break;
     }
+    const amplitude = .78 + (animation.variation ?? .5) * .22;
+    ['hop', 'sway', 'depth', 'pitch', 'gazeX', 'gazeY'].forEach(key => { pose[key] *= amplitude; });
     return pose;
   }
   const api = {gestures, pools, pick, clip, sample};

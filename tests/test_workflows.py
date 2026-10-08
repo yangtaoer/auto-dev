@@ -2207,7 +2207,7 @@ else:
         self.assertIn("state: 'curious'", login_template)
         self.assertIn("sizePx: 300", login_template)
         self.assertIn("autodev-orb-canvas", login_template)
-        self.assertIn("orb-paper-note", login_template)
+        self.assertNotIn("orb-paper-note", login_template)
         self.assertIn("orb-scene.js", login_template)
         self.assertIn("交付离场", login_template)
         self.assertNotIn("brand-float", Path("app/static/brand-ui.css").read_text(encoding="utf-8"))
@@ -2504,8 +2504,10 @@ else:
     def test_login_reuses_configured_film_without_exposing_demo_accounts(self) -> None:
         login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
         self.assertIn('class="login-film-video"', login_template)
-        for attribute in ("muted", "loop", "playsinline", 'preload="metadata"'):
+        for attribute in ("muted", "loop", "playsinline", 'preload="auto"'):
             self.assertIn(attribute, login_template)
+        self.assertIn('src="{{ login_media.src }}"', login_template)
+        self.assertIn('poster="{{ login_media.poster }}"', login_template)
         self.assertNotIn("login-delivery-line", login_template)
         self.assertIn('data-brand-video="login"', login_template)
         media_script = Path("app/static/brand-media.js").read_text(encoding="utf-8")

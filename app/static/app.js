@@ -1,5 +1,5 @@
 const USER = window.__USER__;
-const state = { projects: [], projectGuideSignature:'', users: [], notificationUsers:[], analytics:null, dashboard: {active:[],recent:[],counts:{},runners:[],stats:{},capacity:{limit:5,active:0,queued:0,available:5}}, records:{items:[],page:1,pageSize:10,total:0,totalPages:1,filters:{keyword:'',task_type:'',project_key:'',status:'',requester_id:'',date_from:'',date_to:''}}, selectedRequest:null, selectedTerminal:false, selectedIntake:null, routingGeneration:0, continuationDrafts:new Map(), orbExperience:{initialized:false,runs:new Map(),pending:[],detailSteps:new Map(),activitySignature:'',activityIndex:0,activityTimer:null}, live:{requestId:null,taskType:'development',watcherId:null,cursor:0,generation:0,timer:null,lastGroup:'',lastKind:'',lastBubble:null} };
+const state = { projects: [], projectGuideSignature:'', users: [], notificationUsers:[], analytics:null, dashboard: {active:[],recent:[],counts:{},runners:[],stats:{},capacity:{limit:5,active:0,queued:0,available:5}}, recentFilters:{keyword:'',project_key:'',status:''}, records:{items:[],page:1,pageSize:10,total:0,totalPages:1,filters:{keyword:'',task_type:'',project_key:'',status:'',requester_id:'',date_from:'',date_to:''}}, selectedRequest:null, selectedTerminal:false, selectedIntake:null, routingGeneration:0, continuationDrafts:new Map(), orbExperience:{initialized:false,runs:new Map(),pending:[],detailSteps:new Map(),activitySignature:'',activityIndex:0,activityTimer:null}, live:{requestId:null,taskType:'development',watcherId:null,cursor:0,generation:0,timer:null,lastGroup:'',lastKind:'',lastBubble:null} };
 const MODE = {
   routing:['自动识别中','正在读取 TFS 需求并识别项目与交付策略。'],
   local_package:['本地打包交付','提交到最新目标分支后在本机执行构建，交付安装包、SQL、配置和说明。'],
@@ -92,11 +92,12 @@ const ORB_RUNNING_STATUSES=new Set(['routing','validating','developing','submitt
 function renderSidebarOrbActivity(activeRuns){
   const panel=document.querySelector('#orb-activity-console'),task=document.querySelector('#orb-current-task'),output=document.querySelector('#orb-current-output'),counter=document.querySelector('#orb-task-index');if(!panel||!task||!output||!counter)return;
   const runs=(activeRuns||[]).filter(Boolean),experience=state.orbExperience,signature=runs.map(activeRunKey).join('|');
+  panel.hidden=runs.length===0;
   const expanded=panel.getAttribute('aria-expanded')==='true';
   if(signature!==experience.activitySignature){experience.activitySignature=signature;experience.activityIndex=0}else if(runs.length>1&&!expanded&&!panel.matches(':hover,:focus-within'))experience.activityIndex=(experience.activityIndex+1)%runs.length;
-  if(expanded)renderSidebarTaskList();
+  if(expanded&&runs.length)renderSidebarTaskList();
   panel.dataset.active=String(runs.length>0);
-  if(!runs.length){counter.textContent='暂无任务';task.textContent='当前输出';output.textContent='等待新的研发或问题分析任务';return}
+  if(!runs.length){closeSidebarTasks(false);panel.setAttribute('aria-expanded','false');if(experience.activityTimer)clearTimeout(experience.activityTimer);experience.activityTimer=null;panel.classList.remove('is-switching');counter.textContent='暂无任务';task.textContent='当前输出';output.textContent='等待新的研发或问题分析任务';return}
   const index=Math.min(experience.activityIndex,runs.length-1),run=runs[index],workItem=run.work_item_id?`TFS #${run.work_item_id}`:'运行任务',project=String(run.project_name||'项目识别中').trim();
   counter.textContent=`任务 ${index+1}/${runs.length}`;task.textContent=`${workItem} · ${project}`;output.textContent=engineText(String(run.current_activity||taskStatus(run,runVisualStatus(run))||'等待执行器反馈').trim());
   panel.classList.remove('is-switching');void panel.offsetWidth;panel.classList.add('is-switching');if(experience.activityTimer)clearTimeout(experience.activityTimer);experience.activityTimer=setTimeout(()=>panel.classList.remove('is-switching'),380);
@@ -131,12 +132,13 @@ function closeSidebarTasks(restoreFocus=true){
   panel.hidden=true;trigger?.setAttribute('aria-expanded','false');if(restoreFocus)trigger?.focus();
 }
 function toggleSidebarTasks(){
-  const panel=document.querySelector('#sidebar-task-popover'),trigger=document.querySelector('#orb-activity-console');if(!panel)return;
+  const panel=document.querySelector('#sidebar-task-popover'),trigger=document.querySelector('#orb-activity-console');if(!panel||!trigger||trigger.hidden||!state.dashboard.active.length)return;
   if(!panel.hidden){closeSidebarTasks();return}
   renderSidebarTaskList();panel.hidden=false;trigger.setAttribute('aria-expanded','true');
   (panel.querySelector('.sidebar-task-option')||document.querySelector('#close-sidebar-tasks')).focus();
 }
 function syncSidebarOrbState(activeRuns,runners){
+  renderSidebarOrbActivity(activeRuns);
   const character=window.sidebarCharacter;if(!character)return;
   const runs=activeRuns||[],statuses=runs.map(runVisualStatus);
   let characterState='curious';
@@ -151,7 +153,6 @@ function syncSidebarOrbState(activeRuns,runners){
   else if(!(runners||[]).some(runner=>runner.online))characterState='sleeping';
   character.setRunning(statuses.some(status=>ORB_RUNNING_STATUSES.has(status)));
   character.setState(characterState);
-  renderSidebarOrbActivity(runs);
 }
 function orbMotionReduced(){return window.matchMedia('(prefers-reduced-motion: reduce)').matches}
 function orbSignalLayer(){let layer=document.querySelector('#orb-signal-layer');if(!layer){layer=document.createElement('div');layer.id='orb-signal-layer';layer.className='orb-signal-layer';layer.setAttribute('aria-hidden','true');document.body.appendChild(layer)}return layer}
@@ -184,14 +185,39 @@ function renderDashboard(){
   if(capacityStatus)capacityStatus.innerHTML=`<b>${Number(capacity.active)||0} / ${Number(capacity.limit)||5}</b><span>并发槽位${capacity.queued?` · ${Number(capacity.queued)} 个排队`:''}</span>`;
   document.body.classList.toggle('has-active-runs',state.dashboard.active.length>0);
   document.querySelector('#active-summary').textContent=`共 ${state.dashboard.active.length} 个任务${capacity.queued?`，其中 ${Number(capacity.queued)} 个排队`:''}`;
-  const recent=state.dashboard.recent.slice(0,12);
-  document.querySelector('#recent-summary').textContent=`共 ${recent.length} 条近期任务，按更新时间排序`;
-  document.querySelector('#recent-table').innerHTML=recent.map(recentRow).join('')||'<tr><td colspan="9" class="muted">暂无记录</td></tr>';
-  bindRows();
+  renderRecentTasks();
   const runners=state.dashboard.runners||[],online=runners.filter(r=>r.online),status=document.querySelector('#runner-status');
   status.classList.toggle('offline',online.length===0);status.querySelector('span').textContent=online.length?'执行器在线':'执行器离线';
   syncSidebarOrbState(state.dashboard.active,runners);
   flushOrbTransitions();
+}
+function recentProjectKey(record){return record.project_id!=null?`id:${record.project_id}`:record.project_key?`key:${record.project_key}`:`name:${record.project_name||'项目识别中'}`}
+function filterRecentRuns(recent,filters=state.recentFilters){
+  const terms=String(filters.keyword||'').trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  return recent.filter(record=>{
+    if(filters.project_key&&recentProjectKey(record)!==filters.project_key)return false;
+    if(filters.status&&runVisualStatus(record)!==filters.status)return false;
+    const text=[`TFS #${record.work_item_id||''}`,record.title,record.project_name,record.current_activity,record.requester_name,taskStatus(record),taskTypeLabel(record)].join(' ').toLocaleLowerCase();
+    return terms.every(term=>text.includes(term));
+  });
+}
+function renderRecentFilterOptions(recent){
+  const filters=state.recentFilters,projectControl=document.querySelector('#recent-project-filter'),statusControl=document.querySelector('#recent-status-filter');
+  const projects=new Map(recent.map(record=>[recentProjectKey(record),record.project_name||'项目识别中']));
+  if(filters.project_key&&!projects.has(filters.project_key))projects.set(filters.project_key,projectControl?.querySelector(':scope > button b')?.textContent||'所选项目');
+  const statuses=new Map(recent.map(record=>{const status=runVisualStatus(record);return [status,STATUS[status]||taskStatus(record,status)]}));
+  if(filters.status&&!statuses.has(filters.status))statuses.set(filters.status,STATUS[filters.status]||filters.status);
+  setLedgerSelectOptions(projectControl,[['','全部项目'],...projects],filters.project_key,value=>{filters.project_key=value;renderRecentTasks()});
+  setLedgerSelectOptions(statusControl,[['','全部状态'],...statuses],filters.status,value=>{filters.status=value;renderRecentTasks()});
+}
+function renderRecentTasks(){
+  const recent=state.dashboard.recent.slice(0,12),filtered=filterRecentRuns(recent),active=Object.values(state.recentFilters).some(value=>String(value).trim());
+  renderRecentFilterOptions(recent);
+  const summary=document.querySelector('#recent-summary'),table=document.querySelector('#recent-table');
+  if(summary)summary.textContent=active?`筛选出 ${filtered.length} / ${recent.length} 条近期任务`:`共 ${recent.length} 条近期任务，按更新时间排序`;
+  if(table)table.innerHTML=filtered.map(recentRow).join('')||`<tr><td colspan="9" class="muted">${active?'没有符合条件的近期任务':'暂无记录'}</td></tr>`;
+  const reset=document.querySelector('#reset-recent-filters');if(reset)reset.disabled=!active;
+  bindRows();
 }
 function renderDevCoreQuota(){const el=document.querySelector('#devcore-quota');if(!el)return;const runners=state.dashboard.runners||[];const runner=runners.find(r=>r.online&&r.devcore_usage?.available)||runners.find(r=>r.devcore_usage?.available);if(!runner){el.innerHTML='<div><p class="eyebrow">研发容量 / DEVCORE CAPACITY</p><h2>套餐信息暂不可用</h2></div><span class="muted">执行器上线后自动同步</span>';return}const usage=runner.devcore_usage,primary=usage.primary||{},remaining=primary.remaining_percent,used=primary.used_percent??0,credits=usage.credits||{},plan=String(usage.plan_type||'unknown').toUpperCase();const reset=primary.resets_at?new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(primary.resets_at*1000)):'—';const balance=credits.unlimited?'无限':(credits.balance??'0');el.innerHTML=`<div class="quota-copy"><p class="eyebrow">研发容量 / DEVCORE CAPACITY / ${escapeHtml(runner.runner_id)}</p><h2>${escapeHtml(plan)} 套餐</h2><span>周期重置 ${escapeHtml(reset)} · 额外余额 ${escapeHtml(balance)}</span></div><div class="quota-meter"><div class="quota-number"><b>${remaining??'—'}%</b><span>套餐剩余</span></div><div class="quota-track"><i style="width:${Math.max(0,Math.min(100,100-used))}%"></i></div><small>数据更新时间 ${fmt(usage.updated_at)}</small></div>`}
 function activeRunKey(r){return `${r.record_type==='intake'||r.intake_id?'intake':'request'}:${r.intake_id||r.id}`}
@@ -243,7 +269,7 @@ const RECORD_FILTER_OPTIONS={
 };
 function closeLedgerPopovers(except=null){document.querySelectorAll('.ledger-select.open,.ledger-date.open').forEach(control=>{if(control===except)return;control.classList.remove('open');const panel=control.querySelector('.ledger-select-menu,.ledger-calendar'),button=control.querySelector(':scope > button');if(panel)panel.hidden=true;if(button)button.setAttribute('aria-expanded','false')})}
 function setLedgerSelectValue(control,value){const input=control.querySelector('input'),button=control.querySelector(':scope > button'),option=control.querySelector(`.ledger-select-menu [data-value="${CSS.escape(String(value??''))}"]`),fallback=control.querySelector('.ledger-select-menu [data-value=""]');input.value=String(value??'');button.querySelector('b').textContent=(option||fallback)?.textContent||'全部';control.querySelectorAll('[role="option"]').forEach(item=>item.setAttribute('aria-selected',String(item===option)));}
-function setLedgerSelectOptions(control,options,value=''){if(!control)return;const signature=JSON.stringify(options);if(control.dataset.signature!==signature){control.dataset.signature=signature;const menu=control.querySelector('.ledger-select-menu');menu.innerHTML=options.map(([optionValue,label])=>`<button type="button" role="option" data-value="${escapeHtml(optionValue)}">${escapeHtml(label)}</button>`).join('');menu.querySelectorAll('[data-value]').forEach(option=>option.onclick=event=>{event.stopPropagation();setLedgerSelectValue(control,option.dataset.value);closeLedgerPopovers()})}setLedgerSelectValue(control,value);if(control.dataset.ready)return;control.dataset.ready='1';const button=control.querySelector(':scope > button'),menu=control.querySelector('.ledger-select-menu');button.onclick=event=>{event.stopPropagation();const opening=!control.classList.contains('open');closeLedgerPopovers(control);control.classList.toggle('open',opening);menu.hidden=!opening;button.setAttribute('aria-expanded',String(opening))};}
+function setLedgerSelectOptions(control,options,value='',onChange=null){if(!control)return;control._onLedgerSelectChange=onChange;const signature=JSON.stringify(options);if(control.dataset.signature!==signature){control.dataset.signature=signature;const menu=control.querySelector('.ledger-select-menu');menu.innerHTML=options.map(([optionValue,label])=>`<button type="button" role="option" data-value="${escapeHtml(optionValue)}">${escapeHtml(label)}</button>`).join('');menu.querySelectorAll('[data-value]').forEach(option=>option.onclick=event=>{event.stopPropagation();setLedgerSelectValue(control,option.dataset.value);closeLedgerPopovers();control._onLedgerSelectChange?.(option.dataset.value,control)})}setLedgerSelectValue(control,value);if(control.dataset.ready)return;control.dataset.ready='1';const button=control.querySelector(':scope > button'),menu=control.querySelector('.ledger-select-menu');button.onclick=event=>{event.stopPropagation();const opening=!control.classList.contains('open');closeLedgerPopovers(control);control.classList.toggle('open',opening);menu.hidden=!opening;button.setAttribute('aria-expanded',String(opening))};}
 function localDate(value){const match=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value||''));return match?new Date(Number(match[1]),Number(match[2])-1,Number(match[3])):null}
 function dateIso(date){return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`}
 function ledgerDateLabel(value){const date=localDate(value);return date?`${date.getFullYear()}年${date.getMonth()+1}月${date.getDate()}日`:'选择日期'}
@@ -524,6 +550,11 @@ document.querySelector('#open-request').onclick=()=>openRequestModal('developmen
 document.querySelector('#open-analysis').onclick=()=>openRequestModal('analysis');
 document.querySelectorAll('[name="task_type"]').forEach(input=>input.addEventListener('change',()=>setRequestTaskType(input.value)));
 document.querySelector('#logout').onclick=async()=>{await api('/api/auth/logout',{method:'POST'});location.href='/login'};
+function updateRecentKeyword(event){if(event.isComposing)return;state.recentFilters.keyword=event.currentTarget.value;renderRecentTasks()}
+document.querySelector('#recent-keyword')?.addEventListener('input',updateRecentKeyword);
+document.querySelector('#recent-keyword')?.addEventListener('compositionend',updateRecentKeyword);
+document.querySelector('#recent-filters')?.addEventListener('submit',event=>{event.preventDefault();state.recentFilters.keyword=document.querySelector('#recent-keyword')?.value||'';closeLedgerPopovers();renderRecentTasks()});
+document.querySelector('#reset-recent-filters')?.addEventListener('click',()=>{state.recentFilters={keyword:'',project_key:'',status:''};const keyword=document.querySelector('#recent-keyword');if(keyword)keyword.value='';closeLedgerPopovers();renderRecentTasks()});
 document.querySelector('#record-filters')?.addEventListener('submit',event=>{event.preventDefault();const data=new FormData(event.currentTarget),dateFrom=String(data.get('date_from')||''),dateTo=String(data.get('date_to')||'');if(dateFrom&&dateTo&&dateFrom>dateTo){toast('开始日期不能晚于结束日期');return}state.records.filters={keyword:String(data.get('keyword')||'').trim(),task_type:String(data.get('task_type')||''),project_key:String(data.get('project_key')||''),status:String(data.get('status')||''),requester_id:String(data.get('requester_id')||''),date_from:dateFrom,date_to:dateTo};closeLedgerPopovers();loadDeliveryRecords(1).catch(error=>toast(error.message))});
 document.querySelector('#reset-record-filters')?.addEventListener('click',()=>{const form=document.querySelector('#record-filters');form.reset();resetRecordFilterControls();state.records.filters={keyword:'',task_type:'',project_key:'',status:'',requester_id:'',date_from:'',date_to:''};loadDeliveryRecords(1).catch(error=>toast(error.message))});
 document.addEventListener('click',()=>closeLedgerPopovers());

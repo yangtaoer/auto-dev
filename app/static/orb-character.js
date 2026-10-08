@@ -83,10 +83,10 @@
       float contactShadow = exp(-pow(contactShadowPoint.x / 0.39, 2.0)
                               - pow(contactShadowPoint.y / 0.052, 2.0));
       float shadowAlpha = clamp(
-        softShadow * mix(0.27, 0.43, u_dark) + contactShadow * mix(0.20, 0.31, u_dark),
-        0.0, 0.72
+        softShadow * mix(0.16, 0.23, u_dark) + contactShadow * mix(0.12, 0.18, u_dark),
+        0.0, 0.42
       );
-      vec3 shadowColor = mix(vec3(0.18, 0.09, 0.045), vec3(0.0), u_dark);
+      vec3 shadowColor = mix(vec3(0.44, 0.62, 0.51), vec3(0.18, 0.33, 0.27), u_dark);
 
       if (bodyAlpha <= 0.001) {
         gl_FragColor = vec4(shadowColor * shadowAlpha, shadowAlpha);
@@ -193,6 +193,8 @@
       this._onContextLost = this._onContextLost.bind(this);
       this._onInteract = this._onInteract.bind(this);
       this._onInteractKey = this._onInteractKey.bind(this);
+      this._positionWhisper = this._positionWhisper.bind(this);
+      this._onWhisperDismiss = this._onWhisperDismiss.bind(this);
       this._resize = this._resize.bind(this);
       this._frame = this._frame.bind(this);
 
@@ -371,6 +373,10 @@
       if (this.canvas) this.canvas.addEventListener('webglcontextlost', this._onContextLost);
       document.addEventListener('visibilitychange', this._onVisibilityChange);
       this.reduceMotionQuery.addEventListener('change', this._onMotionChange);
+      global.addEventListener('resize', this._positionWhisper, {passive: true});
+      global.addEventListener('scroll', this._positionWhisper, {passive: true, capture: true});
+      document.addEventListener('pointerdown', this._onWhisperDismiss);
+      document.addEventListener('keydown', this._onWhisperDismiss);
       if (this.options.interactive) {
         this.root.classList.add('is-interactive');
         this.root.addEventListener('click', this._onInteract);
@@ -429,7 +435,7 @@
       if (this.reactionClassTimer) clearTimeout(this.reactionClassTimer);
       this.root.dataset.reaction = name;
       if (!this.reducedMotion && global.AutoDevOrbMotion) {
-        const gesture = {tap: 'wiggle', dispatch: 'hop', progress: 'nod', success: 'hop', blocked: 'tilt'}[name] || 'tilt';
+        const gesture = {tap: ['leafchase', 'slalom', 'tumble'][this.tapCycle % 3], dispatch: 'slalom', progress: 'nod', success: 'tumble', blocked: 'inspect'}[name] || 'tilt';
         this.motionClip = global.AutoDevOrbMotion.clip(gesture, performance.now(), Math.random() < .5 ? -1 : 1);
         this.root.dataset.gesture = gesture;
         this._scheduleAmbient(this.motionClip.duration + 1200);
@@ -456,37 +462,79 @@
         this.root.dataset.gesture = name;
         this._temporaryDriverState(this.state === 'sleeping' ? 'sleeping' : motion.gestures[name].expression, this.motionClip.duration);
         if (!this.scene) {
-          if (name === 'hop') this.motionDriver?.bounceOnce();
-          if (name === 'twirl') this.motionDriver?.spinOnce(.8);
+          if (['hop', 'slalom', 'leafchase', 'float'].includes(name)) this.motionDriver?.bounceOnce();
+          if (['twirl', 'tumble'].includes(name)) this.motionDriver?.spinOnce(.8);
         }
-        this._scheduleAmbient(this.motionClip.duration + 850 + Math.random() * 1550);
+        this._scheduleAmbient(this.motionClip.duration + 550 + Math.random() * 1500);
       }, delay);
     }
 
     sampleMotion(now) {
-      return global.AutoDevOrbMotion?.sample(this.reducedMotion || this.manualPaused ? null : this.motionClip, now);
+      return global.AutoDevOrbMotion?.sample(this.reducedMotion || this.manualPaused || document.hidden || !this.visible ? null : this.motionClip, now);
     }
 
     setVisible(visible) {
       this.visible = Boolean(visible);
+      if (!this.visible) this._hideWhisper();
       this.motionDriver?.setPaused(!this.visible || document.hidden || this.manualPaused || this.reducedMotion);
       this._scheduleAmbient();
     }
 
     _showWhisper(message) {
-      let whisper = this.root.querySelector('.orb-whisper');
+      let whisper = this.whisper;
       if (!whisper) {
         whisper = document.createElement('span');
-        whisper.className = 'orb-whisper';
+        whisper.className = 'orb-whisper orb-whisper-portal';
         whisper.setAttribute('role', 'status');
-        this.root.appendChild(whisper);
+        whisper.setAttribute('aria-live', 'polite');
+        whisper.setAttribute('aria-atomic', 'true');
+        document.body.appendChild(whisper);
+        this.whisper = whisper;
       }
       whisper.textContent = message;
       whisper.classList.remove('show');
+      this._positionWhisper();
       void whisper.offsetWidth;
       whisper.classList.add('show');
       if (this.whisperTimer) clearTimeout(this.whisperTimer);
-      this.whisperTimer = global.setTimeout(() => whisper.classList.remove('show'), 1900);
+      this.whisperTimer = global.setTimeout(() => this._hideWhisper(), 2600);
+    }
+
+    _positionWhisper() {
+      if (!this.whisper || this.destroyed) return;
+      const rect = this.root.getBoundingClientRect();
+      const viewportWidth = global.innerWidth || document.documentElement.clientWidth;
+      const viewportHeight = global.innerHeight || document.documentElement.clientHeight;
+      const width = Math.min(218, Math.max(1, viewportWidth - 32));
+      this.whisper.style.width = `${width}px`;
+      const height = this.whisper.getBoundingClientRect().height || 66;
+      let left = rect.left + rect.width / 2 - width / 2;
+      let top = rect.top + rect.height * .16 - height - 12;
+      let side = 'top';
+      if (this.root.closest('.sidebar-character-stage') && rect.right + width + 28 <= viewportWidth) {
+        left = rect.right + 14;
+        top = rect.top + rect.height * .32;
+        side = 'right';
+      } else if (top < 16) {
+        top = rect.top + rect.height * .8 + 12;
+        side = 'bottom';
+      }
+      this.whisper.style.left = `${Math.max(16, Math.min(left, viewportWidth - width - 16))}px`;
+      this.whisper.style.top = `${Math.max(16, Math.min(top, viewportHeight - height - 16))}px`;
+      this.whisper.dataset.side = side;
+    }
+
+    _hideWhisper() {
+      if (this.whisperTimer) clearTimeout(this.whisperTimer);
+      this.whisperTimer = 0;
+      this.whisper?.classList.remove('show');
+    }
+
+    _onWhisperDismiss(event) {
+      if (!this.whisper?.classList.contains('show')) return;
+      if (event.type === 'keydown' && event.key !== 'Escape') return;
+      if (event.type === 'pointerdown' && this.root.contains(event.target)) return;
+      this._hideWhisper();
     }
 
     _onPointerMove(event) {
@@ -497,6 +545,7 @@
     }
 
     _onVisibilityChange() {
+      if (document.hidden) this._hideWhisper();
       if (this.fallbackCharacter) this.fallbackCharacter.setPaused(document.hidden || this.manualPaused || this.reducedMotion || !this.visible);
       this._scheduleAmbient();
       if (!document.hidden) {
@@ -727,6 +776,10 @@
       global.removeEventListener('pointermove', this._onPointerMove);
       if (this.canvas) this.canvas.removeEventListener('webglcontextlost', this._onContextLost);
       global.removeEventListener('resize', this._resize);
+      global.removeEventListener('resize', this._positionWhisper);
+      global.removeEventListener('scroll', this._positionWhisper, true);
+      document.removeEventListener('pointerdown', this._onWhisperDismiss);
+      document.removeEventListener('keydown', this._onWhisperDismiss);
       document.removeEventListener('visibilitychange', this._onVisibilityChange);
       this.reduceMotionQuery.removeEventListener('change', this._onMotionChange);
       this.root.removeEventListener('click', this._onInteract);
@@ -737,6 +790,8 @@
       if (this.resizeObserver) this.resizeObserver.disconnect();
       if (this.fallbackCharacter) this.fallbackCharacter.destroy();
       if (this.backSvg) this.backSvg.remove();
+      this.whisper?.remove();
+      this.whisper = null;
       if (this.gl) {
         this.gl.deleteBuffer(this.buffer);
         this.gl.deleteProgram(this.program);
