@@ -180,6 +180,7 @@
       this.gazeTimer = 0;
       this.whisperTimer = 0;
       this.tapCycle = 0;
+      this.gardenSuccessToken = 0;
       this.visible = true;
       this.ambientTimer = 0;
       this.lastGesture = '';
@@ -213,6 +214,9 @@
       if (this.destroyed || this.scene || !this.root.closest('.mint-ui')) return;
       try {
         this.scene = new Scene(this);
+        if (this.ambientTimer) clearTimeout(this.ambientTimer);
+        this.ambientTimer = 0;
+        this.motionClip = null;
       } catch (error) {
         // Keep the animated SVG fallback when WebGL2 is unavailable.
         this.root.classList.remove('is-scene');
@@ -449,7 +453,7 @@
     _scheduleAmbient(delay = 1100 + Math.random() * 1300) {
       if (this.ambientTimer) clearTimeout(this.ambientTimer);
       this.ambientTimer = 0;
-      if (!global.AutoDevOrbMotion || !this.options.ambient || this.destroyed || this.manualPaused || this.reducedMotion || document.hidden || !this.visible) return;
+      if (this.scene?.garden || !global.AutoDevOrbMotion || !this.options.ambient || this.destroyed || this.manualPaused || this.reducedMotion || document.hidden || !this.visible) return;
       this.ambientTimer = global.setTimeout(() => {
         this.ambientTimer = 0;
         if (this.destroyed || this.manualPaused || this.reducedMotion || document.hidden || !this.visible) return;
@@ -734,12 +738,14 @@
     }
 
     celebrateOnce(target) {
+      this.gardenSuccessToken += 1;
       this.lookAt(target, 1900);
       this.motionDriver?.bounceOnce();
       this.motionDriver?.burstOnce();
       this._temporaryDriverState('celebrate', 1850);
       this._markReaction('success', 1500);
       this._showWhisper('交付完成，成果已安全离场。');
+      this.scene?.invalidate();
     }
 
     alertOnce(target) {

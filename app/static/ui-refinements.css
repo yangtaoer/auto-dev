@@ -496,10 +496,10 @@
   }
   .mint-workspace .sidebar-character-stage .autodev-orb {
     width: var(--sidebar-width);
-    height: 180px;
+    height: 200px;
     min-height: 0;
     max-height: none;
-    flex: 0 1 180px;
+    flex: 0 1 200px;
   }
   .mint-workspace .sidebar-character-stage .orb-activity-console {
     flex: 0 0 auto;
@@ -519,7 +519,7 @@
   .mint-workspace .logo .sidebar-brand-name { font-size: 28px; }
   .mint-workspace .sidebar nav { gap: 4px; }
   .mint-workspace .sidebar .nav-item { min-height: 38px; padding-block: 7px; font-size: 14px; }
-  .mint-workspace .sidebar-character-stage .autodev-orb { height: 145px; flex-basis: 145px; }
+  .mint-workspace .sidebar-character-stage .autodev-orb { height: 180px; flex-basis: 180px; }
   .mint-workspace .sidebar-character-stage .orb-activity-console { padding: 8px 10px; margin-bottom: 5px; }
   .mint-workspace .sidebar-edition { display: none; }
   .mint-workspace .version-chip { padding-top: 2px; font-size: 9px; }
@@ -532,7 +532,7 @@
   .mint-workspace .logo .sidebar-brand-name { font-size: 25px; }
   .mint-workspace .sidebar nav { gap: 3px; }
   .mint-workspace .sidebar .nav-item { min-height: 34px; padding-block: 6px; font-size: 14px; }
-  .mint-workspace .sidebar-character-stage .autodev-orb { height: 125px; flex-basis: 125px; }
+  .mint-workspace .sidebar-character-stage .autodev-orb { height: 150px; flex-basis: 150px; }
   .mint-workspace .sidebar-character-stage .orb-activity-console { padding: 7px 10px; }
   .mint-workspace #orb-current-output { -webkit-line-clamp: 1; }
 }
@@ -544,7 +544,7 @@
   .mint-workspace .logo .sidebar-brand-name { font-size: 23px; }
   .mint-workspace .sidebar nav { gap: 3px; }
   .mint-workspace .sidebar .nav-item { min-height: 32px; padding-block: 5px; font-size: 13px; }
-  .mint-workspace .sidebar-character-stage .autodev-orb { height: 95px; flex-basis: 95px; }
+  .mint-workspace .sidebar-character-stage .autodev-orb { height: 110px; flex-basis: 110px; }
   .mint-workspace .sidebar-character-stage .orb-activity-console { padding: 7px 10px; }
   .mint-workspace #orb-current-output { -webkit-line-clamp: 1; }
   .mint-workspace .sidebar-foot { padding-top: 4px; }
