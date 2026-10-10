@@ -861,8 +861,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("cid:autodev-brand-mark", sender.call_args.kwargs["html_body"])
         template = self.client.get("/api/runner/email-template", headers=headers)
         self.assertEqual(template.status_code, 200, template.text)
-        self.assertEqual(template.json()["template"], "compact-wide")
-        self.assertEqual(template.json()["card_width"], 860)
+        self.assertEqual(template.json()["template"], "mint-editorial")
+        self.assertEqual(template.json()["card_width"], 720)
 
     def test_cancelled_and_failed_tasks_send_terminal_email_once(self) -> None:
         project_id = self.create_project("test-terminal-mail", "local_package")

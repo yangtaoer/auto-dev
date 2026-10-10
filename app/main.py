@@ -2739,7 +2739,7 @@ def runner_test_email(request_id: str, payload: RunnerTestEmailInput) -> dict:
 
 @app.get("/api/runner/email-template", dependencies=[Depends(runner_auth)])
 def runner_email_template() -> dict:
-    return {"template": "compact-wide", "card_width": 860, "brand_mark": "autodev-email-mark.png"}
+    return {"template": "mint-editorial", "card_width": 720, "brand_mark": "autodev-email-mark.png"}
 
 
 @app.get("/api/artifacts/{artifact_id}")
