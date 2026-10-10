@@ -46,7 +46,10 @@
     const pose = {hop: 0, sway: 0, depth: 0, roll: 0, pitch: 0, yaw: 0, stretch: 1, gazeX: 0, gazeY: 0, wink: 1, leaf: 0};
     if (!animation) return pose;
     const p = (now - animation.startedAt) / animation.duration;
-    if (p <= 0 || p >= 1) return pose;
+    // A varied decimal duration can round (start + duration - start) just below
+    // duration. Treat that round-off-sized endpoint as finished, not a 2π pose
+    // which suddenly snaps back on the following fallback-rendered frame.
+    if (p <= 1e-9 || p >= 1 - 1e-9) return pose;
     const envelope = Math.sin(Math.PI * p) ** 2, wave = Math.sin(Math.PI * p * 4), direction = animation.direction;
     switch (animation.name) {
       case 'peek':

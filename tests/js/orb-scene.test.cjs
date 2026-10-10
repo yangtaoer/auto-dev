@@ -21,7 +21,7 @@ async function gardenScene({seed = 17, cryptoSeed = 4321} = {}) {
     setPixelRatio(value) { this.pixelRatio = value; }
     setClearColor(color, alpha) { this.clearColor = color; this.clearAlpha = alpha; }
     setSize(width, height) { this.width = width; this.height = height; }
-    render() {}
+    render() { this.renders = (this.renders || 0) + 1; if (this.shadowMap.needsUpdate) this.shadowDraws = (this.shadowDraws || 0) + 1; }
     dispose() { this.disposed = true; }
   }
   const document = {hidden: false, createElement() { return {
@@ -45,10 +45,34 @@ async function gardenScene({seed = 17, cryptoSeed = 4321} = {}) {
     requestAnimationFrame: () => 1, cancelAnimationFrame() {canceled++;}});
   const scene = new window.AutoDevOrbScene(orb);
   const drawAfter = ms => { now += ms; scene.draw(now); };
+  const tickAfter = ms => { now += ms; scene.tick(now); };
   const advance = ms => { for (let time = 0; time < ms; time += 40) drawAfter(Math.min(40, ms - time)); };
   return {scene, orb, root, window, document, THREE, sampleGarden, gardenEpisodes, gardenDuration, GARDEN_DURATIONS,
-    rendererOptions, advance, drawAfter, canceled: () => canceled};
+    rendererOptions, advance, drawAfter, tickAfter, canceled: () => canceled};
 }
+
+test('the mascot renders every display frame while expensive shadows retain a separate cadence', async () => {
+  const {scene, tickAfter} = await gardenScene();
+  const start = scene.renderer.renders, shadows = scene.renderer.shadowDraws;
+  for (let i = 0; i < 60; i++) tickAfter(1000 / 60);
+  assert.equal(scene.renderer.renders - start, 60, 'no legacy 30 Hz frame gate');
+  assert.ok(scene.renderer.shadowDraws - shadows >= 29 && scene.renderer.shadowDraws - shadows <= 31);
+  assert.equal(scene.renderer.shadowMap.autoUpdate, false);
+  assert.ok(Math.abs(scene.director.clock - 1000) < .001);
+  scene.destroy();
+});
+
+test('gaze easing is frame-rate independent rather than snapping faster on high refresh displays', async () => {
+  const fast = await gardenScene(), slow = await gardenScene();
+  for (const item of [fast, slow]) { item.orb.pointer.near = true; item.orb.pointer.targetX = 1; }
+  for (const [item, fps] of [[fast, 60], [slow, 30]]) {
+    const frame = item.sampleGarden({mode: 'idle'});
+    for (let i = 0; i < fps; i++) item.scene.renderGardenFrame(frame, 100 + i * 1000 / fps, 1000 / fps);
+  }
+  assert.ok(Math.abs(fast.scene.gaze.x - slow.scene.gaze.x) < 1e-10);
+  assert.ok(fast.scene.gaze.x > .6);
+  fast.scene.destroy(); slow.scene.destroy();
+});
 
 test('orange body keeps one soft highlight and a smooth, enlarged sidebar silhouette', async () => {
   const {scene, rendererOptions} = await gardenScene();
@@ -181,6 +205,7 @@ test('hidden or paused scenes freeze their clocks, and reduced motion also hides
   const clock = scene.director.clock;
   orb.reducedMotion = true;
   scene.invalidate();
+  assert.equal(scene.renderer.shadowMap.needsUpdate, true, 'a static reduced-motion frame receives fresh shadows');
   assert.equal(scene.director.clock, clock);
   assert.equal(scene.gardenFrame.phase, 'still');
   assert.equal(scene.garden.orbit.visible, false);

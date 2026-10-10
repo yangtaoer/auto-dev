@@ -39,15 +39,17 @@ test('idle is a minute-scale shuffled behavior bag with varied pace, strength an
     const episodes = gardenEpisodes(variant);
     const period = gardenDuration('idle', variant);
     assert.ok(period >= 60000 && period <= 100000);
-    assert.equal(episodes.length, 5);
-    assert.equal(new Set(episodes.map(event => event.kind)).size, 5);
+    assert.equal(episodes.length, 9);
+    assert.equal(new Set(episodes.map(event => event.kind)).size, 9);
+    assert.ok(episodes[0].start <= 1800, 'the character wakes up promptly after mount');
     assert.ok(Object.isFrozen(episodes) && episodes.every(Object.isFrozen));
     episodes.forEach((event, i) => {
       assert.ok(event.strength >= .76 && event.strength <= 1);
       assert.ok(event.end > event.start && event.end < period);
-      if (i) assert.ok(event.start - episodes[i - 1].end >= 3200);
+      assert.ok(event.end - event.start <= 9100, 'gestures are not stretched into slow motion');
+      if (i) assert.ok(event.start - episodes[i - 1].end >= 1800);
     });
-    assert.ok(period - episodes.at(-1).end >= 6800);
+    assert.ok(period - episodes.at(-1).end >= 5800);
     orders.add(episodes.map(event => event.kind).join(','));
     periods.add(Math.round(period));
     assert.deepEqual(episodes, gardenEpisodes(variant));
@@ -215,7 +217,7 @@ test('tap is a throttled live response, freezes idle itinerary and never changes
   assert.equal(director.react('tap'), true);
   assert.equal(director.react('tap'), false);
   const timeline = director.elapsed;
-  advance(director, 1500, {mode: 'idle', successToken: 'baseline'});
+  advance(director, 700, {mode: 'idle', successToken: 'baseline'});
   assert.equal(director.frame.episode, 'tap-rebound');
   assert.ok(director.frame.body.hop > .12);
   assert.equal(director.elapsed, timeline);
@@ -247,7 +249,7 @@ test('hover waits for a held leaf, while tap responds immediately without losing
   director.react('leave');
   assert.equal(director.queuedReaction.kind, 'tap');
   const oldElapsed = director.elapsed;
-  advance(director, 1100);
+  advance(director, 500);
   assert.equal(director.frame.episode, 'tap-rebound');
   assert.equal(director.reaction.overlay, true);
   assert.equal(director.mode, 'idle');
@@ -261,7 +263,7 @@ test('working accepts gestures without losing its work lights; quiet/success rej
   const director = new GardenDirector({seed: 41});
   advance(director, 5000, {mode: 'working'});
   assert.equal(director.react('tap'), true);
-  advance(director, 1500, {mode: 'working'});
+  advance(director, 700, {mode: 'working'});
   assert.equal(director.frame.episode, 'tap-rebound');
   assert.equal(director.mode, 'working');
   assert.ok(director.frame.work > .99);

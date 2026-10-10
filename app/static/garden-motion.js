@@ -28,7 +28,8 @@ function randomStream(seed) {
 
 const schedules = new Map();
 const BASE_EPISODES = Object.freeze({
-  'leaf-hat': 17500, 'leaf-peek': 7400, listen: 6200, breeze: 7800, curious: 7000,
+  'leaf-hat': 7800, 'leaf-peek': 3400, listen: 2800, breeze: 4200, curious: 3600,
+  stretch: 3000, 'double-hop': 2600, 'flower-sniff': 4300, nod: 2500,
 });
 
 function schedule(variant) {
@@ -37,20 +38,21 @@ function schedule(variant) {
   const random = randomStream(key ^ 0x4c656166);
   const kinds = Object.keys(BASE_EPISODES);
   // A shuffled bag gives the garden several different moments, never five
-  // consecutive replays of the same leaf trick. Every bag still has one hat.
+  // consecutive replays of the same leaf trick. Long variety comes from more
+  // short gestures, not stretching every action into a slow-motion clip.
   for (let i = kinds.length - 1; i > 0; i -= 1) {
     const j = Math.floor(random() * (i + 1));
     [kinds[i], kinds[j]] = [kinds[j], kinds[i]];
   }
-  let cursor = 2800 + random() * 2400;
+  let cursor = 900 + random() * 900;
   const episodes = kinds.map(kind => {
     const length = BASE_EPISODES[kind] * (.88 + random() * .28);
     const event = Object.freeze({kind, start: cursor, end: cursor + length,
       strength: .76 + random() * .24, direction: random() < .5 ? -1 : 1});
-    cursor += length + 3200 + random() * 3600;
+    cursor += length + 1800 + random() * 2200;
     return event;
   });
-  const result = Object.freeze({episodes: Object.freeze(episodes), duration: Math.max(60000, cursor + 3600 + random() * 3200)});
+  const result = Object.freeze({episodes: Object.freeze(episodes), duration: Math.max(60000, cursor + 4000 + random() * 2800)});
   // Pure sampling remains deterministic; this bounded memo only avoids
   // rebuilding an immutable itinerary on every rendered frame.
   if (schedules.size >= 32) schedules.delete(schedules.keys().next().value);
@@ -68,7 +70,7 @@ export function gardenDuration(mode = 'idle', variant = 0) {
 
 function neutral(time = 0, phase = 'rest') {
   return {
-    time, wind: .08, peek: 0, hat: 0, work: 0, crown: 0, bloom: 0, petals: 0,
+    time, wind: .16, peek: 0, hat: 0, work: 0, crown: 0, bloom: 0, petals: 0,
     body: {hop: 0, sway: 0, depth: 0, roll: 0, pitch: 0, yaw: 0, stretch: 1, gazeX: 0, gazeY: 0, wink: 1, joy: 0, squeeze: 0},
     active: false, phase, episode: 'rest',
   };
@@ -131,6 +133,37 @@ function episodeFrame(event, elapsed) {
     b.gazeY = awake * .25;
     b.pitch = -.045 * awake;
     b.joy = pulse(p, .28, .76) * .3;
+  } else if (event.kind === 'stretch') {
+    b.stretch += awake * .075 - pulse(p, .76, .94) * .035;
+    b.roll = direction * Math.sin(p * Math.PI) * awake * .13;
+    b.pitch = -.075 * awake;
+    b.gazeY = .35 * awake;
+    b.wink = 1 - .72 * pulse(p, .3, .55);
+    b.joy = pulse(p, .45, .8) * .6;
+  } else if (event.kind === 'double-hop') {
+    const first = pulse(p, .1, .47), second = pulse(p, .52, .83);
+    b.hop = (first * .18 + second * .10) * strength;
+    b.squeeze = pulse(p, .015, .17) * .65 + pulse(p, .42, .56) * .35;
+    b.stretch += -.085 * b.squeeze + (first + second) * .045;
+    b.roll = direction * Math.sin(p * TAU) * awake * .085;
+    b.joy = envelope(p, .12, .3, .72, .93) * .75;
+    b.gazeY = .2 * awake;
+  } else if (event.kind === 'flower-sniff') {
+    frame.bloom = envelope(p, .2, .42, .7, .93) * .8;
+    b.sway = .055 * awake;
+    b.roll = -.09 * awake;
+    b.yaw = .16 * awake;
+    b.pitch = -.05 * awake;
+    b.gazeX = .32 * awake;
+    b.gazeY = .22 * awake;
+    b.joy = pulse(p, .4, .76) * .6;
+    b.wink = 1 - .85 * pulse(p, .48, .62);
+  } else if (event.kind === 'nod') {
+    const nod = pulse(p, .12, .4) + pulse(p, .48, .76) * .6;
+    b.pitch = nod * .12;
+    b.gazeY = -.22 * nod;
+    b.stretch -= nod * .035;
+    b.joy = pulse(p, .36, .9) * .4;
   } else if (event.kind === 'tap-rebound') {
     b.squeeze = pulse(p, 0, .23) * .65;
     b.hop = pulse(p, .14, .55) * .19 * strength + pulse(p, .59, .88) * .045;
@@ -197,7 +230,7 @@ export function sampleGarden({mode = 'idle', elapsed = 0, variant = 0, reduced =
     const seconds = period / 1000;
     const engaged = envelope(t, .35, 2.45, seconds - 3.8, seconds - .15);
     const flavor = hash(seed) % 3;
-    const swaySpeed = [.5, .38, .61][flavor];
+    const swaySpeed = [.9, .76, 1.1][flavor];
     const strength = .82 + hash(seed ^ 81) % 19 / 100;
     frame.work = engaged;
     frame.active = engaged > .001;
@@ -205,14 +238,14 @@ export function sampleGarden({mode = 'idle', elapsed = 0, variant = 0, reduced =
     frame.phase = t < 2.45 ? 'charge' : t > seconds - 3.8 ? 'land' : frame.episode;
     frame.wind += engaged * .14;
     b.squeeze = pulse(t, .1, 1.7) * .2;
-    b.hop = engaged * (.14 + Math.sin(t * .83) * .025);
+    b.hop = engaged * (.14 + Math.sin(t * 1.55) * .045);
     b.stretch += -.035 * b.squeeze + .009 * Math.sin(t * 1.4) * engaged;
     b.sway = Math.sin(t * swaySpeed) * engaged * .05 * strength;
     b.depth = Math.sin(t * swaySpeed + .5) * engaged * .035;
-    b.yaw = Math.sin(t * .43 + flavor) * engaged * .17;
+    b.yaw = Math.sin(t * .8 + flavor) * engaged * .17;
     b.roll = -b.sway * .5;
     b.pitch = -.055 * engaged;
-    b.gazeX = Math.sin(t * .77 + flavor) * engaged * .24;
+    b.gazeX = Math.sin(t * 1.1 + flavor) * engaged * .24;
     b.gazeY = engaged * (.32 + Math.cos(t * .67) * .07);
     b.wink = 1 - .65 * pulse(t, 6.2 + flavor, 6.75 + flavor) - .45 * pulse(t, 16.1, 16.65);
   } else frame.phase = 'quiet';
@@ -220,7 +253,11 @@ export function sampleGarden({mode = 'idle', elapsed = 0, variant = 0, reduced =
   // Integer cycles meet exactly at neutral boundaries; unlike a short video,
   // breathing continues between independently timed, shuffled interactions.
   frame.time = milliseconds / 1000;
-  frame.body.stretch += Math.sin(cycle * TAU * (kind === 'idle' ? 11 : 3)) * .004;
+  frame.body.stretch += Math.sin(cycle * TAU * (kind === 'idle' ? 15 : 6)) * .009;
+  if (kind === 'idle') {
+    frame.body.sway += Math.sin(cycle * TAU * 7) * .009;
+    frame.body.roll += Math.sin(cycle * TAU * 7) * .012;
+  }
   frame.wind += (1 - Math.cos(cycle * TAU * 3)) * .02;
   return frame;
 }
@@ -242,10 +279,10 @@ function mixFrames(from, to, amount) {
  * cooldowns. Long visible-frame gaps are capped so no leaf suddenly teleports.
  */
 export class GardenDirector {
-  constructor({seed, variant = 0, blendMs = 650} = {}) {
+  constructor({seed, variant = 0, blendMs = 360} = {}) {
     this.seed = seed === undefined ? Math.floor(Math.random() * 0x100000000) : normalizedVariant(seed);
     this.initialVariant = normalizedVariant(variant);
-    this.blendMs = Math.max(1, finite(blendMs) || 650);
+    this.blendMs = Math.max(1, finite(blendMs) || 360);
     this.reset();
   }
 
@@ -316,7 +353,7 @@ export class GardenDirector {
     this.queuedReaction = null;
     this.reaction = {elapsed: 0, kind, overlay: this.mode === 'working' || this.frame.active,
       event: {kind: kind === 'tap' ? 'tap-rebound' : this.mode === 'working' ? 'listen' : 'leaf-peek',
-        start: 0, end: (kind === 'tap' ? 4300 : 6100) * (.92 + this.random() * .16),
+        start: 0, end: (kind === 'tap' ? 2100 : 3200) * (.92 + this.random() * .16),
         strength: .85 + this.random() * .15, direction: this.random() < .5 ? -1 : 1}};
     if (!this.reaction.overlay) this.transition = {from: this.frame, elapsed: 0};
   }

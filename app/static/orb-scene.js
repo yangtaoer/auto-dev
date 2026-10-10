@@ -1,7 +1,7 @@
 /* The orange character and its physically connected miniature garden. */
 import * as THREE from './vendor/three/three.module.js';
-import {AutoDevGarden} from './orb-garden.js?v=1.0-Beta.6';
-import {GardenDirector} from './garden-motion.js?v=1.0-Beta.6';
+import {AutoDevGarden} from './orb-garden.js?v=1.0-Beta.7';
+import {GardenDirector} from './garden-motion.js?v=1.0-Beta.7';
 
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 const instanceSeed = () => {
@@ -18,6 +18,7 @@ export class AutoDevOrbScene {
     this.frame = 0;
     this.last = 0;
     this.sceneLastAt = null;
+    this.shadowLastAt = null;
     this.gaze = {x: 0, y: 0};
     this.resources = new Set();
     // Each mounted component grows its own, reproducible motion sequence. It is
@@ -41,6 +42,9 @@ export class AutoDevOrbScene {
       this.renderer.toneMappingExposure = 1.06;
       this.renderer.shadowMap.enabled = true;
       this.renderer.shadowMap.type = THREE.PCFShadowMap;
+      // The silhouette and face follow every display frame. Costly shadow maps
+      // refresh independently at 30 Hz; contact shadows still move every frame.
+      this.renderer.shadowMap.autoUpdate = false;
       this.scene = new THREE.Scene();
       this.camera = new THREE.OrthographicCamera(-2, 2, 1.7, -1.7, .1, 30);
       this.camera.position.set(0, .83, 7);
@@ -228,13 +232,14 @@ export class AutoDevOrbScene {
     this.frame = 0;
     this.last = 0;
     this.sceneLastAt = null;
+    this.shadowLastAt = null;
     this.draw(performance.now());
     if (!this.paused()) this.frame = requestAnimationFrame(now => this.tick(now));
   }
   tick(now) {
     this.frame = 0;
     if (this.disposed || this.paused()) return;
-    if (!this.last || now - this.last >= 1000 / 30) { this.draw(now); this.last = now; }
+    this.draw(now);
     this.frame = requestAnimationFrame(time => this.tick(time));
   }
   mode() {
@@ -255,9 +260,9 @@ export class AutoDevOrbScene {
     this.sceneLastAt = this.paused() ? null : now;
     const frame = this.director.update(delta, {mode: this.mode(), paused: this.paused(),
       reduced: Boolean(this.orb.reducedMotion), successToken: this.orb.gardenSuccessToken || 0});
-    this.renderGardenFrame(frame, now);
+    this.renderGardenFrame(frame, now, delta);
   }
-  renderGardenFrame(frame, now = performance.now()) {
+  renderGardenFrame(frame, now = performance.now(), deltaMs = 1000 / 60) {
     this.gardenFrame = frame;
     const pose = frame.body, driver = this.orb.motionDriver;
     const intent = Math.max(frame.peek, frame.hat, frame.crown, frame.work * .7);
@@ -267,8 +272,9 @@ export class AutoDevOrbScene {
     const pointerWeight = nearby ? .64 - intent * .25 : .18 * (1 - intent * .6);
     const gazeX = clamp(pose.gazeX + this.orb.pointer.targetX * pointerWeight, -1.2, 1.2);
     const gazeY = clamp(pose.gazeY + this.orb.pointer.targetY * pointerWeight, -1.1, 1.1);
-    this.gaze.x += (gazeX - this.gaze.x) * .20;
-    this.gaze.y += (gazeY - this.gaze.y) * .20;
+    const follow = 1 - Math.exp(-Math.max(0, deltaMs) / 95);
+    this.gaze.x += (gazeX - this.gaze.x) * follow;
+    this.gaze.y += (gazeY - this.gaze.y) * follow;
     const stretch = clamp(pose.stretch, .78, 1.19), yRadius = this.radius * stretch;
     this.ball.position.set(this.origin.x + pose.sway, this.origin.y + yRadius - this.radius + pose.hop, this.origin.z + pose.depth);
     this.ball.scale.set(this.radius / Math.sqrt(stretch), yRadius, this.radius / Math.sqrt(stretch));
@@ -284,6 +290,11 @@ export class AutoDevOrbScene {
     this.root.dataset.gardenMode = this.mode();
     this.root.dataset.gardenPhase = frame.phase;
     this.root.dataset.gardenEpisode = frame.episode || frame.phase;
+    const shadowInterval = 1000 / 30;
+    this.renderer.shadowMap.needsUpdate = this.shadowLastAt === null || now - this.shadowLastAt >= shadowInterval - .5;
+    if (this.renderer.shadowMap.needsUpdate) {
+      this.shadowLastAt = now;
+    }
     this.renderer.render(this.scene, this.camera);
   }
   destroy() {

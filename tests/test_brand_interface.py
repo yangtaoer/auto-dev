@@ -69,6 +69,34 @@ class BrandInterfaceTests(unittest.TestCase):
         self.assertIn('data-film-fallback', login)
         self.assertIn('login-panel-tagline', login)
 
+    def test_every_status_email_uses_mint_theme_and_preserves_escaped_business_content(self):
+        self.run_isolated_media_check('''
+            from app.services.delivery import Mailer
+            from app.domain import TaskType
+            detail = dict(id='mint-theme-test', work_item_id=1707804, title='<script>bad()</script>',
+                          delivery_mode='local_package', project_name='APP & 项目', requester_name='测试',
+                          created_at='2026-10-10T09:00:00+08:00', policy_snapshot={}, artifacts=[],
+                          error_message='环境 <dependency> 缺失', requirement_summary='需求说明', result_summary='结果')
+            variants = [({}, {}), ({'task_type': TaskType.ANALYSIS.value}, {}),
+                        ({'status': 'waiting_input'}, {'action_required': True}),
+                        ({'status': 'waiting_approval'}, {'action_required': True}),
+                        ({'status': 'waiting_merge'}, {'action_required': True})]
+            variants.extend(({}, {'terminal_status': status}) for status in ['failed', 'cancelled', 'rejected'])
+            for extra, kwargs in variants:
+                body = Mailer().delivery_html({**detail, **extra}, **kwargs)
+                assert 'data-mail-theme="mint-editorial"' in body
+                assert 'background:#d6e9dc' in body and 'color:#082c30' in body
+                assert '#171813' not in body and '#e8e3d8' not in body
+                assert 'max-width:720px' in body and 'max-width:600px' in body
+                assert 'cid:autodev-brand-mark' in body and 'TFS #1707804' in body
+                assert '<script>bad()</script>' not in body
+                assert '&lt;script&gt;bad()&lt;/script&gt;' in body
+                assert 'APP &amp; 项目' in body
+                assert '<link' not in body and '<script' not in body
+                if kwargs.get('terminal_status') == 'failed':
+                    assert '#bf3e34' in body and '环境 &lt;dependency&gt; 缺失' in body
+        ''')
+
     def test_initial_login_response_includes_valid_media_without_waiting_for_javascript(self):
         self.run_isolated_media_check('''
             from html.parser import HTMLParser

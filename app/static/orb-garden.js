@@ -547,13 +547,15 @@ export class AutoDevGarden {
     const time = reduced ? this.lastTime : Math.max(0, Number(frame.time) || 0);
     this.lastTime = time;
     const wind = reduced ? 0 : clamp01(frame.wind);
-    const peek = smooth(frame.peek), hat = smooth(frame.hat), work = smooth(frame.work);
+    // Choreography has already eased these weights. Easing a second time made
+    // a leaf linger at its endpoints and then lurch through the middle.
+    const peek = clamp01(frame.peek), hat = clamp01(frame.hat), work = clamp01(frame.work);
     const crown = smooth(frame.crown), bloom = smooth(frame.bloom), petals = smooth(frame.petals);
     this.ball.updateWorldMatrix(true, false);
     this.ball.matrixWorld.decompose(this.worldPosition, this.worldQuaternion, this.worldScale);
     this.group.updateWorldMatrix(true, false);
-    this.peekBranch.rotation.z = -.075 * peek + Math.sin(time * .83) * .014 * wind;
-    this.peekBranch.rotation.y = Math.sin(time * .52) * .018 * wind;
+    this.peekBranch.rotation.z = -.075 * peek + Math.sin(time * 1.15) * .065 * wind;
+    this.peekBranch.rotation.y = Math.sin(time * .8) * .045 * wind;
     this.peekBranch.updateWorldMatrix(true, true);
     this.heroAnchor.getWorldPosition(this.restPosition);
     this.heroAnchor.getWorldQuaternion(this.restQuaternion);
@@ -594,8 +596,8 @@ export class AutoDevGarden {
       const opening = flower.crown ? crown * .9 : flower.open + bloom * (1 - flower.open) * .86;
       flower.petals.morphTargetInfluences[0] = 1 - opening;
       flower.pivot.scale.setScalar(flower.scale * (flower.crown ? .06 + crown * .94 : 1));
-      flower.pivot.rotation.z = flower.baseRotation.z + Math.sin(time * .84 + flower.phase) * .026 * wind;
-      flower.pivot.rotation.x = flower.baseRotation.x + Math.sin(time * .68 + i) * .021 * wind;
+      flower.pivot.rotation.z = flower.baseRotation.z + Math.sin(time * 1.1 + flower.phase) * .09 * wind;
+      flower.pivot.rotation.x = flower.baseRotation.x + Math.sin(time * .92 + i) * .075 * wind;
     });
     // The whole working assembly, including branch lights, is actually absent at
     // rest. No permanently rotating halo leaks into login or paused states.

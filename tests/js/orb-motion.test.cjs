@@ -39,6 +39,16 @@ test('all clips ease into and out of a finite, bounded 3D pose', () => {
   }
 });
 
+test('decimal randomized durations always finish at neutral despite floating-point endpoint rounding', () => {
+  const neutral = motion.sample(null, 100);
+  for (const name of Object.keys(motion.gestures)) {
+    for (let i = 0; i < 100; i++) {
+      const animation = motion.clip(name, 100, 1, i / 99);
+      assert.deepEqual(motion.sample(animation, animation.startedAt + animation.duration), neutral);
+    }
+  }
+});
+
 test('exploratory clips travel through the habitat and react to foliage', () => {
   for (const name of ['roam', 'slalom', 'leafchase', 'tumble', 'float']) {
     const clip = motion.clip(name, 100, 1, 1);
