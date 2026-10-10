@@ -44,7 +44,7 @@ window.TaskDialog = (() => {
     rememberScroll();
     requestId = id;
     const selected = tabs.get(id) || 'overview';
-    const icons = {overview:'clipboard',requirement:'layers',development:'code',delivery:'cube',acceptance:'check'};
+    const icons = {overview:'clipboard',requirement:'layers',development:'code',delivery:'cube',acceptance:'check',followup:'message'};
     const nav = panels.map(([key, label], index) => `<button type="button" id="task-tab-${key}" role="tab" data-task-tab="${key}" aria-controls="task-panel-${key}" aria-selected="${key === selected}" tabindex="${key === selected ? 0 : -1}"><small>${String(index + 1).padStart(2, '0')}</small>${editorialIcon(icons[key])}${label}</button>`).join('');
     return `${head}<nav class="task-tabs" role="tablist" aria-label="任务流程">${nav}</nav><div class="task-tab-body">${panels.map(([key, , content]) => `<section class="task-tab-panel" id="task-panel-${key}" role="tabpanel" data-panel="${key}" aria-labelledby="task-tab-${key}" tabindex="0" ${key === selected ? '' : 'hidden'}>${content}</section>`).join('')}</div>`;
   }

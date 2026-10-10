@@ -161,11 +161,18 @@ def matching_project_terms(text: str, catalog: list[dict], *, min_length: int = 
                 terms.setdefault(token, []).append((key, term, token == _normalized_name(str(project.get("name") or ""))))
     for bracket in re.findall(r"【([^】]+)】", normalized):
         for token in re.split(r"[+＋、,，/&＆]", bracket):
-            if token and token not in terms and any(term in token for term in terms):
+            regional_app = token.endswith("app") and any(
+                term.endswith("app") and token.endswith(term) for term in terms
+            )
+            if token and token not in terms and not regional_app and any(term in token for term in terms):
                 raise RuntimeError(f"项目标识【{token}】未完整匹配已配置的项目名称或别名，请确认项目简称后重新发起")
     occurrences = []
     for token, owners in terms.items():
         for match in re.finditer(re.escape(token), normalized):
+            # A regional APP name belongs to the shared APP product, not its PC
+            # counterpart. This also handles unknown regional prefixes and spaces.
+            if not token.endswith("app") and normalized[match.end():].startswith("app"):
+                continue
             occurrences.append((match.start(), match.end(), owners))
     occurrences.sort(key=lambda value: (-(value[1] - value[0]), value[0]))
     accepted: list[tuple[int, int]] = []
@@ -261,14 +268,21 @@ def resolve_projects_for_work_item(
                 and str(candidate.get("tfs_collection_url", "")).rstrip("/") == collection
                 and (not prefix or area == prefix or area.startswith(prefix + "\\"))):
                 eligible_catalog.append(candidate)
-        matched_title_keywords = matching_project_terms(title_value, eligible_catalog).get(str(project.get("project_key") or ""), [])
+        # Explicit bracket identifiers define the scope. Region names in the title
+        # or description are deployment targets, not extra joint repositories.
+        bracket_title = "".join(f"【{value}】" for value in bracket_values)
+        bracket_scope = matching_project_terms(bracket_title, eligible_catalog) if bracket_values else {}
+        # Labels such as 【测试】 are not project identifiers; preserve title/body
+        # routing for those while treating recognized project brackets as scope.
+        routing_title = bracket_title if bracket_scope else title_value
+        matched_title_keywords = matching_project_terms(routing_title, eligible_catalog).get(str(project.get("project_key") or ""), [])
         requirement_body = " ".join(
             (
                 _plain_requirement_text(item.get("description")),
                 _plain_requirement_text(item.get("acceptance_criteria")),
             )
         ).casefold()
-        matched_content_keywords = matching_project_terms(requirement_body, eligible_catalog, min_length=4).get(str(project.get("project_key") or ""), [])
+        matched_content_keywords = [] if bracket_scope else matching_project_terms(requirement_body, eligible_catalog, min_length=4).get(str(project.get("project_key") or ""), [])
         if not standard_name and not keywords:
             area_fallbacks.append(
                 {

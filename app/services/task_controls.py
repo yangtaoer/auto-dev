@@ -19,6 +19,8 @@ def queue(request_id: str, action: str, actor: dict) -> dict:
         source = conn.execute('SELECT * FROM delivery_requests WHERE id=?', (request_id,)).fetchone()
         if not source:
             raise LookupError('任务不存在')
+        if source['routing_superseded_by']:
+            raise RuntimeError('该记录为已更正的误识别历史，请打开原 APP 需求操作')
         if actor['role'] != 'admin' and actor['id'] != source['requester_id']:
             raise PermissionError('只有管理员或任务发起人可以操作')
         prior = conn.execute("SELECT * FROM request_controls WHERE request_id=? AND action=? ORDER BY created_at DESC LIMIT 1", (request_id, action)).fetchone()

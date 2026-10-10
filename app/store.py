@@ -24,6 +24,13 @@ logger = logging.getLogger("autodev.remote_store")
 
 
 class LocalStore:
+    def claim_followup(self):
+        from .services import request_followups
+        return request_followups.claim(settings.runner_id)
+
+    def followup_update(self, item, **fields):
+        from .services import request_followups
+        return request_followups.update(item['id'], settings.runner_id, item['claim_token'], **fields)
     remote = False
 
     model_config = staticmethod(model_settings.for_request)
@@ -129,6 +136,14 @@ class LocalStore:
 
 class RemoteStore:
     """Cloud control-plane adapter used by the outbound-only Windows runner."""
+
+    def claim_followup(self):
+        return self._json(self._request('POST', '/api/runner/followups/claim', json={'runner_id': self.runner_id})).get('item')
+
+    def followup_update(self, item, **fields):
+        return self._json(self._request('PATCH', f"/api/runner/followups/{item['id']}", json={
+            'runner_id': self.runner_id, 'claim_token': item['claim_token'], **fields,
+        }))['item']
 
     def claim_control(self, active_ids):
         return self._json(self._request('POST', '/api/runner/controls/claim', json={'runner_id': self.runner_id, 'active_ids': active_ids})).get('control')

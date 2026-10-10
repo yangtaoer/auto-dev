@@ -9,6 +9,7 @@ import subprocess
 import threading
 import zipfile
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -131,6 +132,8 @@ class Worker:
             if intake:
                 routed = True
                 self._route_intake(intake)
+        if self._process_followup():
+            return True
         queued = self.store.next_queued()
         if queued:
             logger.info("开始执行研发任务 request_id=%s", queued)
@@ -150,6 +153,56 @@ class Worker:
                 self._set_active(waiting, False)
             return True
         return routed or controlled
+
+    def _process_followup(self) -> bool:
+        claim = getattr(self.store, 'claim_followup', None)
+        item = claim() if callable(claim) else None
+        if not isinstance(item, dict):
+            return False
+        request_id = item['request_id']
+        self._set_active(request_id, True)
+        heartbeat_done = threading.Event()
+        progress, thread_id = '正在核对交付代码与历史记录', ''
+        deadline = time.monotonic() + 1200
+        def cancelled():
+            return self.stop_event.is_set() or time.monotonic() > deadline
+        def heartbeat():
+            while not heartbeat_done.wait(25):
+                try:
+                    self.store.followup_update(item, progress=progress, thread_id=thread_id)
+                except Exception:
+                    logger.warning('追问心跳失败 followup_id=%s', item['id'])
+        heartbeat_thread = threading.Thread(target=heartbeat, name='autodev-followup-heartbeat', daemon=True)
+        heartbeat_thread.start()
+        try:
+            detail = self.store.detail(request_id)
+            if not detail or detail['status'] != 'delivered':
+                raise RuntimeError('原任务已不处于交付状态，追问已停止')
+            cwd = settings.data_dir / 'followups' / item['id']
+            cwd.mkdir(parents=True, exist_ok=True)
+            def on_event(event_type, message):
+                nonlocal progress, thread_id
+                if event_type == 'followup.thread':
+                    thread_id = message
+                elif event_type == 'devcore.event':
+                    progress = str(message)[:500]
+            result = CodexRunner().answer_followup(cwd=cwd, detail=detail, question=item['question'],
+                history=item.get('history') or [], model_config=item['model_config'], on_event=on_event,
+                is_cancelled=cancelled)
+            heartbeat_done.set()
+            heartbeat_thread.join(timeout=1)
+            self.store.followup_update(item, status='completed', answer=result.result['answer'], thread_id=result.thread_id)
+        except Exception as exc:
+            heartbeat_done.set()
+            heartbeat_thread.join(timeout=1)
+            try:
+                self.store.followup_update(item, status='failed', error_message=CodexRunner._failure_message({'message': str(exc)}))
+            except Exception:
+                logger.exception('追问结果上报失败 followup_id=%s', item['id'])
+        finally:
+            heartbeat_done.set()
+            self._set_active(request_id, False)
+        return True
 
     def _route_intake(self, intake: dict) -> None:
         try:

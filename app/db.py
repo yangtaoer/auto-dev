@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
     joint_group_id TEXT,
     joint_project_index INTEGER NOT NULL DEFAULT 0,
     joint_project_count INTEGER NOT NULL DEFAULT 1,
+    routing_superseded_by TEXT,
     task_type TEXT NOT NULL DEFAULT 'development',
     analysis_result TEXT NOT NULL DEFAULT '{}',
     history_context TEXT NOT NULL DEFAULT '[]',
@@ -325,6 +326,29 @@ CREATE TABLE IF NOT EXISTS run_model_configs (
     request_id TEXT PRIMARY KEY REFERENCES delivery_requests(id) ON DELETE CASCADE,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS request_followups (
+    id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL REFERENCES delivery_requests(id) ON DELETE CASCADE,
+    actor_id INTEGER NOT NULL REFERENCES users(id),
+    runner_id TEXT NOT NULL,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','running','completed','failed')),
+    progress TEXT NOT NULL DEFAULT '',
+    error_message TEXT NOT NULL DEFAULT '',
+    idempotency_key TEXT NOT NULL,
+    model_config TEXT NOT NULL,
+    thread_id TEXT NOT NULL DEFAULT '',
+    claim_token TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL,
+    UNIQUE(request_id,actor_id,idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS ix_followups_request ON request_followups(request_id,created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_followups_active ON request_followups(request_id)
+    WHERE status IN ('queued','running');
 CREATE TABLE IF NOT EXISTS release_batches (
     id TEXT PRIMARY KEY, scope TEXT NOT NULL, project_id INTEGER NOT NULL,
     owner_id TEXT NOT NULL REFERENCES delivery_requests(id),
@@ -349,6 +373,7 @@ def init_db() -> None:
     with transaction() as conn:
         conn.executescript(SCHEMA)
         _migrate_schema(conn)
+        conn.execute("CREATE VIEW IF NOT EXISTS visible_delivery_requests AS SELECT * FROM delivery_requests WHERE routing_superseded_by IS NULL")
         _seed_user(conn, "admin", "系统管理员", "admin@example.com", "admin", settings.bootstrap_admin_password)
         if settings.seed_demo:
             _seed_user(conn, "pm", "项目经理", "pm@example.com", "pm", settings.bootstrap_pm_password)
@@ -371,6 +396,8 @@ def init_db() -> None:
                     '["**/common/**","**/shared/**","**/production/**"]', "", "yangtao-pc", now, now,
                 ),
             )
+    from .services.routing_corrections import repair_app_groups
+    repair_app_groups()
     # Import historic deliveries as candidate dossiers only, after the migration transaction.
     from .services.project_learning import backfill_experiences
     backfill_experiences()
@@ -378,6 +405,9 @@ def init_db() -> None:
 
 def _migrate_schema(conn: sqlite3.Connection) -> None:
     """Apply additive migrations so an existing local database remains usable."""
+    request_columns = {item["name"] for item in conn.execute("PRAGMA table_info(delivery_requests)")}
+    if "routing_superseded_by" not in request_columns:
+        conn.execute("ALTER TABLE delivery_requests ADD COLUMN routing_superseded_by TEXT")
     project_columns = {item["name"] for item in conn.execute("PRAGMA table_info(projects)")}
     if "runner_id" not in project_columns:
         conn.execute("ALTER TABLE projects ADD COLUMN runner_id TEXT NOT NULL DEFAULT 'yangtao-pc'")

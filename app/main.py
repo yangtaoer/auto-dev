@@ -62,7 +62,7 @@ from .security import hash_password, verify_password
 from .services.delivery import ArtifactService, Mailer
 from .services.blocker_summary import summarize_blocker
 from .services.tfs import TfsClient, recoverable_preflight_failure
-from .services import project_learning, model_settings, release_coordination, task_controls
+from .services import project_learning, model_settings, release_coordination, task_controls, request_followups
 
 
 @asynccontextmanager
@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.5",
+    version="1.0-Beta.6",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -181,6 +181,21 @@ class SupplementInput(BaseModel):
 
 class ContinueRequestInput(BaseModel):
     prompt: str = Field(default="", max_length=6000)
+
+
+class FollowupInput(BaseModel):
+    question: str = Field(min_length=1, max_length=6000)
+    idempotency_key: str = Field(min_length=8, max_length=120)
+
+
+class FollowupResultInput(BaseModel):
+    runner_id: str = Field(min_length=2, max_length=80)
+    claim_token: str = Field(min_length=8, max_length=100)
+    status: Literal["running", "completed", "failed"] = "running"
+    answer: str = Field(default="", max_length=100000)
+    progress: str = Field(default="", max_length=1000)
+    error_message: str = Field(default="", max_length=3000)
+    thread_id: str = Field(default="", max_length=100)
 
 
 class AcceptancePreviewInput(BaseModel):
@@ -846,21 +861,21 @@ def me(user: Annotated[dict, Depends(current_user)]) -> dict:
 def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     scope = "" if user["role"] == "admin" else "WHERE requester_id=?"
     params = () if user["role"] == "admin" else (user["id"],)
-    counts = rows(f"SELECT status,COUNT(*) count FROM delivery_requests {scope} GROUP BY status", params)
+    counts = rows(f"SELECT status,COUNT(*) count FROM visible_delivery_requests {scope} GROUP BY status", params)
     active_sql = "status NOT IN ('delivered','failed','rejected','cancelled','waiting_input')"
     active_scope = active_sql if not scope else f"requester_id=? AND {active_sql}"
     activity_select = """(SELECT e.message FROM delivery_events e
         WHERE e.request_id=r.id ORDER BY e.id DESC LIMIT 1) current_activity"""
     active_requests = rows(
         f"""SELECT r.*,p.name project_name,p.tfs_collection_url,u.display_name requester_name,{activity_select}
-            FROM delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id
+            FROM visible_delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id
             WHERE {active_scope} ORDER BY r.updated_at DESC LIMIT 12""",
         params,
     )
     recent_scope = "" if not scope else "WHERE r.requester_id=?"
     recent_requests = rows(
         f"""SELECT r.*,p.name project_name,p.tfs_collection_url,u.display_name requester_name,{activity_select}
-            FROM delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id
+            FROM visible_delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id
             {recent_scope} ORDER BY r.created_at DESC LIMIT 40""",
         params,
     )
@@ -1013,7 +1028,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
             SUM(CASE WHEN status NOT IN ('delivered','failed','rejected','cancelled','waiting_input') THEN 1 ELSE 0 END) running,
             SUM(CASE WHEN status='waiting_input' THEN 1 ELSE 0 END) waiting_input,
             SUM(CASE WHEN status='waiting_merge' THEN 1 ELSE 0 END) waiting_merge
-            FROM delivery_requests {stats_scope} {today_join} created_at IS NOT NULL""",
+            FROM visible_delivery_requests {stats_scope} {today_join} created_at IS NOT NULL""",
         (today_start, *stats_params),
     ) or {}
     intake_summary = row(
@@ -1034,11 +1049,11 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     intake_failed_total = int(failed_intake_summary.get("total") or 0)
     intake_failed_today = int(failed_intake_summary.get("today_total") or 0)
     queued_requests = row(
-        "SELECT COUNT(*) count FROM delivery_requests WHERE status='queued'",
+        "SELECT COUNT(*) count FROM visible_delivery_requests WHERE status='queued'",
     ) or {"count": 0}
     busy_statuses = "'validating','developing','submitting','building','releasing','capturing','delivering'"
     busy_requests = row(
-        f"SELECT COUNT(*) count FROM delivery_requests WHERE status IN ({busy_statuses})",
+        f"SELECT COUNT(*) count FROM visible_delivery_requests WHERE status IN ({busy_statuses})",
     ) or {"count": 0}
     intake_capacity = row(
         """SELECT
@@ -1063,7 +1078,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     offline_queued_total = sum(
         1
         for item in rows(
-            f"SELECT runner_id FROM delivery_requests WHERE status='queued' {queued_scope}",
+            f"SELECT runner_id FROM visible_delivery_requests WHERE status='queued' {queued_scope}",
             queued_params,
         )
         if not runner_is_online(str(item["runner_id"]))
@@ -1153,7 +1168,7 @@ def delivery_records(
         conditions.append("r.created_at<?")
         params.append(day_boundary(date_to, following_day=True))
     where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
-    from_clause = "FROM delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id"
+    from_clause = "FROM visible_delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id"
     total_row = row(f"SELECT COUNT(*) count {from_clause} {where_clause}", tuple(params)) or {"count": 0}
     total = int(total_row.get("count") or 0)
     total_pages = max(1, (total + page_size - 1) // page_size)
@@ -1231,7 +1246,7 @@ def admin_analytics(_: Annotated[dict, Depends(admin_user)]) -> dict:
                   SUM(CASE WHEN status NOT IN ('delivered','failed','rejected','cancelled') THEN 1 ELSE 0 END) active,
                   AVG(CASE WHEN completed_at IS NOT NULL
                       THEN (julianday(completed_at)-julianday(COALESCE(started_at,created_at)))*86400 END) avg_duration_seconds
-           FROM delivery_requests"""
+           FROM visible_delivery_requests"""
     ) or {}
     total = int(overview.get("total") or 0)
     delivered = int(overview.get("delivered") or 0)
@@ -1241,10 +1256,10 @@ def admin_analytics(_: Annotated[dict, Depends(admin_user)]) -> dict:
     overview["avg_duration_seconds"] = int(overview.get("avg_duration_seconds") or 0)
 
     status_distribution = rows(
-        "SELECT status name,COUNT(*) value FROM delivery_requests GROUP BY status ORDER BY value DESC"
+        "SELECT status name,COUNT(*) value FROM visible_delivery_requests GROUP BY status ORDER BY value DESC"
     )
     mode_distribution = rows(
-        "SELECT delivery_mode name,COUNT(*) value FROM delivery_requests GROUP BY delivery_mode ORDER BY value DESC"
+        "SELECT delivery_mode name,COUNT(*) value FROM visible_delivery_requests GROUP BY delivery_mode ORDER BY value DESC"
     )
     project_distribution = rows(
         """SELECT p.name,p.project_key,COUNT(*) total,
@@ -1252,7 +1267,7 @@ def admin_analytics(_: Annotated[dict, Depends(admin_user)]) -> dict:
                   SUM(CASE WHEN r.status IN ('failed','rejected') THEN 1 ELSE 0 END) failed,
                   AVG(CASE WHEN r.completed_at IS NOT NULL
                       THEN (julianday(r.completed_at)-julianday(COALESCE(r.started_at,r.created_at)))*86400 END) avg_duration_seconds
-           FROM delivery_requests r JOIN projects p ON p.id=r.project_id
+           FROM visible_delivery_requests r JOIN projects p ON p.id=r.project_id
            GROUP BY p.id,p.name,p.project_key ORDER BY total DESC,p.name LIMIT 20"""
     )
     for item in project_distribution:
@@ -1263,14 +1278,14 @@ def admin_analytics(_: Annotated[dict, Depends(admin_user)]) -> dict:
     requester_distribution = rows(
         """SELECT u.display_name name,COUNT(*) value,
                   SUM(CASE WHEN r.status='delivered' THEN 1 ELSE 0 END) delivered
-           FROM delivery_requests r JOIN users u ON u.id=r.requester_id
+           FROM visible_delivery_requests r JOIN users u ON u.id=r.requester_id
            GROUP BY u.id,u.display_name ORDER BY value DESC LIMIT 10"""
     )
     daily_rows = rows(
         """SELECT date(created_at,'+8 hours') day,COUNT(*) created,
                   SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END) delivered,
                   SUM(CASE WHEN status IN ('failed','rejected') THEN 1 ELSE 0 END) failed
-           FROM delivery_requests
+           FROM visible_delivery_requests
            WHERE datetime(created_at)>=datetime('now','-13 days')
            GROUP BY date(created_at,'+8 hours') ORDER BY day"""
     )
@@ -1601,10 +1616,13 @@ def get_request_intake(intake_id: str, user: Annotated[dict, Depends(current_use
 
 @app.get("/api/requests/{request_id}")
 def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
+    original = can_access_request(user, request_id, allow_acceptance_owner=True)
+    request_id = original.get("routing_superseded_by") or request_id
     detail = public_request_payload(add_runner_display_state(
         can_access_request(user, request_id, allow_acceptance_owner=True)
     ))
     detail.update(acceptance_permissions(detail, user))
+    detail["can_followup"] = detail["status"] == RunStatus.DELIVERED.value
     display_status = detail.get("display_status") or detail["status"]
     detail["status_label"] = (
         "等待执行器上线"
@@ -1628,6 +1646,30 @@ def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -
         }:
             detail["status_label"] = "本项目已完成，等待联合项目"
     return {"request": detail}
+
+
+@app.get("/api/requests/{request_id}/followups")
+def get_followups(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
+    detail = can_access_request(user, request_id, allow_acceptance_owner=True)
+    return {"items": request_followups.list_for_request(request_id),
+            "can_submit": detail["status"] == RunStatus.DELIVERED.value,
+            "runner_online": runner_is_online(str(detail["runner_id"]))}
+
+
+@app.post("/api/requests/{request_id}/followups")
+def submit_followup(request_id: str, payload: FollowupInput, user: Annotated[dict, Depends(current_user)]) -> dict:
+    can_access_request(user, request_id, allow_acceptance_owner=True)
+    return {"item": learning_call(request_followups.queue, request_id, payload.question, user, payload.idempotency_key)}
+
+
+@app.post("/api/runner/followups/claim", dependencies=[Depends(runner_auth)])
+def claim_followup(payload: RunnerIdentity) -> dict:
+    return {"item": request_followups.claim(payload.runner_id)}
+
+
+@app.patch("/api/runner/followups/{followup_id}", dependencies=[Depends(runner_auth)])
+def update_followup(followup_id: str, payload: FollowupResultInput) -> dict:
+    return {"item": learning_call(request_followups.update, followup_id, **payload.model_dump())}
 
 
 @app.get("/api/requests/{request_id}/acceptance")

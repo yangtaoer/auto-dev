@@ -141,6 +141,16 @@ test('refreshing filter choices does not discard unapplied project and date draf
   assert.deepEqual(applied,selectors.map((_,index)=>`draft-${index}`));
 });
 
+test('task background refresh restores follow-up composer focus and selection', async () => {
+  const ui=detailHarness();let focused=false;
+  const original={id:'followup-question',value:'仍在输入',selectionStart:1,selectionEnd:3,scrollTop:9};
+  const replacement={value:'仍在输入',focus(){focused=true;},setSelectionRange(start,end){this.range=[start,end];}};
+  const drawer={scrollTop:0,querySelectorAll:()=>[],querySelector:key=>key==='#followup-question'?replacement:null};
+  ui.context.document={activeElement:original,querySelector:key=>key==='#detail-drawer'?drawer:null};
+  const refresh=ui.context.refreshDetail('first',true);ui.requests[0].resolve({request:{id:'first'}});await refresh;
+  assert.equal(focused,true);assert.deepEqual(replacement.range,[1,3]);assert.equal(replacement.scrollTop,9);
+});
+
 test('read requests time out, release timers and expose a useful retry message', async () => {
   let expire, cleared=0;
   const context=vm.createContext({AbortController,location:{},setTimeout:fn=>{expire=fn;return 42;},clearTimeout:()=>cleared++,fetch:(_,options)=>new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new Error('aborted'))))});

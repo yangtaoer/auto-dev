@@ -20,6 +20,7 @@
   <link rel="stylesheet" href="/static/orb-polish.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/task-form-ui.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/ui-refinements.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/followup-ui.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/loading-ui.css?v={{ app_version }}">
 </head>
 <body class="mint-ui mint-workspace" data-view="dashboard">
@@ -50,7 +51,6 @@
       </div>
       <div class="sidebar-foot">
         <span class="sidebar-edition">AUTONOMOUS<br>SOFTWARE DEVELOPMENT<br>AND DELIVERY PLATFORM</span>
-        <span class="version-chip">V{{ app_version }}</span>
       </div>
     </aside>
 
@@ -58,6 +58,7 @@
       <header class="topbar">
         <span class="workspace-name">AUTONOMOUS SOFTWARE DEVELOPMENT AND DELIVERY PLATFORM</span>
         <div class="top-actions">
+          <span class="platform-version" title="当前平台版本">V{{ app_version }}</span>
           <div class="project-guide" id="project-guide" tabindex="0" aria-label="悬浮查看支持项目和别名">
             <div class="project-guide-trigger"><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#cube"></use></svg><span>支持项目</span><b id="project-guide-count">—</b></div>
             <section class="project-guide-panel" id="project-guide-panel">
@@ -292,6 +293,9 @@
   <script src="/static/task-dialog.js?v={{ app_version }}"></script>
   <script src="/static/task-actions.js?v={{ app_version }}"></script>
   <script src="/static/loading-ui.js?v={{ app_version }}"></script>
+  <script src="/static/vendor/markdown/marked.umd.js?v={{ app_version }}"></script>
+  <script src="/static/vendor/markdown/purify.min.js?v={{ app_version }}"></script>
+  <script src="/static/followup-ui.js?v={{ app_version }}"></script>
   <script src="/static/app.js?v={{ app_version }}"></script>
   <script src="/static/learning-ui.js?v={{ app_version }}"></script>
   {% if user.role == 'admin' %}<script src="/static/model-settings.js?v={{ app_version }}"></script>{% endif %}
