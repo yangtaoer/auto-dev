@@ -1,5 +1,7 @@
 <!doctype html>
-<html lang="zh-CN">
+{% set appearance = appearance|default({'theme_id':'mint-garden','font_size':'normal','density':'compact','motion':'full'}) %}
+{% set appearance_theme = appearance_theme|default({'id':'mint-garden','mode':'light','name':'薄荷花园','scene':'garden'}) %}
+<html lang="zh-CN" data-theme="{{ appearance.theme_id }}" data-theme-mode="{{ appearance_theme.mode|default('light') }}" data-font-size="{{ appearance.font_size }}" data-density="{{ appearance.density }}" data-motion="{{ appearance.motion }}" style="{{ appearance_style|default('') }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -15,6 +17,7 @@
   <link rel="stylesheet" href="/static/orb-polish.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/ui-refinements.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/login-polish.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/themes.css?v={{ app_version }}">
 </head>
 <body class="login-body mint-ui">
   {% set login_media = login_media | default({}) %}
@@ -107,6 +110,9 @@
       } finally { clearTimeout(timer); }
     });
   </script>
+  <button class="appearance-trigger login-appearance-trigger" id="open-appearance" type="button" aria-label="选择登录页主题"><span aria-hidden="true">◐</span><span id="appearance-current-name">{{ appearance_theme.name|default('薄荷花园') }}</span></button>
+  <script>window.__APPEARANCE__={{ appearance|tojson }};window.__THEME__={{ appearance_theme|default({})|tojson }};</script>
+  <script type="module" src="/static/appearance-ui.js?v={{ app_version }}"></script>
   <script type="module" src="/static/orb-scene.js?v={{ app_version }}"></script>
   <script src="/static/brand-media.js?v={{ app_version }}"></script>
 </body>

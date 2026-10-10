@@ -255,6 +255,7 @@ function updateRunCard(card,r){
   if(intake){card.dataset.intakeId=r.intake_id||r.id;card.dataset.workItemId=r.work_item_id}else{card.dataset.id=r.id}
   card.querySelector('.work-id').innerHTML=tfsLink(r,`#${r.work_item_id}`)+jointBadge(r);
   const status=card.querySelector('.status-tag'),statusText=taskStatus(r,visualStatus);
+  status.dataset.status=visualStatus;
   if(status.textContent!==statusText){status.textContent=statusText;status.classList.remove('status-updated');void status.offsetWidth;status.classList.add('status-updated')}
   const title=card.querySelector('.run-title');title.textContent=r.title||'正在读取需求…';title.title=title.textContent;
   const project=card.querySelector('.project');project.textContent=r.project_name||'项目识别中';project.title=`${project.textContent} · ${r.requester_name||''}`;

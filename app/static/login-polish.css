@@ -6,7 +6,7 @@
 }
 .mint-ui.login-body, .mint-ui.login-body * { font-family: var(--ui-font) !important; }
 .mint-ui .login-film video { opacity: 1; transition: none; }
-.mint-ui .login-panel, .mint-ui .login-shell.is-authenticating .login-panel { background: #fffef9 !important; opacity: 1 !important; }
+.mint-ui .login-panel, .mint-ui .login-shell.is-authenticating .login-panel { background: var(--skin-surface,#fffef9) !important; opacity: 1 !important; }
 .mint-ui .login-panel-logo strong { letter-spacing: -.045em; }
 .mint-ui .login-panel-tagline { letter-spacing: -.025em; font-weight: 500; }
 .mint-ui .login-panel .btn-large { font-weight: 600; }

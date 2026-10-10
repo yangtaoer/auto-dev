@@ -186,7 +186,8 @@
       this.lastGesture = '';
       this.motionClip = null;
       this.reduceMotionQuery = global.matchMedia('(prefers-reduced-motion: reduce)');
-      this.reducedMotion = this.reduceMotionQuery.matches;
+      this.appearanceMotion = document.documentElement?.dataset?.motion || 'full';
+      this.reducedMotion = this.reduceMotionQuery.matches || this.appearanceMotion === 'static';
 
       this._onPointerMove = this._onPointerMove.bind(this);
       this._onPointerLeave = this._onPointerLeave.bind(this);
@@ -581,7 +582,7 @@
     }
 
     _onMotionChange(event) {
-      this.reducedMotion = event.matches;
+      this.reducedMotion = event.matches || this.appearanceMotion === 'static';
       if (this.fallbackCharacter) this.fallbackCharacter.setPaused(this.manualPaused || this.reducedMotion || document.hidden || !this.visible);
       this.motionClip = null;
       this._scheduleAmbient();
@@ -783,6 +784,11 @@
       this._scheduleAmbient();
       this._schedule(this.manualPaused);
       this.scene?.invalidate();
+    }
+
+    setAppearanceMotion(motion) {
+      this.appearanceMotion = ['full','reduced','static'].includes(motion) ? motion : 'full';
+      this._onMotionChange({matches:this.reduceMotionQuery.matches});
     }
 
     setRunning(running) {

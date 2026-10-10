@@ -322,6 +322,14 @@ SCHEMA += """
 CREATE TABLE IF NOT EXISTS platform_settings (
     key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS user_ui_preferences (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    theme_id TEXT NOT NULL DEFAULT 'mint-garden',
+    font_size TEXT NOT NULL DEFAULT 'normal' CHECK(font_size IN ('normal','large')),
+    density TEXT NOT NULL DEFAULT 'compact' CHECK(density IN ('compact','comfortable')),
+    motion TEXT NOT NULL DEFAULT 'full' CHECK(motion IN ('full','reduced','static')),
+    updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS run_model_configs (
     request_id TEXT PRIMARY KEY REFERENCES delivery_requests(id) ON DELETE CASCADE,
     value TEXT NOT NULL

@@ -63,13 +63,13 @@ function aimed(position, direction, scale = 1, roll = 0) {
 
 /* A closed, tapered shell. Top/back colours, curled edges and a real thin rim
  * remain visible when a leaf turns over; there is no billboard transparency. */
-function shell({petal = false, blush = false} = {}) {
+function shell({petal = false, blush = false, ginkgo = false, palette} = {}) {
   const rows = petal ? 14 : 18, columns = 8;
   const positions = [], colors = [], indices = [];
-  const top = tint(petal ? (blush ? 0xf7d8bc : 0xf6efda) : 0x668f69);
-  const tip = tint(petal ? 0xfff8e9 : 0x91ad82);
-  const back = tint(petal ? (blush ? 0xe5c2a1 : 0xe5dfc1) : 0x91ab86);
-  const base = tint(petal ? 0xdcca94 : 0x507953);
+  const top = tint(palette || (petal ? (blush ? 0xf7d8bc : 0xf6efda) : 0x668f69));
+  const tip = palette ? top.clone().lerp(tint(0xfff7c9), .22) : tint(petal ? 0xfff8e9 : 0x91ad82);
+  const back = palette ? top.clone().lerp(tint(0xc6c4a3), .23) : tint(petal ? (blush ? 0xe5c2a1 : 0xe5dfc1) : 0x91ab86);
+  const base = palette ? top.clone().multiplyScalar(.78) : tint(petal ? 0xdcca94 : 0x507953);
   const colour = new THREE.Color();
   for (let side = 0; side < 2; side++) {
     for (let row = 0; row <= rows; row++) {
@@ -77,7 +77,7 @@ function shell({petal = false, blush = false} = {}) {
       for (let column = 0; column <= columns; column++) {
         const across = column / columns * 2 - 1;
         const breadth = Math.pow(Math.sin(Math.PI * t), petal ? .53 : .77);
-        const width = (petal ? .44 : .31) * breadth + .0015;
+        const width = ginkgo ? .56 * Math.sin(t * Math.PI / 2) + .0015 : (petal ? .44 : .31) * breadth + .0015;
         const x = across * width;
         const midrib = Math.sin(Math.PI * t) * (petal ? .12 : .145);
         const cup = Math.sin(Math.PI * t) * (petal ? across * across * .22 :
@@ -85,7 +85,8 @@ function shell({petal = false, blush = false} = {}) {
         const curl = petal ? Math.pow(t, 3) * .19 : -.095 * Math.pow(t, 3);
         const twist = petal ? across * t * .028 : across * t * .045;
         const thickness = (petal ? .025 : .017) * (.4 + .6 * Math.sin(Math.PI * t));
-        positions.push(x, t, midrib + cup + curl + twist + (side ? -thickness : thickness));
+        const height = ginkgo ? t * (.82 + .18 * Math.sqrt(1 - across * across)) - .11 * Math.exp(-across * across * 85) * Math.pow(t, 8) : t;
+        positions.push(x, height, midrib + cup + curl + twist + (side ? -thickness : thickness));
         colour.copy(side ? back : top).lerp(tip, t * .34);
         colour.lerp(base, Math.pow(1 - t, 3) * .38);
         // Subtle lamina variations catch light without a noisy painted texture.
@@ -137,8 +138,16 @@ function tube(points, radius, segments = 20, sides = 6, taper = .7) {
   return {geometry, curve};
 }
 
-function leafGeometry() {
-  const body = shell(), parts = [{geometry: body}];
+function leafGeometry(options = {}) {
+  const body = shell(options), parts = [{geometry: body}];
+  if(options.ginkgo){
+    for(let i=-3;i<=3;i++){
+      const x=i/3*.50,y=.86+(1-Math.abs(i)/3)*.06;
+      const vein=tube([[0,.06,.045],[x*.45,.47,.18],[x,y,.09]],.005,12,4,.65).geometry;
+      parts.push({geometry:vein,color:tint(0xf9dc88)});
+    }
+    const geometry=combine(parts);parts.forEach(part=>part.geometry.dispose());return geometry;
+  }
   const veinColour = tint(0xbbcd9f);
   const mid = tube([[0, 0, .022], [0, .24, .118], [0, .53, .149], [0, .78, .069], [0, 1, -.073]], .009, 20, 5, .75).geometry;
   parts.push({geometry: mid, color: veinColour});
@@ -179,6 +188,30 @@ function flowerShell(petal) {
   return open;
 }
 
+function bellFlower(palette) {
+  // A closed ceramic-soft bell: five subtly scalloped lobes, a thin opaque rim,
+  // and an inner cup. Unlike a textured card it remains convincing from below.
+  const points=[[.012,-.08],[.085,-.01],[.13,.08],[.23,.19],[.29,.31],[.285,.35],
+    [.263,.345],[.26,.31],[.20,.19],[.105,.08],[.065,0],[.012,-.06]].map(([x,y])=>new THREE.Vector2(x,y));
+  const geometry=new THREE.LatheGeometry(points,48),position=geometry.getAttribute('position'),colours=[];
+  const colour=tint(palette||0xfff3dc);
+  for(let i=0;i<position.count;i++){
+    const x=position.getX(i),y=position.getY(i),z=position.getZ(i),angle=Math.atan2(x,z);
+    const lobe=Math.max(0,(y-.20)/.15),flare=1+Math.cos(angle*5)*.035*lobe;
+    position.setXYZ(i,x*flare,y+Math.cos(angle*5)*.018*lobe,z*flare);
+    const shade=colour.clone().multiplyScalar(.94+Math.max(0,y)*.17);colours.push(shade.r,shade.g,shade.b);
+  }
+  geometry.rotateX(Math.PI/2);geometry.computeVertexNormals();
+  geometry.setAttribute('color',new THREE.Float32BufferAttribute(colours,3));
+  const bud=geometry.clone(),budPosition=bud.getAttribute('position');
+  for(let i=0;i<budPosition.count;i++){
+    const amount=Math.max(0,(budPosition.getZ(i)-.1)/.25);
+    budPosition.setXY(i,budPosition.getX(i)*(1-amount*.32),budPosition.getY(i)*(1-amount*.32));
+  }
+  bud.computeVertexNormals();geometry.morphAttributes.position=[budPosition.clone()];
+  geometry.morphAttributes.normal=[bud.getAttribute('normal').clone()];bud.dispose();return geometry;
+}
+
 export class AutoDevGarden {
   constructor(host) {
     this.scene = host.scene;
@@ -187,6 +220,7 @@ export class AutoDevGarden {
     this.groundY = host.groundY;
     this.resources = host.resources;
     this.makeMesh = host.mesh;
+    this.theme = host.theme;
     this.group = new THREE.Group();
     this.group.name = 'miniature-garden';
     this.scene.add(this.group);
@@ -221,11 +255,13 @@ export class AutoDevGarden {
       halo: new THREE.MeshBasicMaterial({color: 0xffe8a8, transparent: true, opacity: .24, depthWrite: false, toneMapped: false}),
     };
     Object.values(this.materials).forEach(material => this.resources.add(material));
-    this.leafShape = leafGeometry();
-    this.petalShape = shell({petal: true});
-    this.blushShape = shell({petal: true, blush: true});
+    const autumn = host.theme?.scene === 'autumn', palette = host.theme?.scenePalette;
+    this.leafShape = leafGeometry({ginkgo:autumn,palette:palette?.leaf});
+    this.petalShape = shell({petal: true,palette:palette?.petal});
+    this.blushShape = shell({petal: true, blush: true,palette:autumn?palette?.petal:undefined});
     this.flowerShape = flowerShell(this.petalShape);
     this.blushFlowerShape = flowerShell(this.blushShape);
+    if(host.theme?.scene==='garden') {this.bellShape=bellFlower(palette?.petal);this.resources.add(this.bellShape);}
     [this.leafShape, this.petalShape, this.blushShape, this.flowerShape, this.blushFlowerShape].forEach(geometry => this.resources.add(geometry));
     this.buildPollen();
     this.buildBorders();
@@ -271,8 +307,9 @@ export class AutoDevGarden {
     pivot.scale.setScalar(scale);
     pivot.name = crown ? 'crown-blossom' : 'garden-blossom';
     parent.add(pivot);
-    const petals = this.mesh(peach ? this.blushFlowerShape : this.flowerShape, this.materials.petal, pivot);
+    const petals = this.mesh(!crown&&this.bellShape?this.bellShape:peach ? this.blushFlowerShape : this.flowerShape, this.materials.petal, pivot);
     const pollen = this.mesh(this.pollenShape, this.materials.pollen, pivot);
+    if(!crown&&this.bellShape){pollen.position.z=.19;pollen.scale.setScalar(.65);}
     if (crown) {
       petals.scale.z = 1.4;
       pollen.position.z = .034;

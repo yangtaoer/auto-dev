@@ -1,7 +1,8 @@
 /* The orange character and its physically connected miniature garden. */
 import * as THREE from './vendor/three/three.module.js';
-import {AutoDevGarden} from './orb-garden.js?v=1.0-Beta.7';
-import {GardenDirector} from './garden-motion.js?v=1.0-Beta.7';
+import {AutoDevGarden} from './orb-garden.js?v=1.0-Beta.8';
+import {GardenDirector} from './garden-motion.js?v=1.0-Beta.8';
+import {ThemeDiorama} from './theme-scenes.js?v=1.0-Beta.8';
 
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 const instanceSeed = () => {
@@ -21,13 +22,15 @@ export class AutoDevOrbScene {
     this.shadowLastAt = null;
     this.gaze = {x: 0, y: 0};
     this.resources = new Set();
+    this.theme = window.__THEME__?.scene ? window.__THEME__ : {id:'mint-garden',scene:'garden'};
+    this.environmentResources = new Set();
     // Each mounted component grows its own, reproducible motion sequence. It is
     // never tied to wall-clock time or shared with the character on another page.
     this.motionSeed = Number.isFinite(orb.options?.gardenSeed) ? orb.options.gardenSeed : instanceSeed();
     this.director = new GardenDirector({seed: this.motionSeed});
     this.isLogin = Boolean(this.root.closest('.login-character-stage'));
     this.isSidebar = Boolean(this.root.closest('.sidebar-character-stage'));
-    this.radius = this.isSidebar ? .87 : .83;
+    this.radius = this.isSidebar ? 1.06 : .83;
     this.origin = new THREE.Vector3(0, -.04, .12);
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'autodev-orb-scene';
@@ -50,6 +53,11 @@ export class AutoDevOrbScene {
       this.camera.position.set(0, .83, 7);
       this.camera.lookAt(0, .38, 0);
       this.buildScene();
+      this.onAppearance = event => {
+        this.orb.setAppearanceMotion?.(event.detail.appearance.motion);
+        this.setTheme(event.detail.theme);
+      };
+      document.addEventListener?.('autodev:appearance', this.onAppearance);
       this.root.append(this.canvas);
       this.resizeObserver = new ResizeObserver(() => this.resize());
       this.resizeObserver.observe(this.root);
@@ -89,8 +97,10 @@ export class AutoDevOrbScene {
   }
 
   buildScene() {
-    this.scene.add(new THREE.HemisphereLight(0xfff9e9, 0xd6cbb3, 1.8));
+    this.ambientLight = new THREE.HemisphereLight(0xfff9e9, 0xd6cbb3, 1.8);
+    this.scene.add(this.ambientLight);
     const key = new THREE.DirectionalLight(0xfff4df, 2.7);
+    this.keyLight = key;
     key.position.set(-3, 5, 5);
     key.castShadow = true;
     Object.assign(key.shadow.camera, {left: -3.1, right: 3.1, top: 3.1, bottom: -2, near: .1, far: 16});
@@ -124,8 +134,34 @@ export class AutoDevOrbScene {
     this.floor.position.y = this.groundY;
     this.floor.receiveShadow = true;
     this.buildContactShadow();
-    this.garden = new AutoDevGarden({scene: this.scene, ball: this.ball, radius: this.radius,
-      groundY: this.groundY, resources: this.resources, mesh: this.mesh.bind(this)});
+    this.buildEnvironment();
+  }
+
+  buildEnvironment() {
+    const before = new Set(this.resources);
+    const host = {scene:this.scene,ball:this.ball,radius:this.radius,groundY:this.groundY,
+      resources:this.resources,mesh:this.mesh.bind(this),theme:this.theme,seed:this.motionSeed};
+    const kind = this.theme.scene;
+    this.garden = ['garden','moon','autumn'].includes(kind) ? new AutoDevGarden(host) : new ThemeDiorama(host);
+    this.scenery = ['moon','garden'].includes(kind) ? new ThemeDiorama(host) : null;
+    this.environmentResources = new Set([...this.resources].filter(item=>!before.has(item)));
+    const palette = this.theme.scenePalette;
+    if (palette) {
+      this.ambientLight.color.set(palette.ambient);
+      this.ambientLight.intensity = kind === 'moon' ? 1.12 : 1.8;
+      this.keyLight.color.set(palette.key);this.keyLight.intensity=palette.intensity;
+      this.floor.material.color.set(palette.ground);
+    }
+  }
+
+  setTheme(theme) {
+    if(this.disposed || !theme) return;
+    if(this.theme.id !== theme.id) {
+      this.garden?.destroy();this.scenery?.destroy();
+      this.environmentResources.forEach(resource=>{resource.dispose();this.resources.delete(resource);});
+      this.theme=theme;this.buildEnvironment();
+    }
+    this.invalidate();
   }
 
   buildContactShadow() {
@@ -263,6 +299,8 @@ export class AutoDevOrbScene {
     this.renderGardenFrame(frame, now, delta);
   }
   renderGardenFrame(frame, now = performance.now(), deltaMs = 1000 / 60) {
+    if(this.orb.appearanceMotion === 'reduced')frame={...frame,wind:frame.wind*.25,peek:0,hat:0,crown:0,petals:0,
+      body:{...frame.body,hop:frame.body.hop*.15,sway:frame.body.sway*.25,roll:frame.body.roll*.25,stretch:1+(frame.body.stretch-1)*.2}};
     this.gardenFrame = frame;
     const pose = frame.body, driver = this.orb.motionDriver;
     const intent = Math.max(frame.peek, frame.hat, frame.crown, frame.work * .7);
@@ -270,8 +308,10 @@ export class AutoDevOrbScene {
     // even when a leaf is resting on the head. Attachments follow ball.matrixWorld.
     const nearby = Boolean(this.orb.pointer.near);
     const pointerWeight = nearby ? .64 - intent * .25 : .18 * (1 - intent * .6);
-    const gazeX = clamp(pose.gazeX + this.orb.pointer.targetX * pointerWeight, -1.2, 1.2);
-    const gazeY = clamp(pose.gazeY + this.orb.pointer.targetY * pointerWeight, -1.1, 1.1);
+    const environmentFrame={...frame,absoluteTime:this.director.clock/1000,reduced:Boolean(this.orb.reducedMotion)};
+    const focus=(this.scenery||this.garden).focus?.(environmentFrame);
+    const gazeX = clamp((focus?.x ?? pose.gazeX) + this.orb.pointer.targetX * pointerWeight, -1.2, 1.2);
+    const gazeY = clamp((focus?.y ?? pose.gazeY) + this.orb.pointer.targetY * pointerWeight, -1.1, 1.1);
     const follow = 1 - Math.exp(-Math.max(0, deltaMs) / 95);
     this.gaze.x += (gazeX - this.gaze.x) * follow;
     this.gaze.y += (gazeY - this.gaze.y) * follow;
@@ -286,7 +326,8 @@ export class AutoDevOrbScene {
     this.contactShadow.position.z = this.ball.position.z;
     this.contactShadow.scale.setScalar(1 + altitude * .75);
     this.contactShadow.material.opacity = clamp(.60 - altitude * .6, .16, .60);
-    this.garden.update({...frame, reduced: Boolean(this.orb.reducedMotion)});
+    this.garden.update(environmentFrame);
+    this.scenery?.update(environmentFrame);
     this.root.dataset.gardenMode = this.mode();
     this.root.dataset.gardenPhase = frame.phase;
     this.root.dataset.gardenEpisode = frame.episode || frame.phase;
@@ -304,7 +345,9 @@ export class AutoDevOrbScene {
     this.resizeObserver?.disconnect();
     this.intersection?.disconnect();
     this.canvas?.removeEventListener('webglcontextlost', this.onLost);
+    document.removeEventListener?.('autodev:appearance',this.onAppearance);
     this.garden?.destroy?.();
+    this.scenery?.destroy?.();
     this.resources.forEach(resource => resource.dispose());
     this.resources.clear();
     this.scene?.traverse(object => { if (object.isLight) object.shadow?.dispose(); });

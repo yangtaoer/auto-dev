@@ -4,15 +4,17 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {pathToFileURL} = require('node:url');
 const vm = require('node:vm');
+const themes = JSON.parse(fs.readFileSync(path.join(__dirname, '../../app/static/themes/catalog.json'),'utf8')).themes;
 
-async function gardenScene({seed = 17, cryptoSeed = 4321} = {}) {
+async function gardenScene({seed = 17, cryptoSeed = 4321, theme} = {}) {
   // All three modules use the real Three geometry, materials and transforms.
   // Only browser ownership and the GPU renderer are stubbed for Node.
   const moduleURL = file => pathToFileURL(path.join(__dirname, '../../app/static', file));
-  const [THREE, {AutoDevGarden}, gardenMotion] = await Promise.all([
+  const [THREE, {AutoDevGarden}, gardenMotion, {ThemeDiorama}] = await Promise.all([
     import(moduleURL('vendor/three/three.module.js')),
     import(moduleURL('orb-garden.js')),
     import(moduleURL('garden-motion.js')),
+    import(moduleURL('theme-scenes.js')),
   ]);
   const {GardenDirector, sampleGarden, gardenEpisodes, gardenDuration, GARDEN_DURATIONS} = gardenMotion;
   let rendererOptions, canceled = 0, now = 100;
@@ -29,6 +31,7 @@ async function gardenScene({seed = 17, cryptoSeed = 4321} = {}) {
     setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {},
   }; }};
   const window = {devicePixelRatio: 1, crypto: {getRandomValues(values) {values[0] = cryptoSeed; return values;}}};
+  if(theme)window.__THEME__=theme;
   const classes = new Set();
   const root = {dataset: {}, classList: {
     add(...names) {names.forEach(name => classes.add(name));},
@@ -40,7 +43,7 @@ async function gardenScene({seed = 17, cryptoSeed = 4321} = {}) {
   const Observer = class {observe() {} disconnect() {this.disconnected = true;}};
   const source = fs.readFileSync(path.join(__dirname, '../../app/static/orb-scene.js'), 'utf8')
     .replace(/^import .*$/gm, '').replace('export class AutoDevOrbScene', 'class AutoDevOrbScene');
-  vm.runInNewContext(source, {THREE: {...THREE, WebGLRenderer: Renderer}, AutoDevGarden, GardenDirector,
+  vm.runInNewContext(source, {THREE: {...THREE, WebGLRenderer: Renderer}, AutoDevGarden, GardenDirector, ThemeDiorama,
     document, window, ResizeObserver: Observer, IntersectionObserver: Observer, performance: {now: () => now},
     requestAnimationFrame: () => 1, cancelAnimationFrame() {canceled++;}});
   const scene = new window.AutoDevOrbScene(orb);
@@ -305,4 +308,82 @@ test('nearby gaze stays responsive during leaf-hat choreography without loosenin
   const expected = new THREE.Vector3(-.48, 1.07, .12).applyMatrix4(scene.ball.matrixWorld);
   assert.ok(scene.garden.heroLeaf.position.distanceTo(expected) < .000001);
   scene.destroy();
+});
+
+test('every shipped theme has finite physical scenery and switching releases old environments without resetting task time', async()=>{
+  const {scene,advance}=await gardenScene();advance(420);
+  const clock=scene.director.clock,counts=new Map();
+  for(let round=0;round<3;round++)for(const theme of themes){
+    const old=new Set(scene.environmentResources);let disposed=0;
+    if(scene.theme.id!==theme.id)old.forEach(item=>item.addEventListener('dispose',()=>disposed++));
+    const changed=scene.theme.id!==theme.id;scene.setTheme(theme);
+    if(changed)assert.equal(disposed,old.size,theme.id+' releases each old GPU resource once');
+    assert.equal(scene.director.clock,clock,'skin preview never restarts the task choreography');
+    if(counts.has(theme.id))assert.equal(scene.resources.size,counts.get(theme.id),'no growth after repeated skin switches');
+    else counts.set(theme.id,scene.resources.size);
+    scene.renderGardenFrame(scene.director.frame,100,16);
+    scene.scene.traverse(object=>{const positions=object.geometry?.getAttribute('position');if(positions)for(const value of positions.array)assert.ok(Number.isFinite(value));});
+  }
+  scene.destroy();
+});
+
+test('the origami leaf eases continuously onto the head and follows squash without intersecting the orange sphere',async()=>{
+  const theme=themes.find(t=>t.scene==='paper');if(!theme)return;
+  const {scene,sampleGarden,THREE}=await gardenScene({theme});
+  const base=sampleGarden({mode:'idle'}),point=new THREE.Vector3();let previous;
+  for(let step=0;step<=100;step++){
+    scene.renderGardenFrame({...base,hat:step/100});scene.scene.updateMatrixWorld(true);
+    const current=new THREE.Vector3().setFromMatrixPosition(scene.garden.ornament.matrixWorld);
+    if(previous)assert.ok(current.distanceTo(previous)<.06,'no abrupt parent-transfer jump');previous=current;
+  }
+  for(const hop of [0,.24,.48]){
+    scene.renderGardenFrame({...base,hat:1,body:{...base.body,hop,roll:.12,stretch:.11}});scene.scene.updateMatrixWorld(true);
+    const ornament=scene.garden.ornament,mesh=ornament.children[0],positions=mesh.geometry.getAttribute('position'),inverse=scene.ball.matrixWorld.clone().invert();
+    assert.equal(ornament.userData.headContact,true);
+    for(let i=0;i<positions.count;i++){point.fromBufferAttribute(positions,i).applyMatrix4(mesh.matrixWorld).applyMatrix4(inverse);assert.ok(point.length()>=1.02,'paper leaf stays outside sphere');}
+  }
+  scene.destroy();
+});
+
+test('clouds and paper keep depth-tested solids, independent motion, and signals only while tasks work',async()=>{
+  for(const theme of themes.filter(t=>['sky','paper','moon'].includes(t.scene))){
+    const {scene,sampleGarden}=await gardenScene({theme});const env=scene.scenery||scene.garden;
+    const base=sampleGarden({mode:'idle'});env.update({...base,absoluteTime:1});
+    const object=env.plane||env.fireflies[0]?.point||env.ornament,before=object.matrix.clone();
+    env.update({...base,absoluteTime:4});object.updateMatrixWorld(true);
+    assert.ok(object,theme.id+' owns moving physical props');
+    env.group.traverse(item=>{if(item.isMesh&&!item.material.transparent)assert.equal(item.material.depthTest,true);});
+    if(env.orbit){assert.equal(env.orbit.visible,false);env.update({...base,work:1});assert.equal(env.orbit.visible,true);}
+    if(env.plane||env.fireflies.length)assert.notDeepEqual(object.matrix.elements,before.elements);
+    scene.destroy();
+  }
+});
+
+test('new worlds own distinct moving props, freeze with reduced motion and keep solid depth-tested surfaces',async()=>{
+  const props={ocean:'jellyfish',space:'satellite',porcelain:'chime',arcade:'coins',gallery:'mobiles'};
+  for(const theme of themes.filter(t=>t.scene in props)){
+    const {scene,sampleGarden}=await gardenScene({theme});const env=scene.garden;
+    let object=env[props[theme.scene]];if(Array.isArray(object))object=object[0];
+    assert.ok(object,theme.id+' has its own physical interaction');
+    const base=sampleGarden({mode:'idle'});
+    env.update({...base,absoluteTime:2});object.updateMatrixWorld(true);const before=object.matrix.clone();
+    env.update({...base,absoluteTime:6});object.updateMatrixWorld(true);assert.notDeepEqual(object.matrix.elements,before.elements);
+    const atRest=object.matrix.clone();env.update({...base,absoluteTime:200,reduced:true});object.updateMatrixWorld(true);
+    assert.deepEqual(object.matrix.elements,atRest.elements,'reduced scenery does not run a second timer');
+    env.group.traverse(item=>{if(item.isMesh&&!item.material.transparent)assert.equal(item.material.depthTest,true);});
+    assert.equal(env.orbit.visible,false);env.update({...base,work:1});assert.equal(env.orbit.visible,true);
+    scene.destroy();
+  }
+});
+
+test('ocean and porcelain ornaments follow the real head surface during squash and rebound',async()=>{
+  for(const theme of themes.filter(t=>['ocean','porcelain'].includes(t.scene))){
+    const {scene,sampleGarden,THREE}=await gardenScene({theme}),base=sampleGarden({mode:'idle'}),point=new THREE.Vector3();
+    for(const hop of [0,.24,.48]){
+      scene.renderGardenFrame({...base,hat:1,body:{...base.body,hop,roll:.12,stretch:.11}});scene.scene.updateMatrixWorld(true);
+      const mesh=scene.garden.ornament.children[0],positions=mesh.geometry.getAttribute('position'),inverse=scene.ball.matrixWorld.clone().invert();
+      for(let i=0;i<positions.count;i++){point.fromBufferAttribute(positions,i).applyMatrix4(mesh.matrixWorld).applyMatrix4(inverse);assert.ok(point.length()>=1.02,theme.id+' ornament never cuts into the orange body');}
+    }
+    scene.destroy();
+  }
 });

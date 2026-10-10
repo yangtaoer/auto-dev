@@ -1,0 +1,137 @@
+{
+  "generator": "built-in image_gen",
+  "date": "2026-10-10",
+  "purpose": "Approved theme reference mockups and matching non-interactive backdrop textures. Business UI and moving props are implemented as real DOM / Three.js.",
+  "assets": [
+    {
+      "theme": "mint-garden",
+      "preview": {
+        "file": "/static/themes/previews/01.png",
+        "original": "exec-17aca381-39bf-43f2-bb9c-725fb96cad05.png",
+        "prompt": "THEME 01 \"薄荷花园\" / MINT GARDEN. A sophisticated living botanical workbench, current system reimagined with more finesse. Palette pale pistachio/mint sidebar, warm alabaster workspace, ivory cards, deep pine typography, vivid tangerine actions. Sidebar softly translucent frosted glass with very faint botanical silhouettes behind; selected menu has slender orange rail and elegant underline, not bulky tabs. Fine mint-gray table rules, softly rounded 8px cards, natural very soft shadows. Beautiful lower-left micro-diorama: orange orb tilts with a playful curious gaze, physically lifting a delicate sage-green leaf like a tiny hat from a curved twig; a few cream-white bell flowers, real thin leaf veins, translucency and subtle surface variation, pebble/contact shadow; designed as a convincing interactive 3D component, not a pasted flat sticker. Quiet morning daylight, refined organic materials, extraordinarily cohesive and practical. Include a tiny subdued \"01 · 薄荷花园\" skin indicator in top toolbar. No gradients covering business content."
+      },
+      "background": {
+        "file": "/static/themes/backgrounds/mint-garden.png",
+        "original": "exec-34daad4d-bf9c-4b0f-b07f-9457b197e4f5.png",
+        "prompt": "Portrait backdrop matching the approved theme, no UI or character, quiet upper navigation region."
+      }
+    },
+    {
+      "theme": "moon-courtyard",
+      "preview": {
+        "file": "/static/themes/previews/02.png",
+        "original": "exec-061089bd-a1ef-48c2-8dae-6abd0e3481b9.png",
+        "prompt": "THEME 02 \"月下庭院\" / MOONLIT COURTYARD. A genuinely designed dark theme, cinematic but legible, premium subdued atmosphere. Palette midnight blue-green #10282e workspace, desaturated ink-teal frosted sidebar, slightly lighter slate-teal cards, porcelain-white primary text, gray-sage secondary text, tangerine actions, subtle moon-silver edges. Not black with neon purple, no excessive glowing outlines. Selected menu is a restrained warm orange illuminated notch. Tables and summary strip clearly separated through tonal depth with fine cool hairlines. Lower-left mascot scene: same orange sphere looking up with wide delighted eyes at one tiny warm firefly close to its face; sculptural crescent-moon rim light far behind, curved dark eucalyptus twigs and one luminous pale flower, soft matte stone plinth, real depth and beautiful soft contact shadow. Glows are faint and localized, no eye-straining light. Rounded cards 12px, layered smoke-glass material, thoughtful highlight-to-shadow contrast. Small low-contrast \"02 · 月下庭院\" skin indicator in toolbar. Readable high contrast typography on dark surfaces. Workbench remains business-focused with no star wallpaper behind text."
+      },
+      "background": {
+        "file": "/static/themes/backgrounds/moon-courtyard.png",
+        "original": "exec-88d7b6b4-e863-42fd-b007-66883cfcaa1d.png",
+        "prompt": "Portrait backdrop matching the approved theme, no UI or character, quiet upper navigation region."
+      }
+    },
+    {
+      "theme": "sky-atelier",
+      "preview": {
+        "file": "/static/themes/previews/03.png",
+        "original": "exec-5db8239d-6422-4feb-9eef-370edc62b9a1.png",
+        "prompt": "THEME 03 \"晴空云间\" / SKY ATELIER. A light, airy high-design cloud workbench with a materially different aesthetic from botanical mint. Palette icy sky-blue sidebar, very pale blue-white workspace, pure porcelain cards, deep navy text, small cobalt informational accents, tangerine primary actions. Sidebar subtly translucent skyglass, clean chamfered geometry and precise blue-gray dividers. Crisp compact tab selection with a white inset tile and small orange accent. Card shadows gently blue-tinted like sunlight through glass. Summary numbers in refined clear sans-serif, compact structured cards and table. Lower-left mascot micro-world: same orange spherical character half nestled in a sculptural white cloud with clear volumetric form, eyes following a small folded ivory paper airplane passing closely, two tiny cloud puffs, subtle wind ribbon arcs and soft blue-tinted ground shadow. Clouds feel physical and satin, not cheap cartoon clipart; paper airplane has lovely folded-paper fibers. No plants, no moon, no giant weather imagery. Exceptionally fresh and uncluttered yet no loss of data density. Small subdued \"03 · 晴空云间\" indicator in toolbar. White-blue atmosphere with sunlight, completely practical legible UI."
+      },
+      "background": {
+        "file": "/static/themes/backgrounds/sky-atelier.png",
+        "original": "exec-25782ed7-3d31-422a-8369-f21f00d452af.png",
+        "prompt": "Portrait backdrop matching the approved theme, no UI or character, quiet upper navigation region."
+      }
+    },
+    {
+      "theme": "autumn-court",
+      "preview": {
+        "file": "/static/themes/previews/04.png",
+        "original": "exec-e86729f6-927a-4c8b-aea2-e42444773906.png",
+        "prompt": "THEME 04 \"暖阳秋庭\" / AUTUMN COURT. Warm tactile seasonal design, distinctive and tasteful, not a recolored green theme. Palette oatmeal cream workbench, translucent warm beige sidebar, chalk/linen cards, espresso-brown text, muted terracotta active elements and vivid burnt orange CTA, small golden-ochre highlights. Fine tan rules, gentle 6px corners, very subtle linen-paper texture only on large quiet surfaces, high readability. Menu active state like a terracotta pigment stroke beside the label, sophisticated editorial spacing; no huge serif heading. Lower-left orange mascot: joyfully balancing a beautiful golden ginkgo leaf crown on its head, asymmetric twigs with finely veined amber and copper leaves, one falling leaf near its eye, little pale stone base, warm sideways afternoon sunlight, realistic contact shadow and translucent leaves. Not Halloween, no pumpkins, no stock fall photo. Table and cards look like premium printed sheets yet fully usable digital UI. Warm understated softness, strong contrast, richer materials but no decoration on business content. Tiny \"04 · 暖阳秋庭\" toolbar indicator."
+      },
+      "background": {
+        "file": "/static/themes/backgrounds/autumn-court.png",
+        "original": "exec-c8d5fe9d-e306-4d9d-bfaa-c1bd7c02f34c.png",
+        "prompt": "Portrait backdrop matching the approved theme, no UI or character, quiet upper navigation region."
+      }
+    },
+    {
+      "theme": "paper-workshop",
+      "preview": {
+        "file": "/static/themes/previews/05.png",
+        "original": "exec-7b887e4f-b6d9-48cb-b30a-85bc6624da06.png",
+        "prompt": "THEME 05 \"纸境工坊\" / PAPER WORKSHOP. Bold refined tactile paper-engineering aesthetic, visually different from all nature/weather themes while preserving business layout. Palette mineral white and light warm silver, pale sand sidebar, charcoal typography, orange-red actions with restrained moss-gray details. UI panels resemble ultra-clean folded stationery with tiny paper-fold corner detail, sharp 3px radius, layered thin contour rules and minute offset embossed shadows; faint dot-grid confined to sidebar, no grid behind table. Active menu resembles an orange paper index tab, icons drawn in monoline graphite. No retro terminal, no childish scrapbook, no oversized headings. Lower-left micro-diorama: same smooth orange 3D orb peeking playfully around a tiny sculptural folded ivory paper arch, a finely textured origami leaf gently resting against its face, a small geometric paper flower and a little rolled blueprint; actual paper fibers, folds, thickness, ambient occlusion and soft daylight. Orange orb must remain spherical satin 3D, not papercraft itself. Mix precise workbench geometry with poetic tactile paper props, mature playful craft. Tiny \"05 · 纸境工坊\" toolbar indicator. Crisp readable rich business information."
+      },
+      "background": {
+        "file": "/static/themes/backgrounds/paper-workshop.png",
+        "original": "exec-d2da7774-888d-4a6e-a666-410aa7e01276.png",
+        "prompt": "Portrait backdrop matching the approved theme, no UI or character, quiet upper navigation region."
+      }
+    },
+    {
+      "theme": "deep-ocean",
+      "preview": {
+        "file": "/static/themes/previews/06.png",
+        "original": "exec-a4a427db-9561-47ef-96bc-9199bf8b78b9.png",
+        "prompt": "Create an original high-fidelity full-screen AutoDev Chinese software delivery dashboard skin design. Use supplied dashboard ONLY as layout reference. Keep full frame around 16:9, clean edge-to-edge browser content without browser chrome, no perspective mockup. All business controls remain real-looking UI, not scenery. Preserve orange infinity-chevron AutoDev brand mark and brand text top left. Seven sidebar menu labels: 01 任务总览, 02 交付记录, 03 自主项目, 04 统计看板, 05 账号管理, 06 项目经验, 07 研发设置. Header compact, do NOT add large hero heading. Top right actions: 支持项目, 问题分析, + 发起自主研发, 系统管理员, theme edition. Top metrics in one strip: 当日任务 05, 任务总量 128, 成功交付 96, 失败/驳回 08, 运行中 03, 待补充 02, 等待合并 01, PRO容量76%. Below three active project cards for 成都网络发令, 四川省调网络发令, 网络发令APP, then a large 最近任务 panel with 6 readable Chinese business rows, columns # 需求名称 所属项目 交付方式 状态 最新输出 耗时 更新时间 操作. Sidebar bottom compact current task console. Maintain sensible information density, clear primary hierarchy, excellent contrast, realistic Chinese UI typography, no extra oversized slogans over main content. Keep same ORANGE round 3D mascot identity, black eyes and single broad soft highlight, no hands. Only scenery in lower sidebar and very subtle edge decoration. Make this theme truly visually different from mint garden, night garden, blue clouds, autumn paper and origami.\nTheme 06 深海实验室: Deep ocean glass laboratory. Ink navy #061d2b background, blue-green glass sidebar #092f40, deep translucent blue cards #103847 with crisp pale aqua type #e6faff. Accent coral orange #ff7846 with subtle cyan #54d6db highlights, rounded 12px glass borders, NO neon purple. Sidebar lower vignette: the SAME orange 3D spherical mascot with two lively black oval eyes, resting on pale sea stone amid delicate blue-green branching coral and sea fans; a few physically believable clear air bubbles and a tiny ivory jellyfish floating nearby. Blue-green underwater caustic light only in sidebar edges, main business area calm and high contrast. Rounded layered glass feel, no fish behind text."
+      },
+      "background": {
+        "file": "/static/themes/backgrounds/deep-ocean.png",
+        "original": "exec-2c05ff0b-a991-4919-bcf1-fce4f23ada8f.png",
+        "prompt": "Use case: stylized-concept. Asset type: production portrait sidebar background texture for a real software dashboard, about 1:3 tall portrait. Input image is a STYLE AND MATERIAL reference of an already approved interface, NOT an edit target. Extract only the sidebar background's visual language, not its UI. Deep ocean blue glass, navy #061d2b through teal #092f40, gentle water caustics, faint sun rays through water near top, delicate branching turquoise coral confined to bottom and very edge, restrained floating clear micro bubbles. Composition: upper 80% must be calm almost uniform negative space for live navigation and text; lower 20% is a subtle environment behind an actual Three.js character. Absolutely no UI, no lettering, no numbers, no logo, no character, no orange ball, no eyes, no arch, no pedestal, no jellyfish, no watermark. No baked illustration of a mascot; this asset must remain an empty backdrop. Keep contrast low and leave middle/lower center empty for interactive live scene."
+      }
+    },
+    {
+      "theme": "orbital-station",
+      "preview": {
+        "file": "/static/themes/previews/07.png",
+        "original": "exec-ab934446-a10d-4163-b063-708105426d68.png",
+        "prompt": "Create an original high-fidelity full-screen AutoDev Chinese software delivery dashboard skin design. Use supplied dashboard ONLY as layout reference. Keep full frame around 16:9, clean edge-to-edge browser content without browser chrome, no perspective mockup. All business controls remain real-looking UI, not scenery. Preserve orange infinity-chevron AutoDev brand mark and brand text top left. Seven sidebar menu labels: 01 任务总览, 02 交付记录, 03 自主项目, 04 统计看板, 05 账号管理, 06 项目经验, 07 研发设置. Header compact, do NOT add large hero heading. Top right actions: 支持项目, 问题分析, + 发起自主研发, 系统管理员, theme edition. Top metrics in one strip: 当日任务 05, 任务总量 128, 成功交付 96, 失败/驳回 08, 运行中 03, 待补充 02, 等待合并 01, PRO容量76%. Below three active project cards for 成都网络发令, 四川省调网络发令, 网络发令APP, then a large 最近任务 panel with 6 readable Chinese business rows, columns # 需求名称 所属项目 交付方式 状态 最新输出 耗时 更新时间 操作. Sidebar bottom compact current task console. Maintain sensible information density, clear primary hierarchy, excellent contrast, realistic Chinese UI typography, no extra oversized slogans over main content. Keep same ORANGE round 3D mascot identity, black eyes and single broad soft highlight, no hands. Only scenery in lower sidebar and very subtle edge decoration. Make this theme truly visually different from mint garden, night garden, blue clouds, autumn paper and origami.\nTheme 07 轨道工作站: Precision orbital station, distinct from nature skins. Graphite #151719 workspace and dark charcoal metal #1e2327 sidebar, offwhite #eff2f3 type, warm brushed copper #bb815d and orange #f56a36 action. Small squared 4px panels, thin steel #41484e rules, controlled technical monospaced metadata. Left bottom: same glossy orange spherical mascot, black expressive eyes, mounted on a matte graphite landing pad with a pale metallic circular instrument arch behind it; a little 3D satellite with folded solar panels nearby, one tiny cream planet with a copper ring, sparse star points confined to sidebar. Beautiful premium spacecraft instrument styling, believable physical materials, NOT a space poster over the dashboard."
+      },
+      "background": {
+        "file": "/static/themes/backgrounds/orbital-station.png",
+        "original": "exec-b8bf262d-9fe1-407e-9b55-7332b36b7664.png",
+        "prompt": "Use case: stylized-concept. Asset type: production portrait sidebar background texture for a real software dashboard, about 1:3 tall portrait. Input image is a STYLE AND MATERIAL reference of an already approved interface, NOT an edit target. Extract only the sidebar background's visual language, not its UI. Graphite orbital station matte anodized metal #151719 #1e2327, subtle cut panel joints at extreme edges, few tiny warm star glints confined low on image, copper instrument screw details. Never include planet, satellite or sphere. Composition: upper 80% must be calm almost uniform negative space for live navigation and text; lower 20% is a subtle environment behind an actual Three.js character. Absolutely no UI, no lettering, no numbers, no logo, no character, no orange ball, no eyes, no arch, no pedestal, no jellyfish, no watermark. No baked illustration of a mascot; this asset must remain an empty backdrop. Keep contrast low and leave middle/lower center empty for interactive live scene."
+      }
+    },
+    {
+      "theme": "porcelain-studio",
+      "preview": {
+        "file": "/static/themes/previews/08.png",
+        "original": "exec-f85475b5-c48a-44d9-bf8c-c007e11642d7.png",
+        "prompt": "Create an original high-fidelity full-screen AutoDev Chinese software delivery dashboard skin design. Use supplied dashboard ONLY as layout reference. Keep full frame around 16:9, clean edge-to-edge browser content without browser chrome, no perspective mockup. All business controls remain real-looking UI, not scenery. Preserve orange infinity-chevron AutoDev brand mark and brand text top left. Seven sidebar menu labels: 01 任务总览, 02 交付记录, 03 自主项目, 04 统计看板, 05 账号管理, 06 项目经验, 07 研发设置. Header compact, do NOT add large hero heading. Top right actions: 支持项目, 问题分析, + 发起自主研发, 系统管理员, theme edition. Top metrics in one strip: 当日任务 05, 任务总量 128, 成功交付 96, 失败/驳回 08, 运行中 03, 待补充 02, 等待合并 01, PRO容量76%. Below three active project cards for 成都网络发令, 四川省调网络发令, 网络发令APP, then a large 最近任务 panel with 6 readable Chinese business rows, columns # 需求名称 所属项目 交付方式 状态 最新输出 耗时 更新时间 操作. Sidebar bottom compact current task console. Maintain sensible information density, clear primary hierarchy, excellent contrast, realistic Chinese UI typography, no extra oversized slogans over main content. Keep same ORANGE round 3D mascot identity, black eyes and single broad soft highlight, no hands. Only scenery in lower sidebar and very subtle edge decoration. Make this theme truly visually different from mint garden, night garden, blue clouds, autumn paper and origami.\nTheme 08 青瓷书院: Contemporary celadon porcelain studio with Chinese artistic restraint, not another botanical garden. Very pale cool porcelain #f3f8f7 main background, celadon #d9ebe7 sidebar, milk-white ceramic cards, deep ink blue #173f52 type, jade green #387c72 lines, small orange brand actions #ed6b43. Refined 10px ceramic soft bevels and delicate shadow, clean legible sans business type. Sidebar lower vignette same orange 3D sphere mascot with lively black eyes standing on a glazed celadon ceramic pedestal; an ivory-and-cobalt porcelain circular moon-gate with subtle blue brushstrokes behind it, a slim dark twig with 2-3 small jade leaves, one hanging porcelain wind-chime. Clear calm center for sidebar nav. No ornate dragons, no temple illustration, no calligraphy in business data."
+      },
+      "background": {
+        "file": "/static/themes/backgrounds/porcelain-studio.png",
+        "original": "exec-2c514d14-9e21-479d-8645-f80ee9e8450a.png",
+        "prompt": "Use case: stylized-concept. Asset type: production portrait sidebar background texture for a real software dashboard, about 1:3 tall portrait. Input image is a STYLE AND MATERIAL reference of an already approved interface, NOT an edit target. Extract only the sidebar background's visual language, not its UI. Celadon porcelain studio, mint milk white #d9ebe7, pale jade glazed fine crackle, diffused porcelain daylight, restrained cobalt botanical brush traces at extreme lower edges, barely visible bamboo shadow. Composition: upper 80% must be calm almost uniform negative space for live navigation and text; lower 20% is a subtle environment behind an actual Three.js character. Absolutely no UI, no lettering, no numbers, no logo, no character, no orange ball, no eyes, no arch, no pedestal, no jellyfish, no watermark. No baked illustration of a mascot; this asset must remain an empty backdrop. Keep contrast low and leave middle/lower center empty for interactive live scene."
+      }
+    },
+    {
+      "theme": "pixel-arcade",
+      "preview": {
+        "file": "/static/themes/previews/09.png",
+        "original": "exec-f6c39c6a-2645-41f6-baa2-d4e68271d4a8.png",
+        "prompt": "Create an original high-fidelity full-screen AutoDev Chinese software delivery dashboard skin design. Use supplied dashboard ONLY as layout reference. Keep full frame around 16:9, clean edge-to-edge browser content without browser chrome, no perspective mockup. All business controls remain real-looking UI, not scenery. Preserve orange infinity-chevron AutoDev brand mark and brand text top left. Seven sidebar menu labels: 01 任务总览, 02 交付记录, 03 自主项目, 04 统计看板, 05 账号管理, 06 项目经验, 07 研发设置. Header compact, do NOT add large hero heading. Top right actions: 支持项目, 问题分析, + 发起自主研发, 系统管理员, theme edition. Top metrics in one strip: 当日任务 05, 任务总量 128, 成功交付 96, 失败/驳回 08, 运行中 03, 待补充 02, 等待合并 01, PRO容量76%. Below three active project cards for 成都网络发令, 四川省调网络发令, 网络发令APP, then a large 最近任务 panel with 6 readable Chinese business rows, columns # 需求名称 所属项目 交付方式 状态 最新输出 耗时 更新时间 操作. Sidebar bottom compact current task console. Maintain sensible information density, clear primary hierarchy, excellent contrast, realistic Chinese UI typography, no extra oversized slogans over main content. Keep same ORANGE round 3D mascot identity, black eyes and single broad soft highlight, no hands. Only scenery in lower sidebar and very subtle edge decoration. Make this theme truly visually different from mint garden, night garden, blue clouds, autumn paper and origami.\nTheme 09 像素街机: Original playful retro pixel arcade WORK dashboard, restrained and professional. Very dark green-black #14231f background, forest #1a3028 sidebar, panels #213b32, warm white #e8f0d8 readable type, crisp lime #bada74 hairline pixel edges, tangerine #ff7648 primary action, soft yellow #efcf6b occasional signal. ZERO round card corners: square pixel borders, tiny staircase corner embellishments, sharp monospace metadata and geometric bold sans Chinese labels. Bottom sidebar same glossy ORANGE 3D sphere with two black oval eyes, not pixelated itself, surrounded by a little physical voxel landscape of stepped mint-green cubes, one voxel flower, tiny square coins on a stepped plinth. Pixel dots only at sidebar edges. Fun premium game console, no unreadable CRT distortion, no flashing, no giant decorative text."
+      },
+      "background": {
+        "file": "/static/themes/backgrounds/pixel-arcade.png",
+        "original": "exec-d76d317c-9efd-4889-9ab1-6b0ac67f9220.png",
+        "prompt": "Use case: stylized-concept. Asset type: production portrait sidebar background texture for a real software dashboard, about 1:3 tall portrait. Input image is a STYLE AND MATERIAL reference of an already approved interface, NOT an edit target. Extract only the sidebar background's visual language, not its UI. Premium voxel arcade, deep forest green #14231f #1a3028, extremely subtle pixel texture. Lime tiny square accents at extreme top corners; stepped voxel block terrain in lower 15%, restrained yellow square coins near edges only. Composition: upper 80% must be calm almost uniform negative space for live navigation and text; lower 20% is a subtle environment behind an actual Three.js character. Absolutely no UI, no lettering, no numbers, no logo, no character, no orange ball, no eyes, no arch, no pedestal, no jellyfish, no watermark. No baked illustration of a mascot; this asset must remain an empty backdrop. Keep contrast low and leave middle/lower center empty for interactive live scene."
+      }
+    },
+    {
+      "theme": "ink-gallery",
+      "preview": {
+        "file": "/static/themes/previews/10.png",
+        "original": "exec-88d04230-b2df-4c5d-8136-d8d47d31e684.png",
+        "prompt": "Create an original high-fidelity full-screen AutoDev Chinese software delivery dashboard skin design. Use supplied dashboard ONLY as layout reference. Keep full frame around 16:9, clean edge-to-edge browser content without browser chrome, no perspective mockup. All business controls remain real-looking UI, not scenery. Preserve orange infinity-chevron AutoDev brand mark and brand text top left. Seven sidebar menu labels: 01 任务总览, 02 交付记录, 03 自主项目, 04 统计看板, 05 账号管理, 06 项目经验, 07 研发设置. Header compact, do NOT add large hero heading. Top right actions: 支持项目, 问题分析, + 发起自主研发, 系统管理员, theme edition. Top metrics in one strip: 当日任务 05, 任务总量 128, 成功交付 96, 失败/驳回 08, 运行中 03, 待补充 02, 等待合并 01, PRO容量76%. Below three active project cards for 成都网络发令, 四川省调网络发令, 网络发令APP, then a large 最近任务 panel with 6 readable Chinese business rows, columns # 需求名称 所属项目 交付方式 状态 最新输出 耗时 更新时间 操作. Sidebar bottom compact current task console. Maintain sensible information density, clear primary hierarchy, excellent contrast, realistic Chinese UI typography, no extra oversized slogans over main content. Keep same ORANGE round 3D mascot identity, black eyes and single broad soft highlight, no hands. Only scenery in lower sidebar and very subtle edge decoration. Make this theme truly visually different from mint garden, night garden, blue clouds, autumn paper and origami.\nTheme 10 极简黑白: Bold Swiss black-and-white gallery workbench. White #fafafa main, offwhite #f0f0ed sidebar, crisp ink black #171c1d text and 1px grey #c9cecb rules, flat white cards with almost no shadow, 0px square corners, strong neat typographic grid, big elegant black tabular metric numbers, brand orange #ff572f used only for primary action, active indicator and core mascot. Sidebar active nav black rectangle with white label and tiny orange index accent. Bottom: same bright ORANGE glossy spherical mascot black oval eyes on a white sculptural plinth, a simple black and white geometric sculptural arch and two small suspended matte black/white marble mobiles, lots of negative space. Clean monochrome gallery rather than paper fiber/craft; no texture noise, no leafy garden, no gradients, no generic oversized hero title."
+      },
+      "background": {
+        "file": "/static/themes/backgrounds/ink-gallery.png",
+        "original": "exec-32f23f52-f2a5-4794-90e7-1ad5d51c062b.png",
+        "prompt": "Use case: stylized-concept. Asset type: production portrait sidebar background texture for a real software dashboard, about 1:3 tall portrait. Input image is a STYLE AND MATERIAL reference of an already approved interface, NOT an edit target. Extract only the sidebar background's visual language, not its UI. Ultra minimal black white architectural gallery, offwhite #f0f0ed very pale neutral soft plaster, tiny crisp grey architectural step shadow along bottom edge only, generous uninterrupted white negative space. Composition: upper 80% must be calm almost uniform negative space for live navigation and text; lower 20% is a subtle environment behind an actual Three.js character. Absolutely no UI, no lettering, no numbers, no logo, no character, no orange ball, no eyes, no arch, no pedestal, no jellyfish, no watermark. No baked illustration of a mascot; this asset must remain an empty backdrop. Keep contrast low and leave middle/lower center empty for interactive live scene."
+      }
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 <!doctype html>
-<html lang="zh-CN">
+{% set appearance = appearance|default({'theme_id':'mint-garden','font_size':'normal','density':'compact','motion':'full'}) %}
+{% set appearance_theme = appearance_theme|default({'id':'mint-garden','mode':'light','name':'薄荷花园','scene':'garden'}) %}
+<html lang="zh-CN" data-theme="{{ appearance.theme_id }}" data-theme-mode="{{ appearance_theme.mode|default('light') }}" data-font-size="{{ appearance.font_size }}" data-density="{{ appearance.density }}" data-motion="{{ appearance.motion }}" style="{{ appearance_style|default('') }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -22,6 +24,7 @@
   <link rel="stylesheet" href="/static/ui-refinements.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/followup-ui.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/loading-ui.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/themes.css?v={{ app_version }}">
 </head>
 <body class="mint-ui mint-workspace" data-view="dashboard">
   <div class="app-shell">
@@ -30,19 +33,20 @@
       <div class="sidebar-glass" aria-hidden="true"></div>
       <div class="logo" aria-label="AutoDev"><img class="sidebar-brand-mark" src="/static/brand/autodev-sidebar-mark.png?v={{ app_version }}" alt="AutoDev 标志"><b class="sidebar-brand-name">AutoDev</b></div>
       <nav>
-        <button class="nav-item active" data-view="dashboard"><span class="nav-index">01</span><span>任务总览</span></button>
-        <button class="nav-item" data-view="requests"><span class="nav-index">02</span><span>交付记录</span></button>
-        {% if user.role == 'admin' %}<button class="nav-item" data-view="projects"><span class="nav-index">03</span><span>自主项目</span></button>
-        <button class="nav-item" data-view="analytics"><span class="nav-index">04</span><span>统计看板</span></button>
-        <button class="nav-item" data-view="users"><span class="nav-index">05</span><span>账号管理</span></button>
-        <button class="nav-item" data-view="experiences"><span class="nav-index">06</span><span>项目经验</span></button>
-        <button class="nav-item" data-view="models"><span class="nav-index">07</span><span>研发设置</span></button>{% endif %}
+        <button class="nav-item active" data-view="dashboard"><svg class="nav-symbol" aria-hidden="true"><use href="/static/editorial-icons.svg#home"/></svg><span class="nav-index">01</span><span>任务总览</span></button>
+        <button class="nav-item" data-view="requests"><svg class="nav-symbol" aria-hidden="true"><use href="/static/editorial-icons.svg#clipboard"/></svg><span class="nav-index">02</span><span>交付记录</span></button>
+        {% if user.role == 'admin' %}<button class="nav-item" data-view="projects"><svg class="nav-symbol" aria-hidden="true"><use href="/static/editorial-icons.svg#cube"/></svg><span class="nav-index">03</span><span>自主项目</span></button>
+        <button class="nav-item" data-view="analytics"><svg class="nav-symbol" aria-hidden="true"><use href="/static/editorial-icons.svg#chart"/></svg><span class="nav-index">04</span><span>统计看板</span></button>
+        <button class="nav-item" data-view="users"><svg class="nav-symbol" aria-hidden="true"><use href="/static/editorial-icons.svg#user"/></svg><span class="nav-index">05</span><span>账号管理</span></button>
+        <button class="nav-item" data-view="experiences"><svg class="nav-symbol" aria-hidden="true"><use href="/static/editorial-icons.svg#book"/></svg><span class="nav-index">06</span><span>项目经验</span></button>
+        <button class="nav-item" data-view="models"><svg class="nav-symbol" aria-hidden="true"><use href="/static/editorial-icons.svg#gear"/></svg><span class="nav-index">07</span><span>研发设置</span></button>{% endif %}
       </nav>
       <div class="sidebar-character-stage" data-scene="editorial">
         <div id="sidebar-orb-character" class="autodev-orb" role="button" tabindex="0" aria-label="AutoDev 动态角色">
           <canvas class="autodev-orb-canvas" aria-hidden="true"></canvas>
           <svg class="autodev-orb-fallback" aria-hidden="true"></svg>
         </div>
+        <span class="theme-scene-note" id="theme-scene-note" aria-hidden="true">{{ appearance_theme.motto|default('让想法，\n更快落地。') }}</span>
         <button type="button" class="orb-activity-console" id="orb-activity-console" aria-expanded="false" aria-controls="sidebar-task-popover" aria-haspopup="dialog" aria-label="展开任务列表" hidden>
           <span class="orb-presence"><i aria-hidden="true"></i><b>观察流水线</b><span id="orb-task-index">暂无任务</span></span>
           <span class="orb-task-summary"><small id="orb-current-task">当前输出</small><span id="orb-current-output">等待新的研发或问题分析任务</span></span>
@@ -50,6 +54,7 @@
         </button>
       </div>
       <div class="sidebar-foot">
+        <span class="sidebar-theme-edition"><b>AutoDev</b><span id="sidebar-theme-name">{{ appearance_theme.number|default('01') }} · {{ appearance_theme.name }}</span></span>
         <span class="sidebar-edition">AUTONOMOUS<br>SOFTWARE DEVELOPMENT<br>AND DELIVERY PLATFORM</span>
       </div>
     </aside>
@@ -67,6 +72,7 @@
             </section>
           </div>
           <span class="clock" id="clock" hidden></span><button class="btn btn-secondary analysis-launch" id="open-analysis"><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#search"></use></svg>问题分析</button><button class="btn btn-primary" id="open-request"><svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#plus"></use></svg>发起自主研发</button>
+          <button class="appearance-trigger" id="open-appearance" type="button" title="选择个人主题" aria-label="选择个人主题"><span class="appearance-trigger-icon" aria-hidden="true">◐</span><span id="appearance-current-name">{{ appearance_theme.name|default('薄荷花园') }}</span></button>
           <div class="profile"><div class="avatar">{{ user.display_name[0] }}</div><div><b>{{ user.display_name }}</b><span>{{ '管理员' if user.role == 'admin' else '项目经理' }}</span></div><button id="logout" title="退出登录" aria-label="退出登录">↪</button></div>
           <div class="system-status offline" id="runner-status"><i></i><span>执行器离线</span></div>
         </div>
@@ -83,6 +89,7 @@
           <div class="section-heading live-heading"><div class="heading-copy"><p class="eyebrow">运行流水线 / LIVE PIPELINE</p><h2><i class="live-orbit" aria-hidden="true"></i>正在运行的任务</h2><span class="section-summary" id="active-summary"></span></div><div class="capacity-status" id="capacity-status">并发槽位 0 / 5</div></div>
           <div class="run-grid" id="active-runs"></div>
         </section>
+        <section class="recent-panel" aria-label="最近任务">
         <div class="section-heading compact"><div class="heading-copy"><p class="eyebrow">最近动态 / RECENT SIGNALS</p><h2>最近任务</h2><span class="section-summary" id="recent-summary"></span></div><button class="text-button" data-view-link="requests">查看全部任务 <svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#arrow-right"></use></svg></button></div>
         <form class="recent-filters" id="recent-filters" aria-label="最近任务筛选">
           <label class="recent-search"><span class="sr-only">筛选近期任务</span><input id="recent-keyword" type="search" name="keyword" placeholder="筛选近期任务：编号、标题或项目"></label>
@@ -91,6 +98,7 @@
           <button type="button" class="btn btn-ghost" id="reset-recent-filters">重置</button>
         </form>
         <div class="table-card recent-task-table"><table><thead><tr><th>#</th><th>需求名称</th><th>所属项目</th><th>交付方式</th><th>状态</th><th>最新输出</th><th>耗时</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="recent-table"></tbody></table></div>
+        </section>
       </section>
 
       <section class="view" id="view-requests">
@@ -288,6 +296,8 @@
       sidebarCharacter.destroy();
     }, {once: true});
   </script>
+  <script>window.__APPEARANCE__={{ appearance|tojson }};window.__THEME__={{ appearance_theme|default({})|tojson }};</script>
+  <script type="module" src="/static/appearance-ui.js?v={{ app_version }}"></script>
   <script type="module" src="/static/orb-scene.js?v={{ app_version }}"></script>
   <script src="/static/brand-media.js?v={{ app_version }}"></script>
   <script src="/static/task-dialog.js?v={{ app_version }}"></script>

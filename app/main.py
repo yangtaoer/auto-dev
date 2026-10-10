@@ -62,7 +62,7 @@ from .security import hash_password, verify_password
 from .services.delivery import ArtifactService, Mailer
 from .services.blocker_summary import summarize_blocker
 from .services.tfs import TfsClient, recoverable_preflight_failure
-from .services import project_learning, model_settings, release_coordination, task_controls, request_followups
+from .services import project_learning, model_settings, release_coordination, task_controls, request_followups, ui_preferences
 
 
 @asynccontextmanager
@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.7",
+    version="1.0-Beta.8",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -92,6 +92,13 @@ templates = Jinja2Templates(directory=ROOT / "app" / "templates")
 class LoginInput(BaseModel):
     username: str = Field(min_length=1, max_length=80)
     password: str = Field(min_length=1, max_length=200)
+
+
+class AppearanceInput(BaseModel, extra="forbid"):
+    theme_id: str = Field(min_length=1, max_length=64)
+    font_size: Literal["normal", "large"] = "normal"
+    density: Literal["compact", "comfortable"] = "compact"
+    motion: Literal["full", "reduced", "static"] = "full"
 
 
 class UserInput(BaseModel):
@@ -812,11 +819,13 @@ def login_brand_media() -> dict[str, str]:
 def login_page(request: Request):
     if get_session_user(request.cookies.get("autodev_session")):
         return RedirectResponse("/" + request_deep_link(request), status_code=303)
+    login_theme = ui_preferences.theme(request.cookies.get("autodev_theme"))
     return templates.TemplateResponse(
         request,
         "login.html",
         {"demo_enabled": settings.seed_demo, "app_version": settings.runner_version,
-         "login_media": login_brand_media()},
+         "login_media": login_brand_media(), "appearance": {**ui_preferences.DEFAULTS, "theme_id": login_theme["id"]},
+         "appearance_style": ui_preferences.style(login_theme["id"]), "appearance_theme": login_theme},
     )
 
 
@@ -825,10 +834,13 @@ def home(request: Request):
     user = get_session_user(request.cookies.get("autodev_session"))
     if not user:
         return RedirectResponse("/login" + request_deep_link(request), status_code=303)
+    appearance = ui_preferences.get(user["id"])
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"user": public_user(user), "app_version": settings.runner_version},
+        {"user": public_user(user), "app_version": settings.runner_version,
+         "appearance": appearance, "appearance_style": ui_preferences.style(appearance["theme_id"]),
+         "appearance_theme": ui_preferences.theme(appearance["theme_id"])},
     )
 
 
@@ -842,6 +854,7 @@ def login(payload: LoginInput, response: Response) -> dict:
         "autodev_session", token, httponly=True, samesite="strict", secure=settings.secure_cookies,
         max_age=12 * 60 * 60, path="/",
     )
+    set_theme_hint(response, ui_preferences.get(user["id"])["theme_id"])
     return {"user": public_user(user), "expires_at": expires}
 
 
@@ -855,6 +868,27 @@ def logout(response: Response, autodev_session: Annotated[str | None, Cookie()] 
 @app.get("/api/me")
 def me(user: Annotated[dict, Depends(current_user)]) -> dict:
     return {"user": public_user(user)}
+
+
+def set_theme_hint(response: Response, theme_id: str) -> None:
+    # Only a cosmetic hint for the anonymous login screen; never identity/auth.
+    response.set_cookie("autodev_theme", theme_id, max_age=365 * 24 * 60 * 60,
+                        samesite="strict", secure=settings.secure_cookies, path="/")
+
+
+@app.get("/api/me/appearance")
+def get_appearance(user: Annotated[dict, Depends(current_user)]) -> dict:
+    return {"appearance": ui_preferences.get(user["id"])}
+
+
+@app.put("/api/me/appearance")
+def save_appearance(payload: AppearanceInput, response: Response, user: Annotated[dict, Depends(current_user)]) -> dict:
+    try:
+        appearance = ui_preferences.save(user["id"], payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    set_theme_hint(response, appearance["theme_id"])
+    return {"appearance": appearance}
 
 
 @app.get("/api/dashboard")
