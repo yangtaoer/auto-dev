@@ -15,7 +15,7 @@ STATUS.waiting_retry='连接恢复后自动重试';
 ANALYSIS_STATUS.waiting_retry=STATUS.waiting_retry;
 STATUS.waiting_analysis_sync=ANALYSIS_STATUS.waiting_analysis_sync='分析完成，待同步交付';
 const escapeHtml = (value='') => String(value).replace(/[&<>'"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-const editorialIcon = name => `<svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#${name}"></use></svg>`;
+const editorialIcon = name => globalThis.AutoDevThemeIcons?.markup(name) || `<svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#${name}"></use></svg>`;
 const fmt = value => value ? new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(value)) : '—';
 const fmtStepTime = value => value ? new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date(value)) : '—';
 const fmtDuration = value => {const seconds=Number(value);if(!Number.isFinite(seconds)||seconds<0)return '—';if(seconds<60)return `${Math.max(1,Math.round(seconds))} 秒`;const minutes=Math.floor(seconds/60),hours=Math.floor(minutes/60),days=Math.floor(hours/24);if(days)return `${days} 天 ${hours%24} 小时`;if(hours)return `${hours} 小时 ${minutes%60} 分`;return `${minutes} 分`;};

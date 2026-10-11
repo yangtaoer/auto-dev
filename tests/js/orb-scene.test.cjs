@@ -10,11 +10,12 @@ async function gardenScene({seed = 17, cryptoSeed = 4321, theme} = {}) {
   // All three modules use the real Three geometry, materials and transforms.
   // Only browser ownership and the GPU renderer are stubbed for Node.
   const moduleURL = file => pathToFileURL(path.join(__dirname, '../../app/static', file));
-  const [THREE, {AutoDevGarden}, gardenMotion, {ThemeDiorama}] = await Promise.all([
+  const [THREE, {AutoDevGarden}, gardenMotion, {ThemeDiorama}, {ThemePerformanceDirector}] = await Promise.all([
     import(moduleURL('vendor/three/three.module.js')),
     import(moduleURL('orb-garden.js')),
     import(moduleURL('garden-motion.js')),
     import(moduleURL('theme-scenes.js')),
+    import(moduleURL('theme-choreography.js')),
   ]);
   const {GardenDirector, sampleGarden, gardenEpisodes, gardenDuration, GARDEN_DURATIONS} = gardenMotion;
   let rendererOptions, canceled = 0, now = 100;
@@ -43,7 +44,7 @@ async function gardenScene({seed = 17, cryptoSeed = 4321, theme} = {}) {
   const Observer = class {observe() {} disconnect() {this.disconnected = true;}};
   const source = fs.readFileSync(path.join(__dirname, '../../app/static/orb-scene.js'), 'utf8')
     .replace(/^import .*$/gm, '').replace('export class AutoDevOrbScene', 'class AutoDevOrbScene');
-  vm.runInNewContext(source, {THREE: {...THREE, WebGLRenderer: Renderer}, AutoDevGarden, GardenDirector, ThemeDiorama,
+  vm.runInNewContext(source, {THREE: {...THREE, WebGLRenderer: Renderer}, AutoDevGarden, GardenDirector, ThemeDiorama, ThemePerformanceDirector,
     document, window, ResizeObserver: Observer, IntersectionObserver: Observer, performance: {now: () => now},
     requestAnimationFrame: () => 1, cancelAnimationFrame() {canceled++;}});
   const scene = new window.AutoDevOrbScene(orb);
@@ -374,6 +375,44 @@ test('new worlds own distinct moving props, freeze with reduced motion and keep 
     assert.equal(env.orbit.visible,false);env.update({...base,work:1});assert.equal(env.orbit.visible,true);
     scene.destroy();
   }
+});
+
+test('every theme story couples real prop motion to body expressions without allocating new GPU resources',async()=>{
+  const {themeItinerary}=await import(pathToFileURL(path.join(__dirname,'../../app/static/theme-choreography.js')));
+  for(const theme of themes){
+    const {scene,sampleGarden,THREE}=await gardenScene({theme});
+    const env=scene.scenery||scene.garden,resourceCount=scene.resources.size;
+    assert.ok(env.storyObjects.length||env.sparks.length||env.fallingLeaves.length||env.fish.length||env.balanceBlocks||env.mushroom,theme.id+' has extra physical story props');
+    for(const event of themeItinerary(theme.scene,17).events)for(const beat of [.08,.23,.39,.53,.69,.85,.98]){
+      scene.director.clock=(event.start+(event.end-event.start)*beat)*1000;
+      scene.renderGardenFrame(sampleGarden({mode:'idle'}),scene.director.clock,16);
+      assert.equal(scene.root.dataset.themeStory,event.id);assert.equal(env.group.userData.story,event.id);
+      assert.ok(scene.gardenFrame.themeMoment.amount>=0);
+      if(beat===.53)assert.ok(scene.gardenFrame.body.joy>0||Math.abs(scene.gardenFrame.body.sway)>0||scene.gardenFrame.body.hop>0,'face/body acknowledges its scene');
+      assert.equal(scene.resources.size,resourceCount,'no per-frame geometries or materials');
+      for(const object of [...env.storyObjects,...env.fallingLeaves,...env.fish,...env.coins,...env.bubbles,...env.mobiles,...env.fireflies.map(f=>f.point),env.lantern,env.chime,env.plane,env.jellyfish,env.satellite,env.planet].filter(Boolean)){
+        object.updateWorldMatrix(true,true);
+        const inverse=new THREE.Matrix4().copy(scene.ball.matrixWorld).invert(),point=new THREE.Vector3();
+        object.traverse(mesh=>{if(!mesh.isMesh||!mesh.visible)return;const positions=mesh.geometry.getAttribute('position');for(let i=0;i<positions.count;i++){
+          point.fromBufferAttribute(positions,i).applyMatrix4(mesh.matrixWorld).applyMatrix4(inverse);
+          assert.ok(point.length()>1.005,theme.id+' '+event.id+' '+object.name+' never intersects the actual orange ellipsoid: '+point.length());
+        }});
+      }
+    }
+    scene.destroy();
+  }
+});
+
+test('solar cell seams remain attached when panels fold and unfold',async()=>{
+  const theme=themes.find(t=>t.scene==='space'),{scene,THREE}=await gardenScene({theme});
+  for(const panel of scene.garden.solarPanels){
+    assert.equal(panel.children.length,3);
+    for(const yaw of [-.9,0,.9]){panel.rotation.y=yaw;panel.updateWorldMatrix(true,true);
+      const inverse=panel.matrixWorld.clone().invert();
+      panel.children.forEach((seam,i)=>{const center=new THREE.Vector3().setFromMatrixPosition(seam.matrixWorld).applyMatrix4(inverse);assert.ok(center.distanceTo(new THREE.Vector3(-.1+i*.1,0,0))<1e-6);});
+    }
+  }
+  scene.destroy();
 });
 
 test('ocean and porcelain ornaments follow the real head surface during squash and rebound',async()=>{

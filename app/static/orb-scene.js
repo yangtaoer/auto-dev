@@ -1,8 +1,9 @@
 /* The orange character and its physically connected miniature garden. */
 import * as THREE from './vendor/three/three.module.js';
-import {AutoDevGarden} from './orb-garden.js?v=1.0-Beta.8';
-import {GardenDirector} from './garden-motion.js?v=1.0-Beta.8';
-import {ThemeDiorama} from './theme-scenes.js?v=1.0-Beta.8';
+import {AutoDevGarden} from './orb-garden.js?v=1.0-Beta.9';
+import {GardenDirector} from './garden-motion.js?v=1.0-Beta.9';
+import {ThemeDiorama} from './theme-scenes.js?v=1.0-Beta.9';
+import {ThemePerformanceDirector} from './theme-choreography.js?v=1.0-Beta.9';
 
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 const instanceSeed = () => {
@@ -143,7 +144,8 @@ export class AutoDevOrbScene {
       resources:this.resources,mesh:this.mesh.bind(this),theme:this.theme,seed:this.motionSeed};
     const kind = this.theme.scene;
     this.garden = ['garden','moon','autumn'].includes(kind) ? new AutoDevGarden(host) : new ThemeDiorama(host);
-    this.scenery = ['moon','garden'].includes(kind) ? new ThemeDiorama(host) : null;
+    this.scenery = ['moon','garden','autumn'].includes(kind) ? new ThemeDiorama(host) : null;
+    this.performance = new ThemePerformanceDirector(kind, this.motionSeed);
     this.environmentResources = new Set([...this.resources].filter(item=>!before.has(item)));
     const palette = this.theme.scenePalette;
     if (palette) {
@@ -187,7 +189,7 @@ export class AutoDevOrbScene {
   paintEyes(now) {
     const driver = this.orb.motionDriver, pose = this.gardenFrame?.body || {};
     const joy = clamp(pose.joy || 0, 0, 1);
-    const squeeze = ['gather', 'spring'].includes(this.gardenFrame?.phase) ? clamp(pose.squeeze || 0, 0, 1) : 0;
+    const squeeze = clamp(pose.squeeze || 0, 0, 1);
     let polygons;
     if (driver?._currentPolys) {
       const polys = driver._currentPolys(clamp(driver.eyeMorph.x, 0, 1));
@@ -288,7 +290,8 @@ export class AutoDevOrbScene {
     if (this.disposed || this.paused()) return false;
     // The running render loop picks up interaction intent. Restarting it on
     // pointer events would continually zero the elapsed time and freeze motion.
-    return this.director.react(kind);
+    const themed = this.performance?.react(kind, this.director.clock / 1000);
+    return this.director.react(kind) || themed;
   }
   draw(now) {
     if (this.disposed || !this.renderer) return;
@@ -301,6 +304,16 @@ export class AutoDevOrbScene {
   renderGardenFrame(frame, now = performance.now(), deltaMs = 1000 / 60) {
     if(this.orb.appearanceMotion === 'reduced')frame={...frame,wind:frame.wind*.25,peek:0,hat:0,crown:0,petals:0,
       body:{...frame.body,hop:frame.body.hop*.15,sway:frame.body.sway*.25,roll:frame.body.roll*.25,stretch:1+(frame.body.stretch-1)*.2}};
+    const moment = this.performance.sample({time:this.director.clock/1000,mode:this.director.mode,
+      frozen:Boolean(this.orb.reducedMotion || this.orb.manualPaused || document.hidden || !this.visible),
+      gentle:this.orb.appearanceMotion==='reduced',attachment:frame.hat});
+    const body = {...frame.body};
+    for(const key of ['hop','sway','depth','roll','pitch','yaw','gazeX','gazeY'])body[key]+=moment.pose[key];
+    body.stretch=clamp(body.stretch+moment.pose.stretch,.78,1.19);
+    body.joy=Math.max(body.joy,moment.pose.joy);body.squeeze=Math.max(body.squeeze,moment.pose.squeeze);
+    body.wink=Math.min(body.wink,moment.pose.wink);
+    // The folded crown uses the same physical attachment path as a caught leaf.
+    frame={...frame,hat:Math.max(frame.hat,moment.id==='folded-crown'?moment.reveal:0),body,themeMoment:moment};
     this.gardenFrame = frame;
     const pose = frame.body, driver = this.orb.motionDriver;
     const intent = Math.max(frame.peek, frame.hat, frame.crown, frame.work * .7);
@@ -309,7 +322,7 @@ export class AutoDevOrbScene {
     const nearby = Boolean(this.orb.pointer.near);
     const pointerWeight = nearby ? .64 - intent * .25 : .18 * (1 - intent * .6);
     const environmentFrame={...frame,absoluteTime:this.director.clock/1000,reduced:Boolean(this.orb.reducedMotion)};
-    const focus=(this.scenery||this.garden).focus?.(environmentFrame);
+    const focus=moment.amount>.03 && frame.hat<.01 ? moment.focus : (this.scenery||this.garden).focus?.(environmentFrame);
     const gazeX = clamp((focus?.x ?? pose.gazeX) + this.orb.pointer.targetX * pointerWeight, -1.2, 1.2);
     const gazeY = clamp((focus?.y ?? pose.gazeY) + this.orb.pointer.targetY * pointerWeight, -1.1, 1.1);
     const follow = 1 - Math.exp(-Math.max(0, deltaMs) / 95);
@@ -331,6 +344,8 @@ export class AutoDevOrbScene {
     this.root.dataset.gardenMode = this.mode();
     this.root.dataset.gardenPhase = frame.phase;
     this.root.dataset.gardenEpisode = frame.episode || frame.phase;
+    this.root.dataset.themeStory = moment.id;
+    this.root.dataset.themeBeat = moment.phase;
     const shadowInterval = 1000 / 30;
     this.renderer.shadowMap.needsUpdate = this.shadowLastAt === null || now - this.shadowLastAt >= shadowInterval - .5;
     if (this.renderer.shadowMap.needsUpdate) {
@@ -354,7 +369,7 @@ export class AutoDevOrbScene {
     this.renderer?.dispose();
     this.canvas?.remove();
     this.root.classList.remove('is-scene');
-    for (const key of ['gardenMode', 'gardenPhase', 'gardenEpisode']) delete this.root.dataset[key];
+    for (const key of ['gardenMode', 'gardenPhase', 'gardenEpisode','themeStory','themeBeat']) delete this.root.dataset[key];
   }
 }
 window.AutoDevOrbScene = AutoDevOrbScene;

@@ -1,0 +1,190 @@
+/* Ten component dialects. Color tokens are only the palette; each dialect
+ * also owns shape, material, icon penwork, table rhythm and interaction. */
+html[data-theme] .mint-ui :is(.btn,.appearance-trigger,.ledger-select>button,.ledger-date>button){position:relative;isolation:isolate;transition:background .18s,border-color .18s,box-shadow .18s,transform .18s}
+html[data-theme] .mint-ui :is(.btn-primary,#open-request,.btn-primary#request-submit-button){color:#231c16;font-weight:650}
+html[data-theme] .mint-ui :is(button,a,input,textarea):focus-visible{outline:2px solid var(--skin-info);outline-offset:3px}
+html[data-theme] .mint-ui :is(.run-card,.project-card,.analytics-card,.experience-card,.detail-card,.model-settings-panel,.account-registry){border-radius:var(--skin-radius)}
+html[data-theme] .mint-ui .theme-icon{overflow:visible;stroke:currentColor;stroke-width:1.6;fill:none;stroke-linecap:round;stroke-linejoin:round}
+html[data-theme] .mint-workspace .nav-symbol{display:block;width:24px;height:24px;flex-basis:24px}
+html[data-theme] .mint-ui .theme-icon-stamp{opacity:.60;stroke-width:1.1}
+html[data-theme] .mint-workspace .nav-item{gap:9px}
+html[data-theme] .mint-ui :is(.detail-card,.project-card,.experience-card){position:relative;isolation:isolate}
+html[data-theme] .mint-ui :is(.task-tabs,.record-filters,.recent-filters){gap:8px}
+html[data-theme] .mint-workspace :is(td,th){background-clip:padding-box}
+html[data-theme] .mint-workspace td{transition:background .16s}
+html[data-theme] .mint-ui :is(.modal-card,.drawer,.appearance-dialog){box-shadow:var(--skin-shadow),0 24px 80px #0003}
+html[data-theme] .mint-ui :is(.artifact-file-link,.artifact-link){border-radius:var(--skin-radius)}
+html[data-theme] .mint-ui :is(.effort-option,.acceptance-option){border-radius:var(--skin-radius)}
+
+/* 01 / Botanical glass: seed-shaped controls and softly veined surfaces. */
+html[data-theme=mint-garden] .mint-ui :is(.btn,.appearance-trigger){border-radius:18px 18px 18px 6px;box-shadow:inset 0 1px 0 #fff9,0 3px 6px #21493609}
+html[data-theme=mint-garden] .mint-ui :is(.btn-primary,#open-request,.btn-primary#request-submit-button){background:linear-gradient(145deg,#ff9763,var(--skin-accent) 68%);border-color:#ef693f;box-shadow:inset 0 1px 0 #ffe9c3a0,0 3px 8px #ed68331d}
+html[data-theme=mint-garden] .mint-ui .btn:hover{transform:translateY(-1px);box-shadow:inset 0 1px 0 #fff9,0 5px 9px #315b3020}
+html[data-theme=mint-garden] .mint-ui :is(.ledger-select>button,.ledger-date>button,input,textarea):not([type=radio]):not([type=checkbox]){border-radius:12px;background-image:linear-gradient(#fff8,#fff0);box-shadow:inset 0 2px 4px #658c7010}
+html[data-theme=mint-garden] .mint-workspace :is(.run-card,.recent-panel,.control-strip),html[data-theme=mint-garden] .mint-ui :is(.project-card,.analytics-card,.experience-card,.detail-card,.model-settings-panel){border-radius:17px 7px 17px 7px;background-image:radial-gradient(ellipse at 100% 0,#dbeadf75,transparent 43%),linear-gradient(120deg,#fff,#fafff7);box-shadow:inset 0 1px 0 #fff,0 5px 18px #36553c0e}
+html[data-theme=mint-garden] .mint-workspace .nav-item.active{border-radius:19px 19px 19px 6px;background:#fafff789;box-shadow:inset 0 1px 0 #fff7}
+html[data-theme=mint-garden] .mint-ui .theme-icon{stroke-width:1.65;stroke-linecap:round}
+html[data-theme=mint-garden] .mint-ui .theme-icon-stamp{stroke:var(--skin-success);opacity:.9}
+html[data-theme=mint-garden] .mint-workspace :is(th,.recent-task-table th){background:linear-gradient(#f7fbf4,#eaf4e9);border-bottom:2px solid #d3e3d5}
+html[data-theme=mint-garden] .mint-workspace tbody tr:nth-child(even){background:#f8fcf6}
+html[data-theme=mint-garden] .mint-ui :is(.status-dot,.status-tag){border-radius:14px 14px 14px 4px;border:1px solid color-mix(in srgb,currentColor 13%,transparent)}
+html[data-theme=mint-garden] .mint-ui .task-tabs button[aria-selected=true]{background:#ecf7e7;border-radius:13px 13px 0 0}
+
+/* 02 / Observatory: slim moon rings, luminous seams and stellar row markers. */
+html[data-theme=moon-courtyard] .mint-ui :is(.btn,.appearance-trigger){border-radius:22px;background:linear-gradient(160deg,#224856,#143440);box-shadow:inset 0 1px 0 #bce4ec18;border-color:#537580}
+html[data-theme=moon-courtyard] .mint-ui :is(.btn-primary,#open-request,.btn-primary#request-submit-button){background:linear-gradient(140deg,#ffad63,#ff793c);border-color:#e5a567;box-shadow:inset 0 1px 0 #ffe9c775,0 0 14px #ffb16918}
+html[data-theme=moon-courtyard] .mint-ui .btn:hover{box-shadow:0 0 0 1px #8db6c6,0 0 16px #98cbdf20}
+html[data-theme=moon-courtyard] .mint-workspace :is(.control-strip,.run-card,.recent-panel),html[data-theme=moon-courtyard] .mint-ui :is(.project-card,.analytics-card,.experience-card,.detail-card,.model-settings-panel){border-radius:15px 3px 15px 3px;background-image:radial-gradient(circle at 12px 12px,#ffda9b8f 1px,transparent 1.6px),radial-gradient(circle at 25px 9px,#aecedf58 .6px,transparent 1.5px),linear-gradient(135deg,#173e4b,#102f3b);background-repeat:no-repeat;box-shadow:inset 0 1px 0 #6d9bab30,0 6px 20px #0002;border-color:#3d6170}
+html[data-theme=moon-courtyard] .mint-workspace .nav-item.active{border-radius:24px;background:linear-gradient(120deg,#ffca6a12,#bfeaff09);border:1px solid #607b7d;box-shadow:inset 3px 0 0 #edcf8c}
+html[data-theme=moon-courtyard] .mint-ui .theme-icon{stroke-width:1.35}
+html[data-theme=moon-courtyard] .mint-ui .theme-icon-stamp{stroke:#efd7a0;opacity:.85}
+html[data-theme=moon-courtyard] .mint-workspace table{border-collapse:separate;border-spacing:0}
+html[data-theme=moon-courtyard] .mint-workspace :is(th,.recent-task-table th){background:#183c48;border-bottom:1px solid #648391;font-weight:500;letter-spacing:.05em}
+html[data-theme=moon-courtyard] .mint-workspace td{border-bottom-style:dashed;border-bottom-color:#375461}
+html[data-theme=moon-courtyard] .mint-workspace tbody tr:nth-child(even){background:#143441}
+html[data-theme=moon-courtyard] .mint-ui :is(.status-dot,.status-tag){border-radius:20px;border:1px solid color-mix(in srgb,currentColor 26%,transparent);box-shadow:inset 0 0 7px #d0edfc09}
+html[data-theme=moon-courtyard] .mint-ui .task-tabs button[aria-selected=true]{background:#b6d2e410;border-bottom-color:#eed69a}
+
+/* 03 / Cloud terminal: air-filled capsules and perforated boarding passes. */
+html[data-theme=sky-atelier] .mint-ui :is(.btn,.appearance-trigger){border-radius:24px;border-color:#a9cdea;box-shadow:0 3px 0 #d6e9fa;background:linear-gradient(#fff,#f0f8ff)}
+html[data-theme=sky-atelier] .mint-ui :is(.btn-primary,#open-request,.btn-primary#request-submit-button){background:linear-gradient(145deg,#ffa463,#ff642d);border-color:#ec6e39;box-shadow:0 3px 0 #d5481f30,inset 0 1px 0 #fff9}
+html[data-theme=sky-atelier] .mint-ui .btn:hover{transform:translateY(-2px);box-shadow:0 5px 0 #c7e0f5}
+html[data-theme=sky-atelier] .mint-ui .btn:active{transform:translateY(1px);box-shadow:none}
+html[data-theme=sky-atelier] .mint-workspace :is(.control-strip,.run-card,.recent-panel),html[data-theme=sky-atelier] .mint-ui :is(.project-card,.analytics-card,.experience-card,.detail-card,.model-settings-panel){border-radius:20px;background:linear-gradient(165deg,#fff,#f5fbff);box-shadow:0 7px 18px #5988c013,inset 0 1px 0 #fff;border-color:#b8d7ed}
+html[data-theme=sky-atelier] .mint-workspace .run-top{border-bottom-style:dashed;border-color:#afd5ef}
+html[data-theme=sky-atelier] .mint-workspace .run-project-icon{border-radius:50%;box-shadow:0 2px 0 #e9d5be}
+html[data-theme=sky-atelier] .mint-ui .theme-icon{stroke-width:1.8;stroke-linecap:round}
+html[data-theme=sky-atelier] .mint-ui .theme-icon-stamp{stroke:var(--skin-info)}
+html[data-theme=sky-atelier] .mint-workspace :is(th,.recent-task-table th){background:linear-gradient(#ebf6ff,#e1f0fd);border-bottom:2px dashed #a5c8e7;letter-spacing:.03em}
+html[data-theme=sky-atelier] .mint-workspace td{border-bottom-style:dashed;border-bottom-color:#cfdeef}
+html[data-theme=sky-atelier] .mint-workspace tbody tr:hover{background:#e6f4ff}
+html[data-theme=sky-atelier] .mint-ui :is(.status-dot,.status-tag){border-radius:24px;box-shadow:inset 0 1px 0 #fff8}
+html[data-theme=sky-atelier] .mint-ui .task-tabs{border-radius:16px;background:#edf7ff;padding:4px}
+html[data-theme=sky-atelier] .mint-ui .task-tabs button[aria-selected=true]{border-radius:13px;background:#fff;box-shadow:0 2px 5px #7293ad1a;border-bottom-color:transparent}
+
+/* 04 / Autumn ledger: library cards, deckled rules and letterpress controls. */
+html[data-theme=autumn-court] .mint-ui :is(.btn,.appearance-trigger){border-radius:5px;border:1px solid #c3a887;box-shadow:inset 0 1px 0 #fff9,0 2px 0 #bca37c35;background:linear-gradient(#fff9ed,#f5ead7);font-family:Georgia,'Noto Serif SC','SimSun',serif}
+html[data-theme=autumn-court] .mint-ui :is(.btn-primary,#open-request,.btn-primary#request-submit-button){background:linear-gradient(#f7a25b,#e75728);border-color:#c36738;box-shadow:inset 0 1px 0 #ffe6baba,0 2px 0 #924b2835}
+html[data-theme=autumn-court] .mint-ui .btn:hover{border-color:#8b6745;box-shadow:inset 0 1px 0 #fff9,0 3px 5px #896a3425}
+html[data-theme=autumn-court] .mint-workspace :is(.control-strip,.run-card,.recent-panel),html[data-theme=autumn-court] .mint-ui :is(.project-card,.analytics-card,.experience-card,.detail-card,.model-settings-panel){border-radius:5px;background-image:repeating-linear-gradient(0deg,#b69c6505 0px,#b69c6505 1px,transparent 1px,transparent 4px),linear-gradient(145deg,#fffcf5,#fff7e7);box-shadow:inset 0 0 0 3px #fffcf1,0 4px 13px #77573510;border-color:#ccba9b}
+html[data-theme=autumn-court] .mint-workspace .nav-item.active{border:1px solid #c6a47d;border-radius:3px;background:#fff8e9;box-shadow:2px 2px 0 #a7875d20}
+html[data-theme=autumn-court] .mint-ui .theme-icon{stroke-width:1.45;stroke-linecap:butt}
+html[data-theme=autumn-court] .mint-ui .theme-icon-stamp{stroke:#b3832e;opacity:1}
+html[data-theme=autumn-court] .mint-workspace :is(th,.recent-task-table th){background:#f2e3c9;border-bottom:3px double #b59a70;font-family:Georgia,'Noto Serif SC','SimSun',serif;letter-spacing:.06em}
+html[data-theme=autumn-court] .mint-workspace td{border-bottom:1px dotted #c6b397}
+html[data-theme=autumn-court] .mint-workspace tbody tr:nth-child(even){background:#fbf5e8}
+html[data-theme=autumn-court] .mint-ui :is(.status-dot,.status-tag){border:1px dotted currentColor;border-radius:3px;font-family:Georgia,'SimSun',serif}
+html[data-theme=autumn-court] .mint-ui .task-tabs button[aria-selected=true]{background:#f4e6c8;border-bottom:3px double #a57035}
+
+/* 05 / Fold studio: layered paper cuts, visible creases and pencil guidelines. */
+html[data-theme=paper-workshop] .mint-ui :is(.btn,.appearance-trigger){border-radius:2px;border-color:#bdb8a8;box-shadow:2px 3px 0 #c5bca845;background:#fffdf5}
+html[data-theme=paper-workshop] .mint-ui :is(.btn-primary,#open-request,.btn-primary#request-submit-button){background:linear-gradient(135deg,#ffac76,var(--skin-accent));border-color:#aa6c44;box-shadow:3px 3px 0 #b596684a}
+html[data-theme=paper-workshop] .mint-ui .btn:hover{transform:translate(-1px,-1px);box-shadow:4px 5px 0 #c5bca856}
+html[data-theme=paper-workshop] .mint-ui .btn:active{transform:translate(1px,2px);box-shadow:none}
+html[data-theme=paper-workshop] .mint-workspace :is(.control-strip,.run-card,.recent-panel),html[data-theme=paper-workshop] .mint-ui :is(.project-card,.analytics-card,.experience-card,.detail-card,.model-settings-panel){border-radius:2px;border-color:#ccc6b6;background:#fffdf6;box-shadow:2px 2px 0 #f4f0e5,3px 3px 0 #b9b09c,5px 6px 0 #c6bea823}
+html[data-theme=paper-workshop] .mint-ui :is(.project-card,.detail-card)::after{content:'';position:absolute;right:0;top:0;width:18px;height:18px;background:linear-gradient(45deg,#ded5bd 48%,#b0a58c 50%,var(--skin-bg) 54%);pointer-events:none}
+html[data-theme=paper-workshop] .mint-ui .theme-icon{stroke-width:1.5;stroke-linejoin:miter;stroke-linecap:square}
+html[data-theme=paper-workshop] .mint-ui .theme-icon-stamp{stroke:#9c8f77;stroke-dasharray:1 1}
+html[data-theme=paper-workshop] .mint-workspace :is(th,.recent-task-table th){background:repeating-linear-gradient(-45deg,#b3a58808 0 1px,transparent 1px 5px),#f0ece0;border-bottom:2px solid #c4bdaa;letter-spacing:.04em}
+html[data-theme=paper-workshop] .mint-workspace td{border-bottom:1px dashed #c9c1ad}
+html[data-theme=paper-workshop] .mint-workspace tbody tr:nth-child(even){background:#fbf9f1}
+html[data-theme=paper-workshop] .mint-ui :is(.status-dot,.status-tag){border-radius:2px;border:1px dashed color-mix(in srgb,currentColor 45%,transparent);box-shadow:1px 1px 0 #b4ad941c}
+html[data-theme=paper-workshop] .mint-ui .task-tabs button[aria-selected=true]{background:#fffbed;border-radius:3px 3px 0 0;box-shadow:inset 0 2px 0 #e8d9b9;border-bottom:2px dashed #a99168}
+
+/* 06 / Submarine lab: lenticular glass, sonar seams and inset instrument pills. */
+html[data-theme=deep-ocean] .mint-ui :is(.btn,.appearance-trigger){border-radius:24px 8px 24px 8px;background:linear-gradient(165deg,#285e72,#0a3243);border:1px solid #498d9e;box-shadow:inset 0 1px 0 #8bebee35,inset 0 -2px 4px #031b2780}
+html[data-theme=deep-ocean] .mint-ui :is(.btn-primary,#open-request,.btn-primary#request-submit-button){background:linear-gradient(#ffb782,#ff7846);border-color:#b8866c;box-shadow:inset 0 2px 0 #ffdcb67f,0 0 12px #65e6ed13}
+html[data-theme=deep-ocean] .mint-ui .btn:hover{border-color:#8eeaf2;box-shadow:inset 0 1px 0 #c4fdff60,0 0 14px #73d9f529}
+html[data-theme=deep-ocean] .mint-workspace :is(.control-strip,.run-card,.recent-panel),html[data-theme=deep-ocean] .mint-ui :is(.project-card,.analytics-card,.experience-card,.detail-card,.model-settings-panel){border-radius:24px 8px 24px 8px;border-color:#3a7b90;background:radial-gradient(ellipse at 10% 0,#3f94ab30,transparent 53%),linear-gradient(135deg,#154656,#0d2f40);box-shadow:inset 0 1px 0 #87e1f638,inset 0 -1px 0 #02212f,0 7px 24px #0002}
+html[data-theme=deep-ocean] .mint-ui .theme-icon{stroke-width:1.45;stroke-linecap:round}
+html[data-theme=deep-ocean] .mint-ui .theme-icon-stamp{stroke:#83daea;opacity:.9}
+html[data-theme=deep-ocean] .mint-workspace :is(th,.recent-task-table th){background:linear-gradient(#165066,#0d3c51);border-bottom:2px solid #3f9bad;letter-spacing:.04em}
+html[data-theme=deep-ocean] .mint-workspace table{border-collapse:separate;border-spacing:0}
+html[data-theme=deep-ocean] .mint-workspace td{border-bottom-color:#256072;border-bottom-style:dotted}
+html[data-theme=deep-ocean] .mint-workspace tbody tr:nth-child(even){background:#113e4f}
+html[data-theme=deep-ocean] .mint-ui :is(.status-dot,.status-tag){border-radius:20px 6px 20px 6px;border:1px solid color-mix(in srgb,currentColor 32%,transparent);box-shadow:inset 0 1px 0 #cffcff15}
+html[data-theme=deep-ocean] .mint-ui .task-tabs button[aria-selected=true]{background:linear-gradient(135deg,#25778f60,#0c415c);border-radius:15px 5px 0 0;border-bottom-color:#7ce5ef}
+
+/* 07 / Orbital engineering: machined corners, datum ticks and screw heads. */
+html[data-theme=orbital-station] .mint-ui :is(.btn,.appearance-trigger){border-radius:2px;background:linear-gradient(#384047,#242a2f);border:1px solid #73808b;box-shadow:inset 0 1px 0 #acb6bd28,0 2px 0 #0f1215;font:600 12px/1.3 Consolas,'Microsoft YaHei UI',monospace;letter-spacing:.04em}
+html[data-theme=orbital-station] .mint-ui :is(.btn-primary,#open-request,.btn-primary#request-submit-button){background:linear-gradient(135deg,#ffac76,#f56a36);border-color:#be8154;box-shadow:inset 0 1px 0 #fff5,0 2px 0 #080a0c}
+html[data-theme=orbital-station] .mint-ui .btn:hover{border-color:#d1ab80;box-shadow:inset 0 0 0 1px #ceb08a50,0 2px 0 #0e1114}
+html[data-theme=orbital-station] .mint-workspace :is(.control-strip,.run-card,.recent-panel),html[data-theme=orbital-station] .mint-ui :is(.project-card,.analytics-card,.experience-card,.detail-card,.model-settings-panel){border-radius:2px;border-color:#6a747b;background:radial-gradient(circle at 5px 5px,#9ca2a6 1px,transparent 1.5px),radial-gradient(circle at calc(100% - 5px) 5px,#9ca2a6 1px,transparent 1.5px),linear-gradient(125deg,#30383f,#20262c);box-shadow:inset 0 1px 0 #aeb6bb30,inset 0 -1px 0 #0d1217,0 2px 0 #080b0c}
+html[data-theme=orbital-station] .mint-workspace .nav-item.active{background:#131a20;border:1px solid #b59678;border-radius:2px;box-shadow:inset 3px 0 0 #cc9b68}
+html[data-theme=orbital-station] .mint-ui .theme-icon{stroke-width:1.4;stroke-linecap:square;stroke-linejoin:miter}
+html[data-theme=orbital-station] .mint-ui .theme-icon-stamp{stroke:#bb9974;opacity:1}
+html[data-theme=orbital-station] .mint-workspace :is(th,.recent-task-table th){background:repeating-linear-gradient(90deg,transparent 0 19px,#79838916 19px 20px),#232e36;border-top:1px solid #657684;border-bottom:2px solid #a18971;font-family:Consolas,'Microsoft YaHei UI',monospace;letter-spacing:.08em}
+html[data-theme=orbital-station] .mint-workspace td{border-right:1px solid #3b444c;border-bottom:1px solid #414b54}
+html[data-theme=orbital-station] .mint-workspace tbody tr:nth-child(even){background:#262f36}
+html[data-theme=orbital-station] .mint-ui :is(.status-dot,.status-tag){border-radius:2px;border:1px solid currentColor;font-family:Consolas,'Microsoft YaHei UI',monospace;box-shadow:inset 0 1px 0 #e3f3ff15}
+html[data-theme=orbital-station] .mint-ui .task-tabs button[aria-selected=true]{background:linear-gradient(#3b403f,#252d32);border-bottom-color:#c49b77;box-shadow:inset 0 1px 0 #bdb6a830}
+
+/* 08 / Celadon studio: glazed convex controls and double blueware borders. */
+html[data-theme=porcelain-studio] .mint-ui :is(.btn,.appearance-trigger){border-radius:18px 7px 18px 7px;background:linear-gradient(165deg,#fff,#e4f1eb);border:1px solid #87b5b5;box-shadow:inset 0 2px 3px #fff,0 2px 3px #56878724}
+html[data-theme=porcelain-studio] .mint-ui :is(.btn-primary,#open-request,.btn-primary#request-submit-button){background:linear-gradient(160deg,#ffba8d,#ed6b43);border:1px solid #b67963;box-shadow:inset 0 2px 0 #ffefd3ae,0 2px 3px #99684b22}
+html[data-theme=porcelain-studio] .mint-ui .btn:hover{border-color:#4f8591;box-shadow:inset 0 2px 3px #fff,0 4px 8px #447c8330}
+html[data-theme=porcelain-studio] .mint-workspace :is(.control-strip,.run-card,.recent-panel),html[data-theme=porcelain-studio] .mint-ui :is(.project-card,.analytics-card,.experience-card,.detail-card,.model-settings-panel){border:3px double #92bcbc;border-radius:19px 5px 19px 5px;background:linear-gradient(145deg,#fff,#eff8f2);box-shadow:inset 0 2px 4px #fff,0 6px 18px #376c7a12}
+html[data-theme=porcelain-studio] .mint-workspace .nav-item.active{border-radius:17px 5px 17px 5px;background:#fbfffc;border:1px solid #8db5b4;box-shadow:inset 0 1px 0 #fff}
+html[data-theme=porcelain-studio] .mint-ui .theme-icon{stroke-width:1.45;stroke-linecap:round}
+html[data-theme=porcelain-studio] .mint-ui .theme-icon-stamp{stroke:#4e7fa4;opacity:.95}
+html[data-theme=porcelain-studio] .mint-workspace :is(th,.recent-task-table th){background:linear-gradient(#eff7f2,#dfeee9);border-bottom:3px double #8fbbc0;font-family:Georgia,'Noto Serif SC','SimSun',serif;font-weight:600;letter-spacing:.05em}
+html[data-theme=porcelain-studio] .mint-workspace td{border-bottom-color:#c1d7d7}
+html[data-theme=porcelain-studio] .mint-workspace tbody tr:nth-child(even){background:#f2f9f7}
+html[data-theme=porcelain-studio] .mint-ui :is(.status-dot,.status-tag){border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:12px 3px 12px 3px;box-shadow:inset 0 1px 0 #fff9}
+html[data-theme=porcelain-studio] .mint-ui .task-tabs button[aria-selected=true]{background:#e9f3ee;border-bottom:3px double #538393;border-radius:12px 4px 0 0}
+
+/* 09 / Arcade cabinet: chunky extrusion, 2px glyphs and cartridge tables. */
+html[data-theme=pixel-arcade] .mint-ui :is(.btn,.appearance-trigger){border-radius:0;border:2px solid #94af61;background:#1c3529;box-shadow:3px 3px 0 #08170e,inset 1px 1px 0 #b6d87738;font:700 12px/1.35 Consolas,'Microsoft YaHei UI',monospace}
+html[data-theme=pixel-arcade] .mint-ui :is(.btn-primary,#open-request,.btn-primary#request-submit-button){background:#ff9560;color:#152519;border:2px solid #f3d46b;box-shadow:3px 3px 0 #06170b,inset 2px 2px 0 #ffdb96}
+html[data-theme=pixel-arcade] .mint-ui .btn:hover{transform:translate(-1px,-1px);box-shadow:4px 4px 0 #06140c}
+html[data-theme=pixel-arcade] .mint-ui .btn:active{transform:translate(2px,2px);box-shadow:1px 1px 0 #06140c}
+html[data-theme=pixel-arcade] .mint-workspace :is(.control-strip,.run-card,.recent-panel),html[data-theme=pixel-arcade] .mint-ui :is(.project-card,.analytics-card,.experience-card,.detail-card,.model-settings-panel){border-radius:0;border:2px solid #98b766;background:#213d30;box-shadow:3px 3px 0 #0a170d,inset 1px 1px 0 #b6d28a45,inset -1px -1px 0 #122818}
+html[data-theme=pixel-arcade] .mint-ui .theme-icon{stroke-linecap:square;stroke-linejoin:miter;shape-rendering:crispEdges;stroke-width:1.8}
+html[data-theme=pixel-arcade] .mint-workspace :is(th,.recent-task-table th){background:#2d4933;border-top:2px solid #a1c16a;border-bottom:2px solid #7eaa56;font-family:Consolas,'Microsoft YaHei UI',monospace;letter-spacing:.06em}
+html[data-theme=pixel-arcade] .mint-workspace td{border-bottom:2px dotted #73964c}
+html[data-theme=pixel-arcade] .mint-workspace tbody tr:nth-child(even){background:#1b3428}
+html[data-theme=pixel-arcade] .mint-ui :is(.status-dot,.status-tag){border:1px solid currentColor;border-radius:0;font:700 11px/1.35 Consolas,'Microsoft YaHei UI',monospace;box-shadow:2px 2px 0 #0b190f}
+html[data-theme=pixel-arcade] .mint-ui :is(.status-dot,.status-tag)::before{border-radius:0;width:5px;height:5px}
+html[data-theme=pixel-arcade] .mint-ui .task-tabs button[aria-selected=true]{background:#355439;border:2px solid #b8d36d;box-shadow:2px 2px 0 #102516;border-radius:0}
+
+/* 10 / Swiss gallery: no decorative blur; bold rules and solid silhouettes. */
+html[data-theme=ink-gallery] .mint-ui :is(.btn,.appearance-trigger){border-radius:0;border:1px solid #171c1d;box-shadow:none;background:#fff;font-weight:700;letter-spacing:.025em}
+html[data-theme=ink-gallery] .mint-ui :is(.btn-primary,#open-request,.btn-primary#request-submit-button){background:#ff6b42;border:1px solid #171c1d;color:#171c1d;box-shadow:none}
+html[data-theme=ink-gallery] .mint-ui .btn:not(.btn-primary):hover{background:#171c1d;color:#fff}
+html[data-theme=ink-gallery] .mint-ui :is(.btn-primary,#open-request,.btn-primary#request-submit-button):hover{background:#171c1d;color:#fff}
+/* The old dashboard uses an ID selector and a global family lock. The skin
+ * layer deliberately owns these surfaces/labels without affecting code text. */
+html[data-theme] .mint-workspace #view-dashboard .control-strip{border-radius:var(--dialect-radius);background:var(--dialect-surface);box-shadow:var(--dialect-shadow);border:var(--dialect-border,1px solid var(--skin-line))}
+html[data-theme=mint-garden]{--dialect-radius:17px 7px;--dialect-surface:linear-gradient(120deg,#fff,#fafff7);--dialect-shadow:inset 0 1px 0 #fff,0 5px 18px #36553c0e}
+html[data-theme=moon-courtyard]{--dialect-radius:15px 3px;--dialect-surface:linear-gradient(135deg,#173e4b,#102f3b);--dialect-shadow:inset 0 1px 0 #6d9bab30,0 6px 20px #0002}
+html[data-theme=sky-atelier]{--dialect-radius:20px;--dialect-surface:linear-gradient(165deg,#fff,#f5fbff);--dialect-shadow:0 7px 18px #5988c013,inset 0 1px 0 #fff}
+html[data-theme=autumn-court]{--dialect-radius:5px;--dialect-surface:repeating-linear-gradient(0deg,#b69c6505 0px,#b69c6505 1px,transparent 1px,transparent 4px),linear-gradient(145deg,#fffcf5,#fff7e7);--dialect-shadow:inset 0 0 0 3px #fffcf1,0 4px 13px #77573510}
+html[data-theme=paper-workshop]{--dialect-radius:2px;--dialect-surface:#fffdf6;--dialect-shadow:2px 2px 0 #f4f0e5,3px 3px 0 #b9b09c,5px 6px 0 #c6bea823}
+html[data-theme=deep-ocean]{--dialect-radius:24px 8px;--dialect-surface:linear-gradient(135deg,#154656,#0d2f40);--dialect-shadow:inset 0 1px 0 #87e1f638,inset 0 -1px 0 #02212f,0 7px 24px #0002}
+html[data-theme=orbital-station]{--dialect-radius:2px;--dialect-surface:linear-gradient(125deg,#30383f,#20262c);--dialect-shadow:inset 0 1px 0 #aeb6bb30,inset 0 -1px 0 #0d1217,0 2px 0 #080b0c}
+html[data-theme=porcelain-studio]{--dialect-radius:19px 5px;--dialect-surface:linear-gradient(145deg,#fff,#eff8f2);--dialect-shadow:inset 0 2px 4px #fff,0 6px 18px #376c7a12;--dialect-border:3px double #92bcbc}
+html[data-theme=pixel-arcade]{--dialect-radius:0px;--dialect-surface:#213d30;--dialect-shadow:3px 3px 0 #0a170d,inset 1px 1px 0 #b6d28a45;--dialect-border:2px solid #98b766}
+html[data-theme=ink-gallery]{--dialect-radius:0px;--dialect-surface:#fff;--dialect-shadow:none;--dialect-border:1px solid #171c1d}
+html[data-theme=autumn-court] .mint-ui :is(.btn,.appearance-trigger,th,.status-dot,.status-tag){font-family:Georgia,'Noto Serif SC','SimSun',serif!important}
+html[data-theme=porcelain-studio] .mint-ui th{font-family:Georgia,'Noto Serif SC','SimSun',serif!important}
+html[data-theme=orbital-station] .mint-ui :is(.btn,.appearance-trigger,th,.status-dot,.status-tag),html[data-theme=pixel-arcade] .mint-ui :is(.btn,.appearance-trigger,th,.status-dot,.status-tag){font-family:Consolas,'Microsoft YaHei UI',monospace!important}
+html[data-theme=ink-gallery] .mint-workspace :is(.control-strip,.run-card,.recent-panel),html[data-theme=ink-gallery] .mint-ui :is(.project-card,.analytics-card,.experience-card,.detail-card,.model-settings-panel){background:#fff;border-radius:0;border:1px solid #bbc1be;border-top:2px solid #171c1d;box-shadow:none}
+html[data-theme=ink-gallery] .mint-ui .theme-icon{stroke-width:1.8;stroke-linecap:butt;stroke-linejoin:miter}
+html[data-theme=ink-gallery] .mint-workspace :is(th,.recent-task-table th){background:#fff;border-top:1px solid #171c1d;border-bottom:2px solid #171c1d;font-weight:800;letter-spacing:.025em}
+html[data-theme=ink-gallery] .mint-workspace td{border-bottom:1px solid #b7bebb}
+html[data-theme=ink-gallery] .mint-workspace tbody tr:nth-child(even){background:#f8f8f5}
+html[data-theme=ink-gallery] .mint-workspace .run-top{border-color:#171c1d}
+html[data-theme=ink-gallery] .mint-ui :is(.status-dot,.status-tag){border-radius:0;border:1px solid currentColor;background:transparent;font-weight:650}
+html[data-theme=ink-gallery] .mint-ui .task-tabs button[aria-selected=true]{background:#171c1d;color:#fff;border-bottom-color:#ff572f}
+
+/* The material never changes the state semantics. Motion is opt-in, and an
+ * opaque login panel continues to cover the video's right-hand watermark. */
+html[data-theme] .mint-ui #request-modal .request-modal,html[data-theme] .mint-ui :is(.modal,.drawer,.appearance-dialog){border-radius:var(--dialect-radius);background:var(--dialect-surface);border:var(--dialect-border,1px solid var(--skin-line));box-shadow:var(--dialect-shadow),0 24px 80px #0003}
+html[data-theme] .mint-ui #request-modal .modal-actions .btn{border-radius:var(--dialect-radius)}
+html[data-theme] .mint-ui .btn:disabled{transform:none;box-shadow:none;opacity:.5;cursor:not-allowed}
+html[data-theme] .mint-ui .btn-danger{background:var(--skin-danger-soft);color:var(--skin-danger);border-color:var(--skin-danger)}
+html[data-theme] .mint-ui .btn-ghost{background:transparent;box-shadow:none;border-color:transparent;color:var(--skin-muted)}
+html[data-motion=static] .mint-ui :is(.btn,.appearance-trigger,.ledger-select>button,.ledger-date>button,td){transition:none;transform:none!important}
+html[data-motion=reduced] .mint-ui .btn:hover{transform:none}
+@media(prefers-reduced-motion:reduce){html[data-theme] .mint-ui :is(.btn,.appearance-trigger,.ledger-select>button,.ledger-date>button,td){transition:none;transform:none!important}}
+@media(max-width:900px){html[data-theme] .mint-workspace .nav-symbol{width:23px;height:23px;flex:0 0 23px}html[data-theme] .mint-workspace .nav-item{gap:0;justify-content:center}html[data-theme] .mint-workspace .nav-item .nav-index{display:none}}
