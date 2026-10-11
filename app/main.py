@@ -62,7 +62,7 @@ from .security import hash_password, verify_password
 from .services.delivery import ArtifactService, Mailer
 from .services.blocker_summary import summarize_blocker
 from .services.tfs import TfsClient, recoverable_preflight_failure
-from .services import project_learning, model_settings, release_coordination, task_controls, request_followups, ui_preferences
+from .services import project_learning, model_settings, release_coordination, task_controls, request_followups, ui_preferences, ui_media
 
 
 @asynccontextmanager
@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.9",
+    version="1.0-Beta.10",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -87,6 +87,7 @@ app = FastAPI(
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts))
 app.mount("/static", StaticFiles(directory=ROOT / "app" / "static"), name="static")
 templates = Jinja2Templates(directory=ROOT / "app" / "templates")
+templates.env.globals.update(ui_media_url=ui_media.url, ui_media_bundle=ui_media.bundle)
 
 
 class LoginInput(BaseModel):
@@ -806,7 +807,7 @@ def login_brand_media() -> dict[str, str]:
         if not isinstance(value, str) or not re.fullmatch(r"/static/media/[\w./-]+", value) or ".." in value:
             return ""
         path = ROOT / "app" / value.lstrip("/")
-        return value if path.is_file() else ""
+        return ui_media.url(value) if path.is_file() else ""
 
     return {
         "src": local_file(media.get("src")),

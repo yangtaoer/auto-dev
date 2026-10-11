@@ -62,7 +62,7 @@ class BrandInterfaceTests(unittest.TestCase):
         script = (ROOT / 'app/static/brand-media.js').read_text('utf-8')
         self.assertIn("shell.dataset.loginLayout === 'delivery-line'", script)
         self.assertIn("!!video.getAttribute('src') && !stage?.classList.contains('film-failed') && !motion.matches", script)
-        self.assertIn("video.getAttribute('src') !== media.src", script)
+        self.assertIn("video.getAttribute('src') !== mediaURL(media.src)", script)
         self.assertLess(script.index('\n  sync();'), script.index("fetch('/static/brand-media.json'"))
         self.assertIn("video.addEventListener('error'", script)
         login = (ROOT / 'app/templates/login.html').read_text('utf-8')
@@ -107,9 +107,10 @@ class BrandInterfaceTests(unittest.TestCase):
                     super().__init__(); self.elements = []; self.feed(text)
                 def handle_starttag(self, tag, attrs):
                     self.elements.append((tag, dict(attrs)))
+            from app.services import ui_media
             expected = main.login_brand_media()
-            assert expected['src'] == '/static/media/login-delivery-line.mp4', expected
-            assert expected['poster'] == '/static/media/login-delivery-line-poster.jpg', expected
+            assert expected['src'] == ui_media.url('/static/media/login-delivery-line.mp4'), expected
+            assert expected['poster'] == ui_media.url('/static/media/login-delivery-line-poster.jpg'), expected
             assert expected['layout'] == 'delivery-line', expected
             with TestClient(main.app) as client:
                 response = client.get('/login')

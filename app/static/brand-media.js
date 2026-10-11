@@ -6,6 +6,9 @@
   const motion = matchMedia('(prefers-reduced-motion: reduce)');
   const connection = navigator.connection;
   const allowed = value => typeof value === 'string' && /^\/static\/media\/[\w./-]+$/.test(value) && !value.includes('..');
+  const assets = globalThis.__MEDIA_ASSETS__?.assets || {};
+  const failed = new Set();
+  const mediaURL = source => failed.has(source) ? source : (globalThis.AutoDevMedia?.url(source) || source);
   let disposed = false;
   function sync() {
     if (disposed) return;
@@ -26,11 +29,25 @@
       video.closest('[data-film-stage]')?.classList.remove('film-failed');
       sync();
     });
-    video.addEventListener('error', () => {
+    const recover = () => {
       video.closest('[data-film-stage]')?.classList.remove('film-ready');
+      if (disposed) return;
+      const original = Object.keys(assets).find(source => allowed(source) && assets[source] === video.getAttribute('src'));
+      if (original && !failed.has(original)) {
+        failed.add(original); globalThis.AutoDevMedia?.fail(original);
+        video.src = original;
+        const poster = Object.keys(assets).find(source => allowed(source) && assets[source] === video.getAttribute('poster'));
+        if (poster) {
+          failed.add(poster); globalThis.AutoDevMedia?.fail(poster); video.poster = poster;
+        }
+        sync(); return;
+      }
       video.closest('[data-film-stage]')?.classList.add('film-failed');
       sync();
-    });
+    };
+    video.addEventListener('error', recover);
+    // A fast network failure can precede this deferred script's event binding.
+    if (video.error) recover();
     if (video.readyState >= 2) video.closest('[data-film-stage]')?.classList.add('film-ready');
   });
   sync();
@@ -38,11 +55,11 @@
     if (disposed) return;
     videos.forEach(video => {
       const media = config[video.dataset.brandVideo] || {};
-      if (allowed(media.poster) && video.getAttribute('poster') !== media.poster) video.poster = media.poster;
+      if (allowed(media.poster) && video.getAttribute('poster') !== mediaURL(media.poster)) video.poster = mediaURL(media.poster);
       if (allowed(media.src)) {
         const shell = video.closest('.login-shell');
         if (shell && media.layout === 'delivery-line') shell.dataset.loginLayout = 'delivery-line';
-        if (video.getAttribute('src') !== media.src) video.src = media.src;
+        if (video.getAttribute('src') !== mediaURL(media.src)) video.src = mediaURL(media.src);
         video.hidden = false;
       }
     });

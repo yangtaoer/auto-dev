@@ -41,7 +41,7 @@ function classList() {
 }
 
 function mediaHarness({src = FILM, poster = POSTER, fallbackHidden = true, loginLayout = 'delivery-line',
-  readyState = 0, hidden = false, reduced = false, saveData = false, rejectPlay = false, withVideo = true} = {}) {
+  readyState = 0, hidden = false, reduced = false, saveData = false, rejectPlay = false, withVideo = true, assets = {}, earlyError = false} = {}) {
   const document = new EventTarget();
   document.hidden = hidden;
   const motion = new EventTarget();
@@ -57,7 +57,7 @@ function mediaHarness({src = FILM, poster = POSTER, fallbackHidden = true, login
   if (src) attributes.set('src', src);
   if (poster) attributes.set('poster', poster);
   Object.assign(video, {
-    dataset: {brandVideo: 'login'}, hidden: !src, readyState, muted: false,
+    dataset: {brandVideo: 'login'}, hidden: !src, readyState, muted: false, error:earlyError?{code:2}:null,
     sourceWrites: [], posterWrites: [], playCalls: 0, pauseCalls: 0, playing: false,
     getAttribute: name => attributes.has(name) ? attributes.get(name) : null,
     closest: selector => selector === '[data-film-stage]' ? stage : selector === '.login-shell' ? shell : null,
@@ -77,6 +77,7 @@ function mediaHarness({src = FILM, poster = POSTER, fallbackHidden = true, login
   const response = new Promise((resolve, reject) => { resolveFetch = resolve; rejectFetch = reject; });
   const fetchCalls = [];
   script.runInNewContext({
+    __MEDIA_ASSETS__: {assets}, AutoDevMedia: {url:source=>assets[source]||source,fail:source=>delete assets[source]},
     document, navigator: {connection}, matchMedia: () => motion,
     fetch(url, options) { fetchCalls.push({url, options}); return response; },
     addEventListener: window.addEventListener.bind(window),
@@ -243,4 +244,22 @@ test('pages without a film do not fetch configuration or bind lifecycle listener
   assert.equal(motion.listenerCount('change'), 0);
   assert.equal(connection.listenerCount('change'), 0);
   assert.equal(window.listenerCount('pagehide'), 0);
+});
+
+test('OSS SSR film is not reset to local by config fetch; remote failure falls back only once', async()=>{
+  const film='https://example.oss-cn-chengdu.aliyuncs.com/autodev-static/v1/film.hash.mp4';
+  const poster='https://example.oss-cn-chengdu.aliyuncs.com/autodev-static/v1/poster.hash.jpg';
+  const {video,stage,fallback,resolveConfig}=mediaHarness({src:film,poster,assets:{[FILM]:film,[POSTER]:poster}});
+  await resolveConfig();assert.equal(video.sourceWrites.length,0);assert.equal(video.posterWrites.length,0);
+  video.dispatch('error');assert.deepEqual(video.sourceWrites,[FILM]);assert.deepEqual(video.posterWrites,[POSTER]);
+  assert.equal(fallback.hidden,true);assert.equal(stage.classList.contains('film-failed'),false);
+  video.dispatch('error');assert.equal(video.sourceWrites.length,1);assert.equal(fallback.hidden,false);
+});
+
+for(const earlyError of [false,true])test(`config cannot reinstall failed OSS film or poster (failure before binding: ${earlyError})`,async()=>{
+  const film='https://example.oss-cn-chengdu.aliyuncs.com/autodev-static/v1/film.hash.mp4';
+  const poster='https://example.oss-cn-chengdu.aliyuncs.com/autodev-static/v1/poster.hash.jpg';
+  const {video,resolveConfig}=mediaHarness({src:film,poster,earlyError,assets:{[FILM]:film,[POSTER]:poster}});
+  if(!earlyError)video.dispatch('error');await resolveConfig();
+  assert.deepEqual(video.sourceWrites,[FILM]);assert.deepEqual(video.posterWrites,[POSTER]);
 });

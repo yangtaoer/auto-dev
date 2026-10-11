@@ -1,0 +1,2 @@
+# Optional, local publisher only. The cloud backend does not need Pillow.
+Pillow>=12.0,<13

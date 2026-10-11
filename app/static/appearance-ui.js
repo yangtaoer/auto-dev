@@ -1,4 +1,4 @@
-import {AppearanceSession,DEFAULT_APPEARANCE,normalizeAppearance,selectedTheme} from './theme-core.js?v=1.0-Beta.9';
+import {AppearanceSession,DEFAULT_APPEARANCE,normalizeAppearance,selectedTheme} from './theme-core.js?v=1.0-Beta.10';
 
 const root=document.documentElement,trigger=document.getElementById('open-appearance');
 const authenticated=Boolean(window.__USER__?.id);
@@ -9,7 +9,11 @@ function apply(appearance,theme){
   root.dataset.theme=theme.id;root.dataset.themeMode=theme.mode;
   for(const key of ['font_size','density','motion'])root.dataset[key.replace(/_([a-z])/g,(_,c)=>c.toUpperCase())]=appearance[key];
   for(const key of appliedTokenKeys)if(!(key in theme.tokens))root.style.removeProperty('--'+key);
-  for(const [key,value]of Object.entries(theme.tokens))root.style.setProperty('--'+key,value);
+  const resolved=window.AutoDevMedia?.theme(theme)||theme;
+  for(const [key,value]of Object.entries(resolved.tokens))root.style.setProperty('--'+key,value);
+  window.AutoDevMedia?.background(theme.background,source=>{
+    if(root.dataset.theme===theme.id)root.style.setProperty('--skin-sidebar-art',`url("${source}")`);
+  });
   appliedTokenKeys=Object.keys(theme.tokens);
   window.__THEME__=theme;
   const name=document.getElementById('appearance-current-name');if(name)name.textContent=theme.name;
@@ -30,7 +34,7 @@ async function request(url,options={}){
 function rememberHint(id){document.cookie=`autodev_theme=${encodeURIComponent(id)};path=/;max-age=31536000;samesite=strict${location.protocol==='https:'?';secure':''}`;}
 function makeDialog(){
   dialog=document.createElement('dialog');dialog.className='appearance-dialog';dialog.setAttribute('aria-labelledby','appearance-title');
-  dialog.innerHTML=`<form method="dialog" class="appearance-form"><header><div><p class="appearance-kicker">YOUR WORKSPACE / PERSONAL APPEARANCE</p><h2 id="appearance-title">让工作台，像你喜欢的样子。</h2><p>${authenticated?'选择后绑定当前账号，换浏览器登录也会保留。':'登录页选择仅保存在当前浏览器，登录后恢复账号主题。'}</p></div><button type="button" class="appearance-close" data-appearance-cancel aria-label="关闭外观设置">×</button></header><div class="appearance-scroll"><div class="appearance-gallery">${themes.map(t=>`<button type="button" class="theme-choice" data-theme-choice="${escape(t.id)}" aria-pressed="false"><span class="theme-preview"><img src="${escape(t.preview)}" alt="${escape(t.name)}工作台设计" loading="lazy" width="1672" height="940"><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-choice-copy"><b><small>${escape(t.number)}</small>${escape(t.name)}</b><span>${escape(t.subtitle)}</span><i class="theme-swatches" aria-hidden="true">${['skin-sidebar','skin-bg','skin-ink','skin-accent'].map(k=>`<i style="background:${escape(t.tokens[k])}"></i>`).join('')}</i></span></button>`).join('')}</div><div class="appearance-options">${[
+  dialog.innerHTML=`<form method="dialog" class="appearance-form"><header><div><p class="appearance-kicker">YOUR WORKSPACE / PERSONAL APPEARANCE</p><h2 id="appearance-title">让工作台，像你喜欢的样子。</h2><p>${authenticated?'选择后绑定当前账号，换浏览器登录也会保留。':'登录页选择仅保存在当前浏览器，登录后恢复账号主题。'}</p></div><button type="button" class="appearance-close" data-appearance-cancel aria-label="关闭外观设置">×</button></header><div class="appearance-scroll"><div class="appearance-gallery">${themes.map(t=>`<button type="button" class="theme-choice" data-theme-choice="${escape(t.id)}" aria-pressed="false"><span class="theme-preview"><img src="${escape(window.AutoDevMedia?.url(t.preview)||t.preview)}" data-media-source="${escape(t.preview)}" alt="${escape(t.name)}工作台设计" loading="lazy" decoding="async" width="1672" height="940"><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-choice-copy"><b><small>${escape(t.number)}</small>${escape(t.name)}</b><span>${escape(t.subtitle)}</span><i class="theme-swatches" aria-hidden="true">${['skin-sidebar','skin-bg','skin-ink','skin-accent'].map(k=>`<i style="background:${escape(t.tokens[k])}"></i>`).join('')}</i></span></button>`).join('')}</div><div class="appearance-options">${[
     ['font_size','文字大小',[['normal','标准'],['large','稍大']]],
     ['density','信息密度',[['compact','紧凑'],['comfortable','舒适']]],
     ['motion','环境动效',[['full','生动'],['reduced','轻柔'],['static','静止']]],

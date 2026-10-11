@@ -1,0 +1,5 @@
+{% set media_bundle = ui_media_bundle() %}
+{% if media_bundle.origin %}<link rel="preconnect" href="{{ media_bundle.origin }}">
+<link rel="dns-prefetch" href="{{ media_bundle.origin }}">{% endif %}
+<script>window.__MEDIA_ASSETS__={{ media_bundle|tojson }};</script>
+<script src="/static/media-assets.js?v={{ app_version }}"></script>

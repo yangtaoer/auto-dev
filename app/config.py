@@ -62,7 +62,7 @@ class Settings:
     ).resolve()
     runner_token: str = env_secret("AUTODEV_RUNNER_TOKEN")
     cloud_url: str = os.getenv("AUTODEV_CLOUD_URL", "").rstrip("/")
-    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "1.0-Beta.9").strip() or "1.0-Beta.9"
+    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "1.0-Beta.10").strip() or "1.0-Beta.10"
     runner_monitor_host: str = os.getenv("AUTODEV_RUNNER_MONITOR_HOST", "127.0.0.1").strip()
     runner_monitor_port: int = int(os.getenv("AUTODEV_RUNNER_MONITOR_PORT", "28766"))
     # Exclusive single-file limit; MB uses 1024**2 bytes (1 GB = 1024 MB here).
@@ -76,6 +76,7 @@ class Settings:
     oss_url_expire_seconds: int = max(60, int(os.getenv("ALIYUN_OSS_URL_EXPIRE_SECONDS", "259200")))
     oss_retention_days: int = max(1, int(os.getenv("ALIYUN_OSS_RETENTION_DAYS", "3")))
     oss_cleanup_interval_hours: int = max(1, int(os.getenv("ALIYUN_OSS_CLEANUP_INTERVAL_HOURS", "72")))
+    ui_media_enabled: bool = env_bool("AUTODEV_UI_MEDIA_ENABLED", True)
     seed_demo: bool = env_bool("AUTODEV_SEED_DEMO", True)
     bootstrap_admin_password: str = env_secret("BOOTSTRAP_ADMIN_PASSWORD", "admin123")
     bootstrap_pm_password: str = env_secret("BOOTSTRAP_PM_PASSWORD", "pm123")

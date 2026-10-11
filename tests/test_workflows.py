@@ -2419,7 +2419,8 @@ else:
         self.client.post("/api/auth/logout")
         login_page = self.client.get("/login")
         self.assertIn(f"mint-ui.css?v={app.version}", login_page.text)
-        self.assertIn(f"autodev-sidebar-mark.png?v={app.version}", login_page.text)
+        from app.services import ui_media
+        self.assertIn(ui_media.url('/static/brand/autodev-sidebar-mark.png'), login_page.text)
         login = self.client.post("/api/auth/login", json={"username": "pm", "password": "pm123456"})
         self.assertEqual(login.status_code, 200, login.text)
         pm_page = self.client.get("/")

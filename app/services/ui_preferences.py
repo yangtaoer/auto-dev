@@ -7,6 +7,7 @@ from typing import Any
 
 from app.config import ROOT
 from app.db import row, transaction, utc_now
+from app.services import ui_media
 
 DEFAULTS = {"theme_id": "mint-garden", "font_size": "normal", "density": "compact", "motion": "full"}
 CHOICES = {"font_size": {"normal", "large"}, "density": {"compact", "comfortable"},
@@ -25,7 +26,7 @@ def theme(theme_id: str | None) -> dict[str, Any]:
 
 def style(theme_id: str | None) -> str:
     # Values come exclusively from the shipped catalog, never from user CSS.
-    return ";".join(f"--{key}:{value}" for key, value in theme(theme_id)["tokens"].items())
+    return ";".join(f"--{key}:{value}" for key, value in ui_media.theme_media(theme(theme_id))["tokens"].items())
 
 
 def get(user_id: int) -> dict[str, Any]:

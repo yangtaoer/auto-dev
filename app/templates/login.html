@@ -8,7 +8,7 @@
   <meta name="theme-color" content="#e4ecdf">
   <title>AutoDev 自主研发交付</title>
   <link rel="icon" href="/static/brand/favicon.ico?v={{ app_version }}" sizes="any">
-  <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
+  <link rel="apple-touch-icon" href="{{ ui_media_url('/static/brand/apple-touch-icon.png') }}">
   <link rel="manifest" href="/static/brand/site.webmanifest">
   <link rel="stylesheet" href="/static/styles.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/brand-ui.css?v={{ app_version }}">
@@ -19,6 +19,7 @@
   <link rel="stylesheet" href="/static/login-polish.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/themes.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/theme-components.css?v={{ app_version }}">
+  {% include 'media-head.html' %}
 </head>
 <body class="login-body mint-ui">
   {% set login_media = login_media | default({}) %}
@@ -27,7 +28,7 @@
       <video data-brand-video="login" class="login-film-video" muted loop playsinline autoplay preload="auto" tabindex="-1" disablepictureinpicture{% if login_media.src %} src="{{ login_media.src }}"{% else %} hidden{% endif %}{% if login_media.poster %} poster="{{ login_media.poster }}"{% endif %}></video>
     </div>
     <section class="login-brand-story" data-film-fallback aria-label="AutoDev 自主研发交付"{% if login_media.src and login_media.layout == 'delivery-line' %} hidden{% endif %}>
-      <img class="login-story-mark" src="/static/brand/autodev-sidebar-mark.png?v={{ app_version }}" alt="">
+      <img class="login-story-mark" src="{{ ui_media_url('/static/brand/autodev-sidebar-mark.png') }}" data-media-source="/static/brand/autodev-sidebar-mark.png" alt="" decoding="async">
       <strong>AutoDev</strong>
       <h1>编号进入，交付离场。</h1>
       <p class="login-story-caption">AUTONOMOUS<br>SOFTWARE DEVELOPMENT<br>AND DELIVERY PLATFORM</p>
@@ -42,7 +43,7 @@
     <section class="login-panel" aria-label="进入工作台">
       <div class="login-panel-brand">
         <div class="login-panel-logo" aria-label="AutoDev">
-          <img src="/static/brand/autodev-sidebar-mark.png?v={{ app_version }}" alt="">
+          <img src="{{ ui_media_url('/static/brand/autodev-sidebar-mark.png') }}" data-media-source="/static/brand/autodev-sidebar-mark.png" alt="" decoding="async" fetchpriority="high">
           <strong>AutoDev</strong>
           <p class="login-panel-tagline">编号进入，交付离场。</p>
         </div>

@@ -1,9 +1,9 @@
 /* The orange character and its physically connected miniature garden. */
 import * as THREE from './vendor/three/three.module.js';
-import {AutoDevGarden} from './orb-garden.js?v=1.0-Beta.9';
-import {GardenDirector} from './garden-motion.js?v=1.0-Beta.9';
-import {ThemeDiorama} from './theme-scenes.js?v=1.0-Beta.9';
-import {ThemePerformanceDirector} from './theme-choreography.js?v=1.0-Beta.9';
+import {AutoDevGarden} from './orb-garden.js?v=1.0-Beta.10';
+import {GardenDirector} from './garden-motion.js?v=1.0-Beta.10';
+import {ThemeDiorama} from './theme-scenes.js?v=1.0-Beta.10';
+import {ThemePerformanceDirector} from './theme-choreography.js?v=1.0-Beta.10';
 
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 const instanceSeed = () => {
