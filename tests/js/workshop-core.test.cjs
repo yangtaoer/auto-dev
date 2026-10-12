@@ -32,4 +32,7 @@ test('custom themes have an independent component dialect and a non-persisting r
  for(const token of ['skin-primary-ink','skin-field-focus','skin-button-radius','skin-card-bg','skin-nav-active-ink','skin-icon-accent'])assert.ok(css.includes('var(--'+token+')'),token);
  const ui=fs.readFileSync('app/static/workshop-ui.js','utf8');assert.ok(ui.includes('真实组件主题检查'));assert.ok(ui.includes('这只是样式试用，不会提交业务数据'));
  for(const template of ['index','login'])assert.ok(fs.readFileSync('app/templates/'+template+'.html','utf8').includes("'workshop-custom' if appearance_theme.is_custom"));
+ assert.ok(css.includes('.request-number-input:focus-within{border-color:var(--skin-field-focus)'));
+ assert.ok(css.includes('input:checked{background-color:var(--skin-field-focus)'));
+ assert.ok(css.includes(':is(#request-form,.model-settings-panel,.ledger-menu,.ledger-calendar)'));
 });

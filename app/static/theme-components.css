@@ -220,3 +220,16 @@ html[data-theme=workshop-custom] .mint-ui .task-tabs button[aria-selected=true]{
 html[data-theme=workshop-custom] .mint-ui #request-modal .modal-actions .btn{border-radius:var(--skin-button-radius)}
 html[data-theme=workshop-custom] .mint-ui .btn:disabled{opacity:.5;transform:none;box-shadow:none}
 html[data-theme=workshop-custom] .mint-ui :is(.run-card,.project-card,.analytics-card,.experience-card,.detail-card,.studio-artboard) :is(h1,h2,h3,h4,.run-title){color:var(--skin-card-ink)}
+/* Specialized controls have higher specificity than generic fields. Scope
+ * these aliases to forms/popovers only; business success/error tags stay semantic. */
+html[data-theme=workshop-custom] .mint-ui :is(#request-form,.model-settings-panel,.ledger-menu,.ledger-calendar){--skin-success:var(--skin-field-focus);--skin-success-soft:var(--skin-nav-active-bg);--ui-font:var(--skin-component-font)}
+html[data-theme=workshop-custom] .mint-ui #request-modal #request-form .request-number-input{background:var(--skin-field-bg);color:var(--skin-field-ink);border-color:var(--skin-field-border);border-radius:var(--skin-field-radius)}
+html[data-theme=workshop-custom] .mint-ui #request-modal #request-form .request-number-input:focus-within{border-color:var(--skin-field-focus);box-shadow:0 0 0 3px color-mix(in srgb,var(--skin-field-focus) 18%,transparent)}
+html[data-theme=workshop-custom] .mint-ui #request-modal #request-form .request-number-input input:is(:focus,:focus-visible){border:0;outline:none;box-shadow:none;background:transparent}
+html[data-theme=workshop-custom] .mint-ui #request-modal #request-form :is(.mail-choice,.delivery-choice) input:checked{background-color:var(--skin-field-focus);border-color:var(--skin-field-focus)}
+html[data-theme=workshop-custom] .mint-ui #request-modal #request-form :is(.mail-choice,.delivery-choice):has(input:checked){background:var(--skin-nav-active-bg);border-color:var(--skin-field-border)}
+html[data-theme=workshop-custom] .mint-ui #request-modal #request-form .delivery-choice:has(input:checked) .choice-index{background:var(--skin-nav-active-bg);color:var(--skin-nav-active-ink)}
+html[data-theme=workshop-custom] .mint-ui .effort-choice input:checked+span{color:var(--skin-primary-ink)}
+html[data-theme=workshop-custom] .mint-ui.mint-workspace #user-form .toggle-line input:checked{background-color:var(--skin-field-focus)}
+html[data-theme=workshop-custom] .mint-ui .studio-design-choice.active{background:var(--skin-nav-active-bg);color:var(--skin-nav-active-ink);border-color:var(--skin-field-border)}
+html[data-theme=workshop-custom] .mint-ui .studio-message.user{background:var(--skin-surface-alt);color:var(--skin-ink)}
