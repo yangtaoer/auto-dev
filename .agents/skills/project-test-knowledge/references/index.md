@@ -8,7 +8,7 @@
 | 四川主配一体 | 主网、配网、主配、调度管辖、areano | [管辖关系与数据范围](sichuan-jurisdiction.md) | 用户确认原则；各地 schema、编码需对应项目核实 |
 | `chengdu-network-command` | 成都网络发令、成都网络下令；PC 端 | [成都测试档案](projects/chengdu-network-command.md)、[操作票实测流程](projects/chengdu-operation-ticket-flow.md) | 正值、值长、受令三会话已验证；两张纯流程票已归档，第二次计时及操作适配经验见实测记录 |
 | 测试环境 `101-14` | 101.14、192.168.101.14 | [只读盘点快照](environments/101-14.md) | 2026-09-18 快照，运行状态不可视为永久配置 |
-| `sichuan-provincial-network-command` | 四川省调 PC、委托操作票、审核丢指令、自动保存 | [操作票保存与丢行复现](projects/sichuan-provincial-operation-ticket.md) | 用户确认空白新增行自动保存后补填并送审，只剩原第 1、6 条；业务代码尚未修复 |
+| `sichuan-provincial-network-command` | 四川省调 PC、委托操作票、审核丢指令、自动保存、指令联想 | [操作票保存与丢行复现](projects/sichuan-provincial-operation-ticket.md) | 用户确认复现；正预令及顺控本地保存修复、联想框回归通过，尚未业务环境复测 |
 
 其他地市和 APP 暂无独立完整测试档案。收到对应经验时新增 `projects/<project-key>.md` 并更新本索引，不复制成都账号、数据库 schema 或具体单位到其他项目。
 
