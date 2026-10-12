@@ -69,6 +69,7 @@ class Worker:
         self.max_concurrency = min(5, max(1, max_concurrency or settings.runner_max_concurrency))
         self._active_lock = threading.RLock()
         self._active_request_ids: set[str] = set()
+        self.workshop_active_count = 0
         public_base_url = settings.cloud_url or settings.public_base_url if self.store.remote else settings.public_base_url
         self.artifacts = ArtifactService(
             recorder=self.store.add_artifact,
@@ -134,6 +135,8 @@ class Worker:
                 self._route_intake(intake)
         if self._process_followup():
             return True
+        if self._process_workshop():
+            return True
         queued = self.store.next_queued()
         if queued:
             logger.info("开始执行研发任务 request_id=%s", queued)
@@ -153,6 +156,22 @@ class Worker:
                 self._set_active(waiting, False)
             return True
         return routed or controlled
+
+    def _process_workshop(self) -> bool:
+        # Image jobs can be heavy: reserve a single studio slot, leaving other
+        # worker slots available for requirements and ordinary deliveries.
+        with self._active_lock:
+            if self.workshop_active_count:return False
+            self.workshop_active_count+=1
+        claim=getattr(self.store,'workshop_claim',None)
+        try:
+            job=claim() if callable(claim) else None
+            if not isinstance(job,dict):return False
+            from .services.workshop_runner import WorkshopProcessor
+            WorkshopProcessor(self.store).run(job,self.stop_event)
+        finally:
+            with self._active_lock:self.workshop_active_count-=1
+        return True
 
     def _process_followup(self) -> bool:
         claim = getattr(self.store, 'claim_followup', None)

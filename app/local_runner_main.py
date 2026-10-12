@@ -103,7 +103,7 @@ def main() -> None:
                 current = current_ids[0] if current_ids else None
                 refresh_codex_usage()
                 store.heartbeat(
-                    "working" if current_ids else "idle",
+                    "working" if current_ids or worker.workshop_active_count else "idle",
                     current,
                     get_codex_usage(),
                     current_request_ids=current_ids,

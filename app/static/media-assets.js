@@ -3,6 +3,7 @@
   'use strict';
   const assets = window.__MEDIA_ASSETS__?.assets || {};
   const failed = new Set();
+  const checked = new Set(), probes = new Map();
   const resolve = source => !failed.has(source) && typeof assets[source] === 'string' ? assets[source] : source;
   function fallback(image) {
     const source = image.dataset?.mediaSource;
@@ -17,9 +18,12 @@
       tokens:{...theme.tokens, 'skin-sidebar-art':`url("${resolve(theme.background)}")`}}),
     background(source, ready) {
       const target = resolve(source);
-      if (target === source) return;
+      if (target === source || checked.has(source) || probes.has(source)) return;
       const image = new Image();
-      image.onerror = () => { failed.add(source); ready(source); };
+      probes.set(source,image);
+      const release=()=>{image.onload=image.onerror=null;probes.delete(source);};
+      image.onload=()=>{checked.add(source);release();};
+      image.onerror = () => { failed.add(source); release();ready(source); };
       image.src = target;
     },
   });

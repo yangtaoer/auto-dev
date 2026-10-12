@@ -214,6 +214,15 @@
 
     attachScene(Scene) {
       if (this.destroyed || this.scene || !this.root.closest('.mint-ui')) return;
+      // A video-backed login hides this fallback. Don't allocate a renderer
+      // and miniature garden that no one can see; mount it only if revealed.
+      if(this.root.closest('[hidden]')){
+        if(!this.sceneMountObserver){this.sceneMountObserver=new MutationObserver(()=>{
+          if(!this.root.closest('[hidden]')){this.sceneMountObserver.disconnect();this.sceneMountObserver=null;this.attachScene(Scene);}
+        });this.sceneMountObserver.observe(this.root.closest('[hidden]'),{attributes:true,attributeFilter:['hidden']});}
+        this.setVisible(false);return;
+      }
+      this.setVisible(true);
       try {
         this.scene = new Scene(this);
         if (this.ambientTimer) clearTimeout(this.ambientTimer);
@@ -803,6 +812,7 @@
     burstOnce() { this.motionDriver?.burstOnce(); }
 
     destroy() {
+      this.sceneMountObserver?.disconnect();
       if (this.destroyed) return;
       this.destroyed = true;
       instances.delete(this);

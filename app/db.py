@@ -372,6 +372,10 @@ CREATE TABLE IF NOT EXISTS release_members (
 """
 
 
+from .services.workshop_schema import SCHEMA as WORKSHOP_SCHEMA
+SCHEMA += WORKSHOP_SCHEMA
+
+
 def init_db() -> None:
     if settings.environment == "production" and settings.bootstrap_admin_password in {"", "admin123"}:
         raise RuntimeError("生产环境必须通过 BOOTSTRAP_ADMIN_PASSWORD_FILE 配置强管理员密码")

@@ -24,6 +24,23 @@ logger = logging.getLogger("autodev.remote_store")
 
 
 class LocalStore:
+    def workshop_claim(self):
+        from .services import theme_workshop
+        return theme_workshop.claim(settings.runner_id)
+
+    def workshop_update(self,job,**fields):
+        from .services import theme_workshop
+        return theme_workshop.update(job['id'],settings.runner_id,job['claim_token'],**fields)
+
+    def workshop_upload(self,job,raw,kind):
+        from .services import theme_workshop
+        return theme_workshop.add_asset(job['design_id'],None,raw,kind+'.webp',job_id=job['id'],runner_id=settings.runner_id,claim_token=job['claim_token'],kind=kind)
+
+    def workshop_asset(self,job,asset_id):
+        item=row('SELECT local_path FROM theme_assets WHERE id=? AND design_id=?',(asset_id,job['design_id']))
+        if not item:raise RuntimeError('作品素材不存在')
+        return Path(item['local_path']).read_bytes()
+
     def claim_followup(self):
         from .services import request_followups
         return request_followups.claim(settings.runner_id)
@@ -136,6 +153,22 @@ class LocalStore:
 
 class RemoteStore:
     """Cloud control-plane adapter used by the outbound-only Windows runner."""
+    def workshop_claim(self):
+        return self._json(self._request('POST','/api/runner/workshop/claim',json={'runner_id':self.runner_id})).get('job')
+
+    def workshop_update(self,job,**fields):
+        return self._json(self._request('PATCH',f'/api/runner/workshop/jobs/{job["id"]}',json={
+            'runner_id':self.runner_id,'claim_token':job['claim_token'],**fields}))
+
+    def workshop_upload(self,job,raw,kind):
+        return self._json(self._request('POST',f'/api/runner/workshop/jobs/{job["id"]}/assets',
+            data={'runner_id':self.runner_id,'claim_token':job['claim_token'],'kind':kind},
+            files={'file':(kind+'.webp',raw,'image/webp')}))['asset']
+
+    def workshop_asset(self,job,asset_id):
+        response=self._request('GET',f'/api/runner/workshop/jobs/{job["id"]}/assets/{asset_id}',
+            params={'runner_id':self.runner_id,'claim_token':job['claim_token']})
+        response.raise_for_status();return response.content
 
     def claim_followup(self):
         return self._json(self._request('POST', '/api/runner/followups/claim', json={'runner_id': self.runner_id})).get('item')

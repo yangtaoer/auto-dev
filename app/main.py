@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.10",
+    version="1.0-Beta.11",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -784,12 +784,12 @@ def health() -> dict:
 
 
 def request_deep_link(request: Request) -> str:
-    """Forward only an actual task UUID, never an arbitrary external return URL."""
-    try:
-        request_id = str(uuid.UUID(request.query_params.get("request", "")))
-    except (ValueError, TypeError, AttributeError):
-        return ""
-    return f"?request={request_id}" + ("&acceptance=1" if request.query_params.get("acceptance") == "1" else "")
+    """Forward allowlisted UUID links, never an arbitrary external return URL."""
+    for key in ('request','workshop','workshop-public'):
+        try:identifier=str(uuid.UUID(request.query_params.get(key,'')))
+        except (ValueError,TypeError,AttributeError):continue
+        return f'?{key}={identifier}' + ('&acceptance=1' if key=='request' and request.query_params.get('acceptance')=='1' else '')
+    return ''
 
 
 def login_brand_media() -> dict[str, str]:
@@ -836,12 +836,14 @@ def home(request: Request):
     if not user:
         return RedirectResponse("/login" + request_deep_link(request), status_code=303)
     appearance = ui_preferences.get(user["id"])
+    from .services.theme_workshop import record_usage
+    record_usage(user['id'],appearance['theme_id'],'open')
     return templates.TemplateResponse(
         request,
         "index.html",
         {"user": public_user(user), "app_version": settings.runner_version,
-         "appearance": appearance, "appearance_style": ui_preferences.style(appearance["theme_id"]),
-         "appearance_theme": ui_preferences.theme(appearance["theme_id"])},
+         "appearance": appearance, "appearance_style": ui_preferences.style(appearance["theme_id"],user['id']),
+         "appearance_theme": ui_preferences.theme(appearance["theme_id"],user['id'])},
     )
 
 
@@ -2801,6 +2803,10 @@ def download_artifact(
     if preview and artifact["kind"] == "merge_screenshot":
         return FileResponse(path)
     return FileResponse(path, filename=artifact["name"])
+
+
+from .workshop_api import router as workshop_router
+app.include_router(workshop_router)
 
 
 if __name__ == "__main__":

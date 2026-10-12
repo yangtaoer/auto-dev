@@ -1,7 +1,7 @@
 <!doctype html>
 {% set appearance = appearance|default({'theme_id':'mint-garden','font_size':'normal','density':'compact','motion':'full'}) %}
 {% set appearance_theme = appearance_theme|default({'id':'mint-garden','mode':'light','name':'薄荷花园','scene':'garden'}) %}
-<html lang="zh-CN" data-theme="{{ appearance.theme_id }}" data-theme-mode="{{ appearance_theme.mode|default('light') }}" data-font-size="{{ appearance.font_size }}" data-density="{{ appearance.density }}" data-motion="{{ appearance.motion }}" style="{{ appearance_style|default('') }}">
+<html lang="zh-CN" data-theme="{{ appearance_theme.base_theme_id|default(appearance.theme_id) }}" data-appearance-theme="{{ appearance.theme_id }}" data-theme-mode="{{ appearance_theme.mode|default('light') }}" data-font-size="{{ appearance.font_size }}" data-density="{{ appearance.density }}" data-motion="{{ appearance.motion }}" style="{{ appearance_style|default('') }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -19,6 +19,7 @@
   <link rel="stylesheet" href="/static/login-polish.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/themes.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/theme-components.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/workshop-ui.css?v={{ app_version }}">
   {% include 'media-head.html' %}
 </head>
 <body class="login-body mint-ui">
@@ -100,8 +101,10 @@
         loginCharacter.dispatchOnce(button);
         document.querySelector('.login-shell').classList.add('is-authenticating');
         const requestedTask = new URLSearchParams(location.search).get('request') || '';
-        const destination = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestedTask)
+        let destination = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestedTask)
           ? '/?request=' + encodeURIComponent(requestedTask) + '&acceptance=1' : '/';
+        for(const key of ['workshop','workshop-public']){const id=new URLSearchParams(location.search).get(key)||'';
+          if(destination==='/'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))destination='/?'+key+'='+encodeURIComponent(id);}
         setTimeout(() => { location.href = destination; }, 350);
       } catch (failure) {
         error.textContent = failure.name === 'AbortError' ? '连接超时，请稍后重试。' : (failure.message || '暂时无法连接，请重试。');

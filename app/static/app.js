@@ -76,31 +76,39 @@ function switchView(name){
   document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.view===(name==='project-detail'?'projects':name)));
   document.querySelector('#project-breadcrumb').hidden=name!=='project-detail';
   document.body.classList.toggle('ledger-lock',name==='requests'||name==='experiences');
-  const titles={dashboard:'任务总览',requests:'交付记录',projects:'自主项目',analytics:'统计看板',users:'账号管理',experiences:'项目经验',models:'研发设置','project-detail':'项目详情'};
+  const titles={dashboard:'任务总览',requests:'交付记录',projects:'自主项目',analytics:'统计看板',users:'账号管理',experiences:'项目经验',models:'研发设置',workshop:'创意工坊','project-detail':'项目详情'};
   document.querySelector('#view-title').textContent=titles[name];
   document.title=`${titles[name]} · AutoDev`;
   document.body.dataset.view=name;
+  document.dispatchEvent(new CustomEvent('autodev:view',{detail:name}));
   closeSidebarTasks(false);
   if(name==='experiences')window.ProjectLearning?.open();
   if(name==='models')window.ModelSettings?.open();
+  if(name==='workshop')window.CreativeWorkshop?.open();
+  if(workspaceLoaded&&!['workshop','models','experiences'].includes(name))refresh({background:true}).catch(()=>{});
 }
 
-let refreshPromise=null, workspaceLoaded=false, recordsGeneration=0, recordsPending=false, detailGeneration=0, detailPending=false;
+let refreshPromise=null, workspaceLoaded=false, recordsGeneration=0, recordsPending=false, detailGeneration=0, detailPending=false, auxiliaryReadAt=0;
 const workspaceLoadingRegions=[['dashboard','dashboard','正在准备任务总览'],['requests','table','正在整理交付记录'],['projects','cards','正在读取自主项目'],['analytics','analytics','正在汇总任务统计'],['users','table','正在读取账号列表']];
 function refresh({background=false}={}){
   if(refreshPromise)return refreshPromise;
   const loaders=!workspaceLoaded&&!background?workspaceLoadingRegions.map(([name,kind,label])=>LoadingUI.begin(`#view-${name}`,{kind,label})):[];
-  refreshPromise=refreshWorkspace().then(()=>{workspaceLoaded=true;loaders.forEach(loader=>loader.finish());workspaceLoadingRegions.forEach(([name])=>{const host=document.querySelector(`#view-${name}`);if(host?.classList.contains('loading-failed'))LoadingUI.cancel(host);});}).catch(error=>{loaders.forEach(loader=>loader.fail(error,()=>refresh().catch(()=>{})));throw error;}).finally(()=>{refreshPromise=null;});
+  refreshPromise=refreshWorkspace(background).then(()=>{workspaceLoaded=true;loaders.forEach(loader=>loader.finish());workspaceLoadingRegions.forEach(([name])=>{const host=document.querySelector(`#view-${name}`);if(host?.classList.contains('loading-failed'))LoadingUI.cancel(host);});}).catch(error=>{loaders.forEach(loader=>loader.fail(error,()=>refresh().catch(()=>{})));throw error;}).finally(()=>{refreshPromise=null;});
   return refreshPromise;
 }
-async function refreshWorkspace(){
-  const userRequest=USER.role==='admin'?api('/api/users'):Promise.resolve({users:[]});
-  const analyticsRequest=USER.role==='admin'?api('/api/admin/analytics'):Promise.resolve(null);
-  const projectRequest=api('/api/projects');
-  const recipientRequest=api('/api/notification-recipients');
-  const recordsVersion=recordsGeneration,recordsUrl=deliveryRecordsUrl(),recordsRequest=recordsPending?Promise.resolve(null):api(recordsUrl);
-  const [dashboard,projects,me,users,analytics,recipients,records]=await Promise.all([api('/api/dashboard'),projectRequest,api('/api/me'),userRequest,analyticsRequest,recipientRequest,recordsRequest]);
-  Object.assign(USER,me.user);state.dashboard=dashboard;state.projects=projects.projects;state.users=users.users||[];state.notificationUsers=recipients.users||[];state.analytics=analytics;renderDashboard();renderProjects();renderProjectGuide();renderAnalytics();renderUsers();renderRequestEmailOptions(false);renderRecordFilterOptions();
+async function refreshWorkspace(background=false){
+  const view=document.body.dataset.view||'dashboard',aux=!workspaceLoaded||!background||Date.now()-auxiliaryReadAt>60000;
+  const userRequest=aux&&USER.role==='admin'?api('/api/users'):Promise.resolve({users:state.users});
+  const analyticsRequest=USER.role==='admin'&&(!background||view==='analytics')?api('/api/admin/analytics'):Promise.resolve(state.analytics);
+  const projectRequest=aux?api('/api/projects'):Promise.resolve({projects:state.projects});
+  const recipientRequest=aux?api('/api/notification-recipients'):Promise.resolve({users:state.notificationUsers});
+  const recordsVersion=recordsGeneration,recordsUrl=deliveryRecordsUrl(),recordsRequest=recordsPending||(background&&workspaceLoaded&&view!=='requests')?Promise.resolve(null):api(recordsUrl);
+  const [dashboard,projects,me,users,analytics,recipients,records]=await Promise.all([api('/api/dashboard'),projectRequest,aux?api('/api/me'):Promise.resolve({user:USER}),userRequest,analyticsRequest,recipientRequest,recordsRequest]);
+  Object.assign(USER,me.user);state.dashboard=dashboard;state.projects=projects.projects;state.users=users.users||[];state.notificationUsers=recipients.users||[];state.analytics=analytics;renderDashboard();
+  if(aux){auxiliaryReadAt=Date.now();renderProjectGuide();renderRequestEmailOptions(false);renderRecordFilterOptions();}
+  if(!background||view==='projects'||view==='project-detail')renderProjects();
+  if(!background||view==='analytics')renderAnalytics();
+  if(!background||view==='users')renderUsers();
   if(records&&!recordsPending&&recordsVersion===recordsGeneration&&recordsUrl===deliveryRecordsUrl()){applyDeliveryRecords(records);renderAllTable();const table=document.querySelector('.delivery-table');if(table?.classList.contains('loading-failed'))LoadingUI.cancel(table);}
   window.ProjectLearning?.syncProjects();
   if(state.selectedRequest&&!state.selectedTerminal&&!detailPending) refreshDetail(state.selectedRequest,true);
@@ -187,6 +195,10 @@ function releaseDeliveryTokens(target,record){if(orbMotionReduced()||!target?.is
 function collectOrbTransitions(runs){const experience=state.orbExperience,current=new Map();runs.forEach(run=>{const key=activeRunKey(run),status=runVisualStatus(run);current.set(key,{status,record:run});if(!experience.initialized)return;const previous=experience.runs.get(key);const target=document.querySelector(`[data-run-key="${CSS.escape(key)}"]`);if(!previous)experience.pending.push({type:'dispatch',target,record:run});else if(previous.status!==status)experience.pending.push({type:status==='waiting_approval'?'blocked':'progress',target,record:run})});if(experience.initialized)experience.runs.forEach((previous,key)=>{if(current.has(key))return;const record=(state.dashboard.recent||[]).find(item=>activeRunKey(item)===key),status=record?runVisualStatus(record):'';if(status==='delivered')experience.pending.push({type:'success',key,record});else if(['failed','rejected'].includes(status))experience.pending.push({type:'blocked',key,record})});experience.runs=current;experience.initialized=true}
 function flushOrbTransitions(){const experience=state.orbExperience,character=window.sidebarCharacter;if(!character||!experience.pending.length)return;const priority={success:4,blocked:3,dispatch:2,progress:1},event=experience.pending.sort((a,b)=>priority[b.type]-priority[a.type])[0];experience.pending=[];requestAnimationFrame(()=>{const target=event.target?.isConnected?event.target:document.querySelector(`#recent-table [data-run-key="${CSS.escape(event.key||'')}"]`);if(event.type==='success'){character.celebrateOnce(target);launchOrbSignal(target,'success');releaseDeliveryTokens(target,event.record)}else if(event.type==='blocked'){character.alertOnce(target);launchOrbSignal(target,'blocked')}else if(event.type==='dispatch'){character.dispatchOnce(target);launchOrbSignal(target,'dispatch')}else{character.progressOnce(target);launchOrbSignal(target,'progress')}})}
 function renderDashboard(){
+  if(document.body.dataset.view&&document.body.dataset.view!=='dashboard'){
+    document.body.classList.toggle('has-active-runs',state.dashboard.active.length>0);
+    syncSidebarOrbState(state.dashboard.active,state.dashboard.runners||[]);flushOrbTransitions();return;
+  }
   const c=state.dashboard.counts;
   const delivered=c.delivered||0, waiting=c.waiting_merge||0, failed=c.failed||0;
   const active=Object.entries(c).filter(([k])=>!['delivered','failed','rejected','cancelled','waiting_input'].includes(k)).reduce((a,[,v])=>a+v,0);
@@ -611,7 +623,16 @@ document.querySelector('#add-user-email')?.addEventListener('click',()=>addEmail
 document.querySelector('#request-form').addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget,error=document.querySelector('#request-error'),button=form.querySelector('button[type="submit"]');error.hidden=true;const taskType=form.elements.task_type.value,data={work_item_id:Number(form.elements.work_item_id.value),task_type:taskType,notification_emails:[...new Set([...form.querySelectorAll('[name="notification_emails"]:checked')].map(input=>input.value))],delivery_options:taskType==='analysis'?[]:[...new Set([...form.querySelectorAll('[name="delivery_options"]:checked')].map(input=>input.value))]};if(!data.notification_emails.length){error.textContent='请至少选择一个通知邮箱';error.hidden=false;return}if(taskType==='development'&&!data.delivery_options.length){error.textContent='请至少选择一种交付产物';error.hidden=false;return}button.disabled=true;try{const result=await api('/api/requests',{method:'POST',body:JSON.stringify(data)});closeModals();form.reset();if(result.routing){addOptimisticIntake(result.id,data.work_item_id,result.runner_online!==false,data.delivery_options,taskType);toast(result.message||'提交成功，任务已进入运行看板');openRoutingDetail(result.id,data.work_item_id,result.status,taskType)}else{toast(result.message||(taskType==='analysis'?'问题分析任务已进入队列':'研发任务已进入队列'));await refresh();await openDetail(result.id)}}catch(err){form.elements.work_item_id.value=data.work_item_id;setRequestTaskType(taskType);document.querySelector('#request-modal').hidden=false;error.textContent=err.message;error.hidden=false}finally{button.disabled=false}});
 document.querySelector('#user-form')?.addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget,error=document.querySelector('#user-error');error.hidden=true;const id=Number(form.elements.id.value)||null;const emails=[...form.querySelectorAll('.user-email-input')].map(input=>input.value.trim()).filter(Boolean);const data={username:form.elements.username.value.trim(),display_name:form.elements.display_name.value.trim(),emails,password:form.elements.password.value,role:form.elements.role.value,active:form.elements.active.checked};if(!data.password)delete data.password;try{const result=await api(id?`/api/users/${id}`:'/api/users',{method:id?'PUT':'POST',body:JSON.stringify(data)});if(result.user.id===USER.id)Object.assign(USER,result.user);closeModals();form.reset();toast(id?'账号已更新':'账号已创建');await refresh()}catch(err){error.textContent=err.message;error.hidden=false}});
 
-setInterval(()=>{document.querySelector('#clock').textContent=new Intl.DateTimeFormat('zh-CN',{dateStyle:'medium',timeStyle:'medium',hour12:false}).format(new Date())},1000);
-refresh().catch(()=>{});setInterval(()=>refresh({background:true}).catch(()=>{}),5000);
+const clockFormat=new Intl.DateTimeFormat('zh-CN',{dateStyle:'medium',timeStyle:'medium',hour12:false});
+setInterval(()=>{if(!document.hidden)document.querySelector('#clock').textContent=clockFormat.format(new Date())},1000);
+refresh().catch(()=>{});
+let workspacePoll=null;
+function scheduleWorkspacePoll(){clearTimeout(workspacePoll);if(document.hidden)return;
+  const interval=state.dashboard.active.length||state.selectedRequest&&!state.selectedTerminal?5000:15000;
+  workspacePoll=setTimeout(async()=>{try{await refresh({background:true});}catch(_){}finally{scheduleWorkspacePoll();}},interval);
+}
+scheduleWorkspacePoll();
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh({background:true}).catch(()=>{});scheduleWorkspacePoll();});
+window.addEventListener('pagehide',()=>clearTimeout(workspacePoll));
 window.addEventListener('beforeunload',()=>{const live=state.live;if(live.requestId&&live.watcherId)fetch(`/api/requests/${live.requestId}/devcore-watch/${live.watcherId}/stop`,{method:'POST',keepalive:true})});
 window.addEventListener('keydown',event=>{if(event.key!=='Escape')return;if(!document.querySelector('#artifact-preview').hidden)closeArtifactPreview();else closeLedgerPopovers()});

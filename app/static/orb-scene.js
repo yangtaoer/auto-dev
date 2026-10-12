@@ -1,9 +1,9 @@
 /* The orange character and its physically connected miniature garden. */
 import * as THREE from './vendor/three/three.module.js';
-import {AutoDevGarden} from './orb-garden.js?v=1.0-Beta.10';
-import {GardenDirector} from './garden-motion.js?v=1.0-Beta.10';
-import {ThemeDiorama} from './theme-scenes.js?v=1.0-Beta.10';
-import {ThemePerformanceDirector} from './theme-choreography.js?v=1.0-Beta.10';
+import {AutoDevGarden} from './orb-garden.js?v=1.0-Beta.11';
+import {GardenDirector} from './garden-motion.js?v=1.0-Beta.11';
+import {ThemeDiorama} from './theme-scenes.js?v=1.0-Beta.11';
+import {ThemePerformanceDirector} from './theme-choreography.js?v=1.0-Beta.11';
 
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 const instanceSeed = () => {
@@ -158,7 +158,7 @@ export class AutoDevOrbScene {
 
   setTheme(theme) {
     if(this.disposed || !theme) return;
-    if(this.theme.id !== theme.id) {
+    if(this.theme.id !== theme.id || this.theme.revision_id !== theme.revision_id) {
       this.garden?.destroy();this.scenery?.destroy();
       this.environmentResources.forEach(resource=>{resource.dispose();this.resources.delete(resource);});
       this.theme=theme;this.buildEnvironment();
@@ -236,16 +236,16 @@ export class AutoDevOrbScene {
         [p, pq, rp, pq, q, qr, rp, qr, r, pq, qr, rp].forEach(project);
       });
       const geometry = this.eyes[index].geometry;
-      const rebuild = geometry.getAttribute('position')?.array.length !== positions.length ||
-        geometry.getAttribute('normal')?.array.length !== normals.length;
-      // Morphs have different triangulations. Release old GPU buffers before
-      // replacing both attributes; otherwise every smile leaks the old pair.
+      const rebuild = (geometry.getAttribute('position')?.array.length || 0) < positions.length;
+      // Fixed-capacity buffers survive blink/smile topology changes. Grow only
+      // when needed, not on every shorter/longer expression.
       if (rebuild) geometry.dispose();
       for (const [name, data] of [['position', positions], ['normal', normals]]) {
         const attribute = geometry.getAttribute(name);
-        if (rebuild) geometry.setAttribute(name, new THREE.Float32BufferAttribute(data, 3));
+        if (rebuild){const values=new Float32Array(Math.max(4096*3,Math.ceil(data.length/3)*3));values.set(data);geometry.setAttribute(name,new THREE.Float32BufferAttribute(values,3));}
         else { attribute.array.set(data); attribute.needsUpdate = true; }
       }
+      geometry.setDrawRange(0,positions.length/3);
       geometry.computeBoundingSphere();
     });
   }
@@ -367,6 +367,7 @@ export class AutoDevOrbScene {
     this.resources.clear();
     this.scene?.traverse(object => { if (object.isLight) object.shadow?.dispose(); });
     this.renderer?.dispose();
+    this.renderer?.forceContextLoss?.();
     this.canvas?.remove();
     this.root.classList.remove('is-scene');
     for (const key of ['gardenMode', 'gardenPhase', 'gardenEpisode','themeStory','themeBeat']) delete this.root.dataset[key];

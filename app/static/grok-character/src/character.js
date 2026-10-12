@@ -118,6 +118,7 @@
     }
 
     destroy() {
+      this.destroyed = true;
       cancelAnimationFrame(this._raf);
       this._unbindPointer();
       this.particles?.clear();
@@ -156,7 +157,10 @@
     }
 
     setPaused(v) {
+      const wasPaused = this.paused;
       this.paused = !!v;
+      if(this.paused){cancelAnimationFrame(this._raf);this._raf=0;}
+      else if(wasPaused&&!this.destroyed){this.last=performance.now();this._raf=requestAnimationFrame(t=>this._tick(t));}
     }
 
     setEmphasis(v) {
@@ -505,13 +509,11 @@
     }
 
     _tick(now) {
+      this._raf=0;
       const dt = Math.min((now - this.last) / 1000, 0.1);
       this.last = now;
 
-      if (this.paused) {
-        this._raf = requestAnimationFrame((t) => this._tick(t));
-        return;
-      }
+      if (this.paused || this.destroyed) return;
 
       if (this.mode === "onboarding" && now - this.stateAt >= ONBOARDING_MS) {
         this.moodN += 1;

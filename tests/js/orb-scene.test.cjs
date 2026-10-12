@@ -240,23 +240,26 @@ test('destroy releases shared garden geometry, materials, shadow resources and o
   assert.equal(disposed, count);
 });
 
-test('eye morphs release replaced GPU attributes and reuse same-sized buffers', async () => {
+test('thousands of eye morphs reuse bounded GPU buffers across different triangulations', async () => {
   const {scene, sampleGarden} = await gardenScene();
   const eye = scene.eyes[0].geometry;
   let released = 0;
   eye.addEventListener('dispose', () => {released++;});
   const initial = eye.getAttribute('position');
   scene.renderGardenFrame(sampleGarden({mode: 'success', elapsed: 3000}));
-  assert.equal(released, 1, 'changing the triangulation releases both old buffers');
+  assert.equal(released, 0, 'smiling does not reallocate fixed-capacity buffers');
   const smile = eye.getAttribute('position');
-  assert.notEqual(smile, initial);
+  assert.equal(smile, initial);
   scene.renderGardenFrame(sampleGarden({mode: 'success', elapsed: 3100}));
-  assert.equal(released, 1);
+  assert.equal(released, 0);
   assert.equal(eye.getAttribute('position'), smile, 'matching geometry is updated in place');
   scene.renderGardenFrame(sampleGarden({mode: 'idle', elapsed: 0}));
-  assert.equal(released, 2, 'returning to normal also releases the replaced pair');
+  for(let i=0;i<2000;i++)scene.renderGardenFrame(sampleGarden({mode:i%2?'idle':'success',elapsed:i%2?0:3000}));
+  assert.equal(released, 0);
+  assert.equal(eye.getAttribute('position'),initial);
+  assert.ok(eye.drawRange.count>0&&eye.drawRange.count<=initial.count);
   scene.destroy();
-  assert.equal(released, 3);
+  assert.equal(released, 1);
 });
 
 test('each garden receives its own seed while explicit seeds make component reviews reproducible', async () => {

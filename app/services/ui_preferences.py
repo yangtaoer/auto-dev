@@ -19,14 +19,18 @@ def catalog() -> dict[str, Any]:
     return json.loads((ROOT / "app/static/themes/catalog.json").read_text("utf-8"))
 
 
-def theme(theme_id: str | None) -> dict[str, Any]:
+def theme(theme_id: str | None, user_id: int | None = None) -> dict[str, Any]:
+    if str(theme_id or '').startswith('workshop-'):
+        from .theme_workshop import resolve_theme
+        custom=resolve_theme(theme_id,user_id)
+        if custom:return custom
     themes = catalog()["themes"]
     return next((item for item in themes if item["id"] == theme_id), themes[0])
 
 
-def style(theme_id: str | None) -> str:
+def style(theme_id: str | None, user_id: int | None = None) -> str:
     # Values come exclusively from the shipped catalog, never from user CSS.
-    return ";".join(f"--{key}:{value}" for key, value in ui_media.theme_media(theme(theme_id))["tokens"].items())
+    return ";".join(f"--{key}:{value}" for key, value in ui_media.theme_media(theme(theme_id,user_id))["tokens"].items())
 
 
 def get(user_id: int) -> dict[str, Any]:
@@ -34,7 +38,7 @@ def get(user_id: int) -> dict[str, Any]:
     result = dict(DEFAULTS)
     if saved:
         result.update(saved)
-    result["theme_id"] = theme(result["theme_id"])["id"]
+    result["theme_id"] = theme(result["theme_id"],user_id)["id"]
     for key, options in CHOICES.items():
         if result[key] not in options:
             result[key] = DEFAULTS[key]
@@ -44,14 +48,20 @@ def get(user_id: int) -> dict[str, Any]:
 def save(user_id: int, values: dict[str, Any]) -> dict[str, Any]:
     if set(values) != set(DEFAULTS):
         raise ValueError("外观设置字段不完整或包含未知字段")
-    if values["theme_id"] not in {item["id"] for item in catalog()["themes"]}:
+    from .theme_workshop import themes_for_user
+    if values["theme_id"] not in {item["id"] for item in catalog()["themes"]+themes_for_user(user_id)}:
         raise ValueError("所选主题不可用")
     for key, options in CHOICES.items():
         if values[key] not in options:
             raise ValueError("外观设置选项无效")
     with transaction() as conn:
+        previous=conn.execute('SELECT theme_id FROM user_ui_preferences WHERE user_id=?',(user_id,)).fetchone()
         conn.execute("""INSERT INTO user_ui_preferences(user_id,theme_id,font_size,density,motion,updated_at)
             VALUES(?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET theme_id=excluded.theme_id,
             font_size=excluded.font_size,density=excluded.density,motion=excluded.motion,updated_at=excluded.updated_at""",
             (user_id, values["theme_id"], values["font_size"], values["density"], values["motion"], utc_now()))
+        if not previous or previous['theme_id']!=values['theme_id']:
+            import uuid
+            conn.execute("INSERT INTO theme_usage_events(user_id,theme_id,kind,dedupe_key,created_at) VALUES (?,?,'activate',?,?)",
+                         (user_id,values['theme_id'],str(uuid.uuid4()),utc_now()))
     return get(user_id)

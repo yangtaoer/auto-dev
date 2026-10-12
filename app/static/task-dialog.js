@@ -12,12 +12,16 @@ window.TaskDialog = (() => {
     requestAnimationFrame(() => { if (root.classList.contains('open')) root.querySelector('#close-detail').focus({preventScroll: true}); });
   }
   function close() {
+    rememberScroll();
     dialog().inert = true;
     document.body.classList.remove('task-dialog-open');
     document.querySelector('.app-shell').inert = false;
     (returnFocus?.isConnected ? returnFocus : document.querySelector('.nav-item.active'))?.focus({preventScroll: true});
     returnFocus = null;
     requestId = null;
+    // Remember small navigation state, release the closed task's entire DOM.
+    dialog().querySelector('#detail-content')?.replaceChildren();
+    while(tabs.size>30){const id=tabs.keys().next().value;tabs.delete(id);for(const key of scrolls.keys())if(key.startsWith(id+':'))scrolls.delete(key);}
   }
   function rememberScroll() {
     const panel = dialog().querySelector('.task-tab-panel:not([hidden])');

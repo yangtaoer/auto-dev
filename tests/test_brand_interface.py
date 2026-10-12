@@ -177,8 +177,9 @@ class BrandInterfaceTests(unittest.TestCase):
                 self.assertLess(text.index('loading-ui.js'), text.index('src="/static/app.js'))
             else:
                 self.assertLess(next(i for i,href in enumerate(styles) if href.startswith('/static/login-polish.css')),len(styles)-1)
-            self.assertTrue(styles[-2].startswith('/static/themes.css'))
-            self.assertTrue(styles[-1].startswith('/static/theme-components.css'))
+            self.assertTrue(styles[-3].startswith('/static/themes.css'))
+            self.assertTrue(styles[-2].startswith('/static/theme-components.css'))
+            self.assertTrue(styles[-1].startswith('/static/workshop-ui.css'))
             self.assertLess(text.index('orb-character.js'), text.index('orb-scene.js'))
             self.assertLess(text.index('orb-motion.js'), text.index('orb-character.js'))
             self.assertIn('type="module" src="/static/orb-scene.js', text)

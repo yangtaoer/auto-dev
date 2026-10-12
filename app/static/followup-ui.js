@@ -82,7 +82,11 @@ window.RequestFollowups = (() => {
       if (token === generation) { session.readError = `读取失败：${error.message}，正在重试。`; paint(session); }
     } finally { session.loading = false; }
   }
-  function stop() { clearInterval(timer); timer = null; current = null; generation++; }
+  function stop() { clearInterval(timer); timer = null; current = null; generation++;
+    // Persisted answers can be fetched again; never retain all visited chats.
+    for(const session of sessions.values())if(!session.sending&&!session.loading)session.items=[];
+    for(const [id,session] of sessions){if(sessions.size<=20)break;if(!session.draft&&!session.sending&&!session.loading)sessions.delete(id);}
+  }
   function mount(detail) {
     const root = document.querySelector('#task-followup-mount');
     if (!root) { if (current) stop(); return; }
@@ -114,6 +118,7 @@ window.RequestFollowups = (() => {
     input.onkeydown = event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); form.requestSubmit(); } };
     paint(session); chat.scrollTop = session.scroll || 0; refresh(session,token);
     if (!timer) timer = setInterval(() => {
+      if(document.hidden)return;
       if (!document.querySelector('#detail-drawer.open') || !document.querySelector('#task-followup-mount')) { stop(); return; }
       const active = sessions.get(current);
       const visible = !document.querySelector('#task-panel-followup')?.hidden;

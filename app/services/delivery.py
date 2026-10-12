@@ -547,12 +547,12 @@ class Mailer:
         return f"【AutoDev · {status}】TFS #{detail['work_item_id']}｜{title}"
 
     def build_message(
-        self, *, to: list[str], subject: str, html_body: str, attachments: list[Path] | None = None
+        self, *, to: list[str], subject: str, html_body: str, attachments: list[Path] | None = None, include_admin_copy: bool = True
     ) -> EmailMessage:
         recipients = self._deduplicate_emails(to)
         if not recipients:
             raise RuntimeError("邮件没有收件人")
-        admin_copies = self.admin_copy_recipients(recipients)
+        admin_copies = self.admin_copy_recipients(recipients) if include_admin_copy else []
         message = EmailMessage()
         message["From"] = self.sender_address()
         message["To"] = ", ".join(recipients)
@@ -584,10 +584,10 @@ class Mailer:
             message.add_attachment(path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name)
         return message
 
-    def send(self, *, to: list[str], subject: str, html_body: str, attachments: list[Path] | None = None) -> None:
+    def send(self, *, to: list[str], subject: str, html_body: str, attachments: list[Path] | None = None, include_admin_copy: bool = True) -> None:
         if not self.configured():
             raise RuntimeError("未配置 SMTP_HOST/SMTP_FROM")
-        message = self.build_message(to=to, subject=subject, html_body=html_body, attachments=attachments)
+        message = self.build_message(to=to, subject=subject, html_body=html_body, attachments=attachments, include_admin_copy=include_admin_copy)
         use_smtps = settings.smtp_protocol == "smtps" or settings.smtp_port == 465
         if use_smtps:
             smtp_client = smtplib.SMTP_SSL(

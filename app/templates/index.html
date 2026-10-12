@@ -1,7 +1,7 @@
 <!doctype html>
 {% set appearance = appearance|default({'theme_id':'mint-garden','font_size':'normal','density':'compact','motion':'full'}) %}
 {% set appearance_theme = appearance_theme|default({'id':'mint-garden','mode':'light','name':'薄荷花园','scene':'garden'}) %}
-<html lang="zh-CN" data-theme="{{ appearance.theme_id }}" data-theme-mode="{{ appearance_theme.mode|default('light') }}" data-font-size="{{ appearance.font_size }}" data-density="{{ appearance.density }}" data-motion="{{ appearance.motion }}" style="{{ appearance_style|default('') }}">
+<html lang="zh-CN" data-theme="{{ appearance_theme.base_theme_id|default(appearance.theme_id) }}" data-appearance-theme="{{ appearance.theme_id }}" data-theme-mode="{{ appearance_theme.mode|default('light') }}" data-font-size="{{ appearance.font_size }}" data-density="{{ appearance.density }}" data-motion="{{ appearance.motion }}" style="{{ appearance_style|default('') }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -26,6 +26,7 @@
   <link rel="stylesheet" href="/static/loading-ui.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/themes.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/theme-components.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/workshop-ui.css?v={{ app_version }}">
   {% include 'media-head.html' %}
 </head>
 <body class="mint-ui mint-workspace" data-view="dashboard">
@@ -42,6 +43,7 @@
         <button class="nav-item" data-view="users"><svg class="nav-symbol" aria-hidden="true"><use href="/static/editorial-icons.svg#user"/></svg><span class="nav-index">05</span><span>账号管理</span></button>
         <button class="nav-item" data-view="experiences"><svg class="nav-symbol" aria-hidden="true"><use href="/static/editorial-icons.svg#book"/></svg><span class="nav-index">06</span><span>项目经验</span></button>
         <button class="nav-item" data-view="models"><svg class="nav-symbol" aria-hidden="true"><use href="/static/editorial-icons.svg#gear"/></svg><span class="nav-index">07</span><span>研发设置</span></button>{% endif %}
+        <button class="nav-item" data-view="workshop"><svg class="nav-symbol" aria-hidden="true"><use href="/static/editorial-icons.svg#layers"/></svg><span class="nav-index">{{ '08' if user.role=='admin' else '03' }}</span><span>创意工坊</span></button>
       </nav>
       <div class="sidebar-character-stage" data-scene="editorial">
         <div id="sidebar-orb-character" class="autodev-orb" role="button" tabindex="0" aria-label="AutoDev 动态角色">
@@ -165,6 +167,7 @@
         <div class="table-card"><table><thead><tr><th>登录账号</th><th>姓名</th><th>通知邮箱</th><th>角色</th><th>状态</th><th>操作</th></tr></thead><tbody id="users-table"></tbody></table></div></div>
       </section>
       {% endif %}
+      <section class="view" id="view-workshop"><div id="workshop-mount"></div></section>
     </main>
   </div>
 
@@ -310,6 +313,8 @@
   <script src="/static/followup-ui.js?v={{ app_version }}"></script>
   <script src="/static/theme-icons.js?v={{ app_version }}"></script>
   <script src="/static/app.js?v={{ app_version }}"></script>
+  <script src="/static/workshop-core.js?v={{ app_version }}"></script>
+  <script src="/static/workshop-ui.js?v={{ app_version }}"></script>
   <script src="/static/learning-ui.js?v={{ app_version }}"></script>
   {% if user.role == 'admin' %}<script src="/static/model-settings.js?v={{ app_version }}"></script>{% endif %}
 </body>
