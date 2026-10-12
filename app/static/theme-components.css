@@ -188,3 +188,35 @@ html[data-motion=static] .mint-ui :is(.btn,.appearance-trigger,.ledger-select>bu
 html[data-motion=reduced] .mint-ui .btn:hover{transform:none}
 @media(prefers-reduced-motion:reduce){html[data-theme] .mint-ui :is(.btn,.appearance-trigger,.ledger-select>button,.ledger-date>button,td){transition:none;transform:none!important}}
 @media(max-width:900px){html[data-theme] .mint-workspace .nav-symbol{width:23px;height:23px;flex:0 0 23px}html[data-theme] .mint-workspace .nav-item{gap:0;justify-content:center}html[data-theme] .mint-workspace .nav-item .nav-index{display:none}}
+
+/* Workshop themes own the entire component dialect. Never activate the base
+ * theme's hard-coded gradients, green focus rings, fonts or icon ornaments. */
+html[data-theme=workshop-custom]{--dialect-radius:var(--skin-card-radius);--dialect-surface:var(--skin-card-bg);--dialect-shadow:var(--skin-shadow);--dialect-border:1px solid var(--skin-card-border)}
+html[data-theme=workshop-custom] .mint-ui{font-family:var(--skin-component-font);--ui-control-border:var(--skin-field-border);--ui-control-focus:var(--skin-field-focus);--ui-control-surface:var(--skin-field-bg);--ui-control-radius:var(--skin-field-radius);--ui-control-hover:var(--skin-hover)}
+html[data-theme=workshop-custom] .mint-ui :is(button,input,textarea,select){font-family:var(--skin-component-font)}
+html[data-theme=workshop-custom] .mint-ui :is(.btn,.appearance-trigger,.ledger-select>button,.ledger-date>button){border-radius:var(--skin-button-radius);border:1px solid var(--skin-button-border);background:var(--skin-button-bg);background-image:none;color:var(--skin-button-ink);box-shadow:var(--skin-button-shadow)}
+html[data-theme=workshop-custom] .mint-ui :is(.btn-primary,#open-request,.btn-primary#request-submit-button){background:var(--skin-accent);color:var(--skin-primary-ink);border-color:var(--skin-accent);background-image:none}
+html[data-theme=workshop-custom] .mint-ui :is(.btn-primary,#open-request):hover{background:var(--skin-accent-hover);border-color:var(--skin-accent-hover);color:var(--skin-primary-ink)}
+html[data-theme=workshop-custom] .mint-ui .btn-secondary:hover{background:var(--skin-hover);border-color:var(--skin-accent)}
+html[data-theme=workshop-custom] .mint-workspace .topbar .top-actions .analysis-launch{color:var(--skin-button-ink)!important}
+html[data-theme=workshop-custom] .mint-ui .btn-danger{background:var(--skin-danger-soft);color:var(--skin-danger);border-color:var(--skin-danger)}
+html[data-theme=workshop-custom] .mint-ui .btn-ghost{background:transparent;box-shadow:none;border-color:transparent;color:var(--skin-muted)}
+html[data-theme=workshop-custom] .mint-ui :is(input,textarea,select):not([type=checkbox]):not([type=radio]):not([type=hidden]){background:var(--skin-field-bg);background-image:none;color:var(--skin-field-ink);border:1px solid var(--skin-field-border);border-radius:var(--skin-field-radius);box-shadow:none}
+html[data-theme=workshop-custom] .mint-ui :is(input,textarea,select):focus{border-color:var(--skin-field-focus);box-shadow:0 0 0 3px color-mix(in srgb,var(--skin-field-focus) 18%,transparent);outline-color:var(--skin-field-focus)}
+html[data-theme=workshop-custom] .mint-ui :is(button,a,input,textarea):focus-visible{outline-color:var(--skin-field-focus)}
+html[data-theme=workshop-custom] .mint-ui :is(input[type=checkbox],input[type=radio]){accent-color:var(--skin-accent)}
+html[data-theme=workshop-custom] .mint-workspace .nav-item{color:var(--skin-nav-ink);border-radius:var(--skin-button-radius)}
+html[data-theme=workshop-custom] .mint-workspace .nav-item.active{color:var(--skin-nav-active-ink);background:var(--skin-nav-active-bg);box-shadow:var(--skin-button-shadow)}
+html[data-theme=workshop-custom] .mint-workspace .nav-item.active .nav-index{color:inherit}
+html[data-theme=workshop-custom] .mint-workspace .nav-item:hover{color:var(--skin-nav-active-ink);background:var(--skin-nav-active-bg)}
+html[data-theme=workshop-custom] .mint-ui .theme-icon{color:var(--skin-icon)}
+html[data-theme=workshop-custom] .mint-ui :is(.nav-item.active,.btn-primary,.btn-danger) .theme-icon{color:inherit}
+html[data-theme=workshop-custom] .mint-ui .theme-icon-stamp{stroke:var(--skin-icon-accent);opacity:.9}
+html[data-theme=workshop-custom] .mint-ui :is(.run-card,.project-card,.analytics-card,.experience-card,.detail-card,.model-settings-panel,.account-registry,.table-card,.studio-rail,.studio-artboard,.studio-conversation){background:var(--skin-card-bg);color:var(--skin-card-ink);border-color:var(--skin-card-border);border-radius:var(--skin-card-radius);box-shadow:var(--skin-shadow)}
+html[data-theme=workshop-custom] .mint-workspace #view-dashboard :is(.control-strip,.recent-panel){background:var(--skin-card-bg);border-color:var(--skin-card-border);border-radius:var(--skin-card-radius);box-shadow:var(--skin-shadow)}
+html[data-theme=workshop-custom] .mint-ui :is(.studio-tabs,.appearance-tabs,.studio-steps) :is(button[aria-selected=true],button[aria-pressed=true],.current){color:var(--skin-nav-active-ink);background:var(--skin-nav-active-bg)}
+html[data-theme=workshop-custom] .mint-ui :is(.effort-option.selected,.acceptance-option.selected,.theme-choice.selected){border-color:var(--skin-field-focus);background:var(--skin-nav-active-bg)}
+html[data-theme=workshop-custom] .mint-ui .task-tabs button[aria-selected=true]{color:var(--skin-nav-active-ink);background:var(--skin-nav-active-bg);border-bottom-color:var(--skin-accent)}
+html[data-theme=workshop-custom] .mint-ui #request-modal .modal-actions .btn{border-radius:var(--skin-button-radius)}
+html[data-theme=workshop-custom] .mint-ui .btn:disabled{opacity:.5;transform:none;box-shadow:none}
+html[data-theme=workshop-custom] .mint-ui :is(.run-card,.project-card,.analytics-card,.experience-card,.detail-card,.studio-artboard) :is(h1,h2,h3,h4,.run-title){color:var(--skin-card-ink)}

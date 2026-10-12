@@ -603,6 +603,12 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
         raw = str(error.get("message") or "上游未提供错误详情")
         info = error.get("codexErrorInfo") or error.get("codex_error_info") or ""
         http_status = error.get("httpStatusCode")
+        # Older callers may pass an already formatted error. Unwrap rather than
+        # nesting a second unknown error, while still redacting the final detail.
+        if "上游详情：" in raw and "错误类型：" in raw:
+            codes = re.findall(r"错误类型：([^。]+)", raw)
+            info = info or next((code for code in reversed(codes) if code != "unknown"), "")
+            raw = raw.rsplit("上游详情：", 1)[-1]
         try:
             upstream = json.loads(raw)
             if isinstance(upstream, dict) and isinstance(upstream.get("error"), dict):
@@ -618,8 +624,11 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
         signature = (raw + " " + json.dumps(info, ensure_ascii=False)).lower()
         if "requires a newer version of codex" in signature:
             reason = "Codex 运行器版本过旧，无法使用当前模型；请升级平台运行器后重试（不是额度不足）。"
-        elif any(word in signature for word in ("usagelimitexceeded", "usage_limit", "usage limit", "insufficient_quota")):
+        elif any(word in signature for word in ("usagelimitexceeded", "usage_limit", "usage limit", "insufficient_quota", "credit_balance_exhausted", "spend_limit")):
             reason = "Codex 使用额度已达上限；请等待额度恢复，或由管理员处理额度后重试。"
+        elif any(word in signature for word in ("serveroverloaded", "server_overloaded", "server_is_overloaded", "at capacity")):
+            info = info or "serverOverloaded"
+            reason = "当前模型暂时拥堵，不是额度不足；请稍后重试。"
         elif "unauthorized" in signature or "authentication" in signature:
             reason = "Codex 身份认证失败；请检查执行器登录状态后重试。"
         elif "contextwindowexceeded" in signature:

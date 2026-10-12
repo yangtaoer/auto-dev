@@ -18,3 +18,18 @@ test('only the active work keeps history and background polling is gated',()=>{
  assert.match(source,/design.jobs.slice\(-40\)/);
  assert.ok(source.includes("input[type=file]').value=''"));
 });
+test('overload uses a readable summary and quota errors do not imply retry will restore access',()=>{
+ assert.match(context.window.workshopFailure({error_message:'unknown 上游详情：serverOverloaded Selected model is at capacity'}).title,/暂时拥堵/);
+ assert.match(context.window.workshopFailure({error_message:'insufficient_quota at capacity'}).title,/恢复额度/);
+ const result=context.window.workshopFailure({output:{failure:{title:'precise reason',details:'technical'}},error_message:'old'});
+ assert.equal(result.title,'precise reason');assert.equal(result.details,'technical');
+ const source=fs.readFileSync('app/static/workshop-ui.js','utf8');
+ assert.ok(source.includes('查看失败详情'));assert.ok(source.includes('这一轮尚未生成设计图'));
+});
+test('custom themes have an independent component dialect and a non-persisting real component review',()=>{
+ const appearance=fs.readFileSync('app/static/appearance-ui.js','utf8'),css=fs.readFileSync('app/static/theme-components.css','utf8');
+ assert.ok(appearance.includes("theme.is_custom?'workshop-custom':theme.id"));
+ for(const token of ['skin-primary-ink','skin-field-focus','skin-button-radius','skin-card-bg','skin-nav-active-ink','skin-icon-accent'])assert.ok(css.includes('var(--'+token+')'),token);
+ const ui=fs.readFileSync('app/static/workshop-ui.js','utf8');assert.ok(ui.includes('真实组件主题检查'));assert.ok(ui.includes('这只是样式试用，不会提交业务数据'));
+ for(const template of ['index','login'])assert.ok(fs.readFileSync('app/templates/'+template+'.html','utf8').includes("'workshop-custom' if appearance_theme.is_custom"));
+});

@@ -13,3 +13,12 @@ test('fallback icons preserve their original business meaning and reject markup 
   const evil=icons.markup('\" onload=\"alert(1)');assert.equal(evil.includes('onload'),false);assert.ok(evil.includes('#help'));
   icons.apply('pixel-arcade');assert.ok(icons.markup('cube').includes('fill-rule="evenodd"'));icons.apply('mint-garden');
 });
+test('custom themes choose trusted icon shapes and ornaments, then restore the system dialect',()=>{
+ icons.apply({id:'workshop-123',is_custom:true,components:{icon_family:'angular',icon_decoration:'star'}});
+ assert.ok(icons.markup('home').includes('custom-angular'));assert.ok(icons.markup('home').includes('theme-icon-stamp'));
+ icons.apply({id:'workshop-123',is_custom:true,components:{icon_family:'solid',icon_decoration:'none'}});
+ assert.ok(icons.markup('home').includes('fill-rule="evenodd"'));assert.equal(icons.markup('home').includes('theme-icon-stamp'),false);
+ icons.apply({id:'workshop-evil',is_custom:true,components:{icon_family:'" onload="bad',icon_decoration:'<script>'}});
+ assert.equal(/onload|script/.test(icons.markup('home')),false);
+ icons.apply('paper-workshop');assert.ok(icons.markup('home').includes('folded'));icons.apply('mint-garden');
+});

@@ -177,7 +177,7 @@ class ThemeWorkshopTests(unittest.TestCase):
         from app.services.workshop_runner import WorkshopProcessor,WorkshopImagegen
         base=ui_preferences.catalog()['themes'][0];refs=['ref-'+str(i) for i in range(5)]
         job=dict(id='job',design_id='design',kind='production',input={'reference_ids':refs,'approved_design_id':'approved'},
-          base_theme=base,revisions=[{'id':'approved','preview_asset_id':'approved-art'},{'id':'latest','preview_asset_id':'latest-art'}])
+          model_config={'model':'gpt-6.1-sol','effort':'xhigh'},base_theme=base,revisions=[{'id':'approved','preview_asset_id':'approved-art'},{'id':'latest','preview_asset_id':'latest-art'}])
         class Store:
             def workshop_update(self,*args,**kw):self.last=kw
             def workshop_asset(self,*args):return image()
@@ -189,4 +189,29 @@ class ThemeWorkshopTests(unittest.TestCase):
             files=generator.call_args.args[2]
             assert {p.stem for p in files[1:]}==set(refs+['approved-art','latest-art']),files
             assert len(files)==8 and store.last['status']=='completed',store.last
+        ''')
+
+    def test_heartbeats_and_failure_preserve_thread_and_recovery_evidence(self):
+        self.check('''
+        d=create();w.submit_round(d['id'],owner,'design','test',[],key());j=w.claim(settings.runner_id)
+        args=(j['id'],j['runner_id'],j['claim_token'])
+        w.update(*args,thread_id='native-thread',progress='自动重试',result={'attempts':[{'attempt':1}]})
+        w.update(*args,progress='等待模型恢复')
+        r=w.update(*args,status='failed',error_message='overloaded')
+        assert r['thread_id']=='native-thread' and r['progress']=='等待模型恢复',r
+        assert r['output']['attempts']==[{'attempt':1}],r
+        from app.main import app
+        from app.workshop_api import WorkshopResult
+        assert WorkshopResult(runner_id=j['runner_id'],claim_token=j['claim_token']).result is None
+        d=w.retry_job(j['id'],owner,key());assert len(d['jobs'])==2
+        assert d['jobs'][0]['thread_id']=='native-thread' and d['jobs'][0]['output']['attempts']
+        ''')
+
+    def test_custom_theme_owns_component_contract_and_legacy_palette_remains_compatible(self):
+        self.check('''
+        d=production();theme=w.themes_for_user(owner['id'],include_trials=True)[0]
+        assert theme['is_custom'] and theme['components']['button_shape']=='soft'
+        assert theme['tokens']['skin-field-focus']==theme['tokens']['skin-accent']
+        assert 'skin-primary-ink' in theme['tokens'] and 'skin-button-radius' in theme['tokens']
+        assert theme['tokens']['skin-component-font'].endswith('sans-serif')
         ''')

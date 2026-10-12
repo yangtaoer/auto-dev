@@ -55,25 +55,32 @@
     'ink-gallery':{family:'swiss',paths:solid,solid:true},
   };
   const known=new Set([...Object.keys(rounded),'help','lock','eye','eye-off','arrow-right','chevron-right','message','network','phone','building','refresh','more']);
+  const decorations={none:'',star:'m20 1 1.1 2.2 2.5.4-1.8 1.8.4 2.5L20 6.7l-2.2 1.2.4-2.5-1.8-1.8 2.5-.4Z',
+    leaf:dialects['mint-garden'].stamp,flower:'M20 3c-3-4-6 1-2 3-4 2 1 6 3 2 3 3 6-2 2-3 3-3-1-6-3-2Z',orbit:'M17 2c8 0 8 6 0 6s-8-6 0-6M19 1v8'};
+  let customDialect={family:'custom-rounded',paths:rounded,stamp:''};
+  function dialect(id){return id==='workshop-custom'?customDialect:dialects[id]||dialects['mint-garden'];}
   let theme=typeof document!=='undefined'?document.documentElement.dataset.theme:'mint-garden';
   function glyph(name,id=theme){
-    const dialect=dialects[id]||dialects['mint-garden'];
-    const d=dialect.paths[name];
+    const selected=dialect(id);
+    const d=selected.paths[name];
     if(!d)return `<use href="/static/editorial-icons.svg#${known.has(name)?name:'help'}"></use>`;
-    return `<path class="theme-glyph" d="${d}"${dialect.solid?' fill="currentColor" fill-rule="evenodd" stroke="none"':''}></path>${dialect.stamp?`<path class="theme-icon-stamp" d="${dialect.stamp}"/>`:''}`;
+    return `<path class="theme-glyph" d="${d}"${selected.solid?' fill="currentColor" fill-rule="evenodd" stroke="none"':''}></path>${selected.stamp?`<path class="theme-icon-stamp" d="${selected.stamp}"/>`:''}`;
   }
-  function markup(name){const family=(dialects[theme]||dialects['mint-garden']).family;return `<svg class="ui-icon theme-icon" viewBox="0 0 24 24" data-icon-name="${known.has(name)?name:'help'}" data-icon-family="${family}" aria-hidden="true">${glyph(name)}</svg>`;}
-  function apply(id){
+  function markup(name){const family=dialect(theme).family;return `<svg class="ui-icon theme-icon" viewBox="0 0 24 24" data-icon-name="${known.has(name)?name:'help'}" data-icon-family="${family}" aria-hidden="true">${glyph(name)}</svg>`;}
+  function apply(value){
+    let id=typeof value==='string'?value:value?.id;
+    if(value?.is_custom){const components=value.components||{},family=['rounded','angular','solid'].includes(components.icon_family)?components.icon_family:'rounded';
+      customDialect={family:'custom-'+family,paths:{rounded,angular,solid}[family],solid:family==='solid',stamp:decorations[components.icon_decoration]||''};id='workshop-custom';}
     theme=id;
     if(typeof document==='undefined')return;
-    const family=(dialects[id]||dialects['mint-garden']).family;
+    const selected=dialect(id),family=selected.family;
     document.querySelectorAll('svg.nav-symbol,svg.ui-icon').forEach(icon=>{
       const source=icon.dataset.iconName||icon.querySelector('use')?.getAttribute('href')?.split('#')[1];
-      if(!source||!dialects[id]?.paths[source])return;
+      if(!source||!selected.paths[source])return;
       icon.dataset.iconName=source;icon.dataset.iconFamily=family;icon.setAttribute('viewBox','0 0 24 24');icon.classList.add('theme-icon');icon.innerHTML=glyph(source,id);
     });
   }
   const api={dialects,glyph,markup,apply};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
-  else {global.AutoDevThemeIcons=api;apply(theme);document.addEventListener('autodev:appearance',event=>apply(event.detail.theme.id));}
+  else {global.AutoDevThemeIcons=api;apply(global.__THEME__||theme);document.addEventListener('autodev:appearance',event=>apply(event.detail.theme));}
 })(typeof window==='undefined'?globalThis:window);

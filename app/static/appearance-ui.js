@@ -1,4 +1,4 @@
-import {AppearanceSession,DEFAULT_APPEARANCE,normalizeAppearance,selectedTheme} from './theme-core.js?v=1.0-Beta.11';
+import {AppearanceSession,DEFAULT_APPEARANCE,normalizeAppearance,selectedTheme} from './theme-core.js?v=1.0-Beta.12';
 
 const root=document.documentElement,trigger=document.getElementById('open-appearance');
 const authenticated=Boolean(window.__USER__?.id);
@@ -7,7 +7,7 @@ const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 function apply(appearance,theme){
   if(!theme)return;
   if(backgroundProbe){backgroundProbe.onload=backgroundProbe.onerror=null;backgroundProbe.src='';backgroundProbe=null;}
-  root.dataset.theme=theme.base_theme_id||theme.id;root.dataset.appearanceTheme=theme.id;root.dataset.themeMode=theme.mode;
+  root.dataset.theme=theme.is_custom?'workshop-custom':theme.id;root.dataset.appearanceTheme=theme.id;root.dataset.themeMode=theme.mode;
   for(const key of ['font_size','density','motion'])root.dataset[key.replace(/_([a-z])/g,(_,c)=>c.toUpperCase())]=appearance[key];
   for(const key of appliedTokenKeys)if(!(key in theme.tokens))root.style.removeProperty('--'+key);
   const resolved=window.AutoDevMedia?.theme(theme)||theme;

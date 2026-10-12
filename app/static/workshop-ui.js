@@ -63,6 +63,17 @@ window.CreativeWorkshop = (()=>{
     const revision=design.revisions.find(r=>r.id===(viewRevision||design.current_revision_id));
     const preview=design.assets.find(a=>a.id===revision?.preview_asset_id);const history=revision&&revision.id!==design.current_revision_id;
     art.innerHTML=`<header class="studio-art-head"><h3>${escape(design.name)}</h3><p>${escape(design.author)} · ${escape(labels[design.status]||design.status)}${revision?` · R${revision.number}`:''}</p><div class="studio-steps"><span class="${!design.approved_design_id?'current':''}">01 设计</span><span class="${design.approved_design_id&&!design.live_revision_id?'current':''}">02 制作</span><span class="${design.live_revision_id?'current':''}">03 上线与分享</span></div></header><div class="studio-preview">${preview?`<a href="${escape(preview.url)}" target="_blank" rel="noopener"><img src="${escape(preview.url)}" alt="${escape(design.name)} R${revision.number} 效果图" decoding="async"></a>`:'<div class="studio-empty-art"><span class="studio-orb" aria-hidden="true"></span><b>把想法交给 imagegen。</b><p>生成需要几分钟，可以离开页面，回来继续查看。失败时输入和历史不会丢失。</p></div>'}</div><div class="studio-revisions">${design.revisions.map(r=>`<button type="button" data-revision="${r.id}" class="${revision?.id===r.id?'active':''}">R${r.number} · ${r.stage==='design'?'设计':'制作'}</button>`).join('')}</div><div class="studio-actions"></div>`;
+    const latestJob=design.jobs.at(-1),empty=art.querySelector('.studio-empty-art');
+    if(empty&&latestJob){
+      const title=empty.querySelector('b'),hint=empty.querySelector('p');
+      if(latestJob.status==='failed'){
+        empty.classList.add('studio-empty-failed');title.textContent='这一轮尚未生成设计图';
+        hint.textContent=window.workshopFailure(latestJob).title+' 描述、参考图和对话仍在，右侧可以重试。';
+      }else if(['queued','running'].includes(latestJob.status)){
+        empty.setAttribute('role','status');title.textContent=latestJob.status==='queued'?'请求已保存，等待执行器':'正在生成你的设计';
+        hint.textContent=latestJob.progress||'可离开页面，后台会继续处理。';
+      }
+    }
     art.querySelectorAll('[data-revision]').forEach(button=>button.onclick=()=>{viewRevision=button.dataset.revision;paintDetail(design);});
     const actions=art.querySelector('.studio-actions');
     function button(label,handler,primary=false){const node=document.createElement('button');node.type='button';node.className='btn '+(primary?'btn-primary':'btn-secondary');node.textContent=label;node.onclick=handler;actions.append(node);return node;}
@@ -99,7 +110,13 @@ window.CreativeWorkshop = (()=>{
       const answer=document.createElement('article');answer.className='studio-message assistant'+(job.status==='failed'?' error':'');
       const info=document.createElement('small');info.textContent=`AutoDev · ${job.status==='completed'?'已完成':job.status==='failed'?'未完成':job.status==='running'?'处理中':'等待执行器'}${job.started_at?' · '+seconds(job):''}`;
       const body=document.createElement('div');body.className='followup-markdown';
-      if(job.status==='completed')markdown(body,job.answer);else body.textContent=job.error_message||job.progress||'已保存请求，等待执行器处理。';answer.append(info,body);
+      if(job.status==='completed')markdown(body,job.answer);else body.textContent=job.status==='failed'?window.workshopFailure(job).title:job.progress||'已保存请求，等待执行器处理。';answer.append(info,body);
+      if(job.status==='failed'){
+        const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');
+        summary.textContent='查看失败详情';pre.textContent=window.workshopFailure(job).details;
+        if(job.output?.attempts?.length)pre.textContent+='\n\n尝试记录：\n'+job.output.attempts.map(a=>`第 ${a.attempt} 次 · ${a.model} / ${a.effort} · ${a.status}${a.category?' · '+a.category:''}`).join('\n');
+        details.append(summary,pre);answer.append(details);
+      }
       if(job.status==='failed'&&design.can_edit){const retry=document.createElement('button');retry.type='button';retry.className='text-button';retry.textContent='保留记录，再试一次 ↗';retry.onclick=()=>retryJob(design,job);answer.append(retry);}
       if(job.output?.imagegen_calls?.length){const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent='查看图像生成提示词';details.append(summary);
         const pre=document.createElement('pre');pre.textContent=job.output.imagegen_calls.map(c=>c.revised_prompt||'原生 imagegen 成功生成').join('\n\n');details.append(pre);answer.append(details);}
@@ -154,7 +171,15 @@ window.CreativeWorkshop = (()=>{
   async function retryJob(design,job){try{const data=await post(`/api/workshop/jobs/${job.id}/retry`,{idempotency_key:crypto.randomUUID()});
       items[items.findIndex(item=>item.id===design.id)]=data.design;paintDetail(data.design);
     }catch(error){toast(error.message);}}
-  async function previewRevision(design,revision){themes=(await request('/api/ui/themes')).themes;const trial=themes.find(t=>t.design_id===design.id&&t.revision_id===revision.id);if(trial){window.AutoDevAppearance?.previewTheme(trial);toast('正在试用制作版本，未保存；确认后才能正式上线。');}}
+  async function previewRevision(design,revision){themes=(await request('/api/ui/themes')).themes;const trial=themes.find(t=>t.design_id===design.id&&t.revision_id===revision.id);if(trial){window.AutoDevAppearance?.previewTheme(trial);componentReview(trial);toast('正在试用制作版本，未保存；确认后才能正式上线。');}}
+  function componentReview(theme){
+    const panel=document.createElement('dialog');panel.className='studio-component-panel';
+    panel.setAttribute('aria-label','真实组件主题检查');
+    const icon=name=>window.AutoDevThemeIcons?.markup(name)||'';
+    panel.innerHTML=`<header><div><h3>${escape(theme.name)} · 真实组件试用</h3><p>下面是实际运行的组件，不是效果图。可检查悬浮、聚焦、选中和禁用状态。</p></div><button type="button" class="btn btn-secondary" data-close>关闭样例</button></header><div class="studio-component-grid"><section><h4>菜单与图标</h4><button type="button" class="nav-item active">${icon('home')}任务总览</button><button type="button" class="nav-item">${icon('clipboard')}交付记录</button><p class="studio-component-icons">${['cube','chart','user','book','gear'].map(icon).join('')}</p></section><section><h4>按钮与交互</h4><div class="studio-component-buttons"><button type="button" class="btn btn-primary">${icon('plus')}发起研发</button><button type="button" class="btn btn-secondary">查看记录</button><button type="button" class="btn btn-danger">取消任务</button><button type="button" class="btn btn-primary" disabled>处理中</button></div></section><section><h4>表单与焦点</h4><label>需求编号<input type="text" placeholder="点击检查焦点边框" aria-label="组件试用需求编号"></label><label>补充说明<textarea placeholder="这只是样式试用，不会提交业务数据" aria-label="组件试用补充说明"></textarea></label><label><input type="checkbox" checked>选中态</label></section><section><h4>卡片与状态</h4><article class="run-card"><h4>主题组件校验</h4><p>壁纸、菜单、图标、按钮、表单、卡片统一适配。</p><span class="status-tag" data-status="delivered">验证通过</span> <span class="status-tag" data-status="failed">验证未通过</span></article></section></div><footer>这是临时预览。关闭后仍可继续检查工作台；只有你确认后才会上线。</footer>`;
+    panel.querySelector('[data-close]').onclick=()=>{panel.close();panel.remove();};
+    panel.addEventListener('cancel',()=>panel.remove(),{once:true});document.body.append(panel);panel.showModal();
+  }
   async function useTheme(id){try{await window.AutoDevAppearance.useTheme(id);toast('已保存为你的个人壁纸，换浏览器登录也会保留。');}catch(error){toast(error.message);}}
   function paintWallpapers(content,collection){
     content.innerHTML=collection.length?`<div class="studio-wallpapers">${collection.map(t=>`<article class="studio-wallpaper"><img src="${escape(imageUrl(t))}" data-media-source="${escape(t.preview_fallback||t.preview)}" loading="lazy" decoding="async" alt="${escape(t.name)}效果预览"><div class="studio-wallpaper-copy"><h3>${escape(t.name)}</h3><p>${escape(t.author||'AutoDev')} · ${escape(t.subtitle)}</p><footer><button class="btn btn-secondary" type="button" data-preview-theme="${escape(t.id)}">预览</button><button class="btn btn-primary" type="button" data-use-theme="${escape(t.id)}">使用</button><span>${t.usage?.users||0} 人使用过</span></footer></div></article>`).join('')}</div>`:'<div class="studio-empty-art"><b>这里等待第一片新风景。</b><p>制作者确认并公开的作品，将实时出现在这里。</p></div>';

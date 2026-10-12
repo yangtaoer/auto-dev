@@ -11,10 +11,11 @@ from pathlib import Path
 from app import db
 from app.config import settings
 from . import model_settings
+from .workshop_theme import COMPONENT_COLORS,validate_components,component_tokens
 
 COLOR_KEYS = {'skin-bg','skin-surface','skin-surface-alt','skin-sidebar','skin-ink','skin-muted','skin-line',
               'skin-accent','skin-accent-hover','skin-success','skin-success-soft','skin-warning','skin-warning-soft',
-              'skin-danger','skin-danger-soft','skin-info','skin-info-soft','skin-hover','skin-meta'}
+              'skin-danger','skin-danger-soft','skin-info','skin-info-soft','skin-hover','skin-meta'} | COMPONENT_COLORS
 SCENE_KEYS = {'leaf','petal','ground','ambient','key'}
 PHASE_STATUS = {'design':'designing','production':'producing','publish':'publishing','share':'sharing'}
 
@@ -269,6 +270,11 @@ def claim(runner_id: str) -> dict | None:
         job['history']=list(reversed([dict(i) for i in conn.execute("SELECT kind,question,answer,thread_id FROM theme_jobs WHERE design_id=? AND status='completed' AND kind IN ('design','production') ORDER BY created_at DESC,id DESC LIMIT 12",(job['design_id'],))]))
         job['assets']=[dict(i) for i in conn.execute('SELECT id,kind,name,job_id FROM theme_assets WHERE design_id=?',(job['design_id'],))]
         job['revisions']=[dict(i) for i in conn.execute('SELECT * FROM theme_revisions WHERE design_id=? ORDER BY number',(job['design_id'],))]
+        approved=next((r for r in job['revisions'] if r['id']==job['input'].get('approved_design_id')),None)
+        if approved:
+            approved_job=conn.execute('SELECT output_json FROM theme_jobs WHERE id=?',(approved['job_id'],)).fetchone()
+            job['approved_theme']={'palette':db.json_value(approved['palette'],{}),
+                'components':db.json_value(approved_job['output_json'],{}).get('components',{})}
         from .ui_preferences import theme
         job['base_theme']=theme(design['base_theme_id'])
         recipient_id=job['input'].get('recipient_id')
@@ -286,9 +292,13 @@ def claim(runner_id: str) -> dict | None:
 def update(job_id: str, runner_id: str, claim_token: str, *, status: str='running', answer: str='',
            progress: str='', thread_id: str='', error_message: str='', result: dict | None=None) -> dict:
     if status not in {'running','completed','failed'}:raise ValueError('无效工坊任务状态')
-    result=result or {}
     with db.transaction() as conn:
         job=_claimed(conn,job_id,runner_id,claim_token)
+        # Heartbeats and terminal errors must not erase the native conversation
+        # or recovery evidence recorded by an earlier update.
+        result=db.json_value(job['output_json'],{}) if result is None else dict(result)
+        thread_id=thread_id or job['thread_id']
+        progress=progress or job['progress']
         if job['status']!='running':
             saved=db.json_value(job['output_json'],{})
             if job['status']==status and all(saved.get(k)==v for k,v in result.items()) and job['answer']==answer:
@@ -297,6 +307,7 @@ def update(job_id: str, runner_id: str, claim_token: str, *, status: str='runnin
         now=db.utc_now();design=dict(conn.execute('SELECT * FROM theme_designs WHERE id=?',(job['design_id'],)).fetchone())
         if status=='completed' and job['kind'] in {'design','production'}:
             palette=validate_palette(result.get('palette',{}));preview_id=result.get('preview_asset_id')
+            result['components']=validate_components(result.get('components',{}))
             bg_id=result.get('background_asset_id')
             for asset_id,kind in [(preview_id,job['kind']+'_preview')]+([(bg_id,'production_background')] if job['kind']=='production' else []):
                 if not conn.execute('SELECT 1 FROM theme_assets WHERE id=? AND job_id=? AND kind=?',(asset_id,job_id,kind)).fetchone():
@@ -359,12 +370,16 @@ def custom_theme(design: dict, revision: dict) -> dict:
     base=next(t for t in catalog()['themes'] if t['id']==design['base_theme_id'])
     palette=db.json_value(revision['palette'],{});tokens=dict(base['tokens']);scene_palette=dict(base['scenePalette'])
     tokens.update({k:v for k,v in palette.items() if k in COLOR_KEYS});scene_palette.update({k:v for k,v in palette.items() if k in SCENE_KEYS})
+    job=db.row('SELECT output_json FROM theme_jobs WHERE id=?',(revision['job_id'],))
+    components=validate_components(db.json_value(job['output_json'],{}).get('components',{}))
+    component_values,adjusted=component_tokens(tokens,components);tokens.update(component_values)
     preview=db.row('SELECT * FROM theme_assets WHERE id=?',(revision['preview_asset_id'],))
     background=db.row('SELECT * FROM theme_assets WHERE id=?',(revision['background_asset_id'],))
     return {**base,'id':'workshop-'+design['id'],'base_theme_id':base['id'],'number':'W','name':design['name'],
             'subtitle':'公开作品' if design['is_public'] else '个人设计','preview':asset_url(preview),
             'background':asset_url(background),'tokens':tokens,'scenePalette':scene_palette,'is_custom':True,
             'owner_id':design['owner_id'],'revision_id':revision['id'],'is_public':bool(design['is_public']),
+            'components':components,'component_contrast_adjustments':adjusted,
             'preview_fallback':'/api/workshop/assets/'+preview['id'],
             'background_fallback':'/api/workshop/assets/'+background['id']}
 

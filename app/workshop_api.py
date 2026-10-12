@@ -43,7 +43,7 @@ class WorkshopResult(WorkshopClaim):
     progress:str=Field(default='',max_length=1000)
     thread_id:str=Field(default='',max_length=100)
     error_message:str=Field(default='',max_length=3000)
-    result:dict=Field(default_factory=dict)
+    result:dict|None=None
 
 class PreviewEvent(BaseModel,extra='forbid'):
     theme_id:str=Field(max_length=80)
