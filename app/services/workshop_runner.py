@@ -48,7 +48,7 @@ class WorkshopImagegen:
                 approval_mode=ApprovalMode.deny_all,service_name='autodev-creative-workshop',
                 developer_instructions='仅调用原生图像生成工具设计此作品。不得使用shell、apply_patch、数据库、网络CLI、凭证、API图片服务或任何代码提交/发布工具。至少成功生成所要求的图片后才可宣告完成。')
             thread_id=thread.id;progress('设计对话已启动；正在调用原生 imagegen',thread_id)
-            inputs=[TextInput(prompt)]+[LocalImageInput(str(image)) for image in images[:6]]
+            inputs=[TextInput(prompt)]+[LocalImageInput(str(image)) for image in images]
             codex_home=Path(os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))
             skill=codex_home/'skills/.system/imagegen/SKILL.md'
             if skill.is_file():inputs.insert(0,SkillInput(name='imagegen',path=str(skill)))
@@ -102,7 +102,7 @@ class WorkshopProcessor:
                     ids.insert(0,approved['preview_asset_id'])
                 latest_revision=job['revisions'][-1] if job['revisions'] else None
                 if latest_revision and latest_revision['preview_asset_id'] not in ids:ids.append(latest_revision['preview_asset_id'])
-                for asset_id in ids[:5]:
+                for asset_id in dict.fromkeys(ids):
                     target=cwd/(asset_id+'.webp');target.write_bytes(self.store.workshop_asset(job,asset_id));images.append(target)
                 result=WorkshopImagegen().generate(job,cwd,images,progress=progress,cancelled=lambda:stop_event.is_set() or time.monotonic()>deadline)
                 answer=result.pop('answer');thread_id=result.pop('thread_id');generated=result.pop('images')

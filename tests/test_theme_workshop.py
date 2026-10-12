@@ -170,3 +170,23 @@ class ThemeWorkshopTests(unittest.TestCase):
         a=w.add_asset(d['id'],owner,image(),'good');assert a['mime']=='image/webp' and a['size_bytes']<12000
         assert a['width']==256 and 'local_path' not in a
         ''')
+
+    def test_production_keeps_all_five_references_plus_approved_and_latest_context(self):
+        self.check('''
+        import threading
+        from app.services.workshop_runner import WorkshopProcessor,WorkshopImagegen
+        base=ui_preferences.catalog()['themes'][0];refs=['ref-'+str(i) for i in range(5)]
+        job=dict(id='job',design_id='design',kind='production',input={'reference_ids':refs,'approved_design_id':'approved'},
+          base_theme=base,revisions=[{'id':'approved','preview_asset_id':'approved-art'},{'id':'latest','preview_asset_id':'latest-art'}])
+        class Store:
+            def workshop_update(self,*args,**kw):self.last=kw
+            def workshop_asset(self,*args):return image()
+            def workshop_upload(self,*args):return {'id':key()}
+        store=Store()
+        with patch.object(WorkshopImagegen,'generate',return_value={'answer':'完成','thread_id':'thread','images':[image(),image()],
+             'imagegen_verified':True,'palette':{}}) as generator:
+            WorkshopProcessor(store).run(job,threading.Event())
+            files=generator.call_args.args[2]
+            assert {p.stem for p in files[1:]}==set(refs+['approved-art','latest-art']),files
+            assert len(files)==8 and store.last['status']=='completed',store.last
+        ''')
