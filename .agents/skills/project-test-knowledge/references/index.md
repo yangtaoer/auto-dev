@@ -1,6 +1,6 @@
 # 项目测试知识索引
 
-更新时间：2026-09-21（Asia/Shanghai）。已在用户授权下完成两次成都 PC 操作票浏览器纯流程验证；尚未接入平台自动部署或浏览器测试流水线，不能将单次验证等同于完整自动回归能力。
+更新时间：2026-10-12（Asia/Shanghai）。已在用户授权下完成两次成都 PC 操作票浏览器纯流程验证；尚未接入平台自动部署或浏览器测试流水线，不能将单次验证等同于完整自动回归能力。
 
 | 范围 / 项目键 | 输入名称 | 资料 | 状态 |
 | --- | --- | --- | --- |
@@ -8,6 +8,7 @@
 | 四川主配一体 | 主网、配网、主配、调度管辖、areano | [管辖关系与数据范围](sichuan-jurisdiction.md) | 用户确认原则；各地 schema、编码需对应项目核实 |
 | `chengdu-network-command` | 成都网络发令、成都网络下令；PC 端 | [成都测试档案](projects/chengdu-network-command.md)、[操作票实测流程](projects/chengdu-operation-ticket-flow.md) | 正值、值长、受令三会话已验证；两张纯流程票已归档，第二次计时及操作适配经验见实测记录 |
 | 测试环境 `101-14` | 101.14、192.168.101.14 | [只读盘点快照](environments/101-14.md) | 2026-09-18 快照，运行状态不可视为永久配置 |
+| `sichuan-provincial-network-command` | 四川省调 PC、委托操作票、审核丢指令、自动保存 | [操作票保存与丢行复现](projects/sichuan-provincial-operation-ticket.md) | 用户确认空白新增行自动保存后补填并送审，只剩原第 1、6 条；业务代码尚未修复 |
 
 其他地市和 APP 暂无独立完整测试档案。收到对应经验时新增 `projects/<project-key>.md` 并更新本索引，不复制成都账号、数据库 schema 或具体单位到其他项目。
 
