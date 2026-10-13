@@ -14,6 +14,7 @@ window.WorkshopDrafts = class WorkshopDrafts {
 
 // Also summarize older records that predate structured recovery evidence.
 window.workshopFailure = function(job){
+  if(['notification','recommendation'].includes(job.kind))return {title:'邮件发送未完成，壁纸与设计记录不受影响。',details:job.output?.failure?.details||job.error_message||job.progress};
   if(job.output?.failure?.title)return {title:job.output.failure.title,details:job.output.failure.details||job.error_message};
   const details=job.error_message||job.progress||'上游未提供错误详情';
   const signature=details.toLowerCase();

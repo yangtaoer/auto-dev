@@ -36,3 +36,10 @@ test('custom themes have an independent component dialect and a non-persisting r
  assert.ok(css.includes('input:checked{background-color:var(--skin-field-focus)'));
  assert.ok(css.includes(':is(#request-form,.model-settings-panel,.ledger-menu,.ledger-calendar)'));
 });
+test('public wallpaper attribution appears in cards, picker, and active theme without unescaped names',()=>{
+ const studio=fs.readFileSync('app/static/workshop-ui.js','utf8'),appearance=fs.readFileSync('app/static/appearance-ui.js','utf8');
+ assert.ok(studio.includes('studio-creator-credit'));assert.ok(studio.includes("escape(t.author||'平台用户')"));
+ assert.ok(appearance.includes('theme-creator'));assert.ok(appearance.includes("creator.hidden=!(theme.is_custom&&theme.is_public)"));
+ assert.ok(fs.readFileSync('app/templates/index.html','utf8').includes('sidebar-theme-author'));
+ assert.match(context.window.workshopFailure({kind:'recommendation',error_message:'Codex 调用失败 SMTP_HOST'}).title,/邮件发送未完成/);
+});

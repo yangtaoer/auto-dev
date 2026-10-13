@@ -1,7 +1,6 @@
 """Run native Codex imagegen jobs; no API fallback, placeholder art, or source release."""
 from __future__ import annotations
 import base64
-import html
 import json
 import os
 import threading
@@ -149,12 +148,18 @@ class WorkshopProcessor:
             elif job['kind'] in {'publish','share'}:
                 result=self.publish(job,cwd);answer='作品已'+('公开，所有用户都可以选择。' if job['kind']=='share' else '正式上线，已加入个人设计；不需要重启或发布应用版本。');thread_id=''
             else:
-                result=self.notify(job);answer='邮件已发送。' if result.get('sent') else '收件人关闭推荐或没有可用邮箱，已跳过。';thread_id=''
+                progress('正在通过云端默认邮箱发送邮件')
+                result=self.notify(job,cancelled=lambda:stop_event.is_set() or time.monotonic()>deadline)
+                answer='邮件已通过平台默认邮箱发送。' if result.get('sent') else '收件人关闭推荐或没有可用邮箱，已跳过。';thread_id=''
             done.set();heartbeat_thread.join(timeout=1)
             self.store.workshop_update(job,status='completed',answer=answer,thread_id=thread_id,result=result)
         except Exception as exc:
             done.set();heartbeat_thread.join(timeout=1)
             failure=exc.failure if isinstance(exc,WorkshopGenerationError) else Failure.from_error(str(exc))
+            if job['kind'] in {'notification','recommendation'}:
+                from .workshop_mail import mail_error_detail
+                detail=mail_error_detail(exc)
+                failure=Failure('mail','邮件发送未完成，壁纸与设计记录不受影响。',detail)
             result={'attempts':attempts,'failure':{'category':failure.category,'title':failure.title,'details':failure.details,
                 'attempt_count':len(attempts),'max_attempts':MAX_ATTEMPTS}}
             if isinstance(exc,WorkshopGenerationError):
@@ -191,13 +196,12 @@ class WorkshopProcessor:
             result.append({'id':asset_id,'url':url,'oss_key':key,'expires_at':None if public else (datetime.now(UTC)+timedelta(days=1)).isoformat()})
         return {'assets':result,'visibility':'public' if public else 'private','oss_verified':True}
 
-    def notify(self,job):
-        from .delivery import Mailer
-        recipient=job.get('recipient') or {};emails=recipient.get('emails') or []
-        if not emails:return {'sent':False}
-        recommendation=job['kind']=='recommendation';title='发现一张新壁纸' if recommendation else '你的壁纸已上线'
-        name=html.escape(job['design']['name']);author=html.escape(recipient.get('name',''))
-        link=(settings.cloud_url or settings.public_base_url)+('/?workshop-public=' if recommendation else '/?workshop=')+job['design_id']
-        body=f'''<div style="background:#eef5ef;padding:28px;font-family:Arial,sans-serif;color:#082c30"><div style="max-width:680px;margin:auto;background:#fffefb;border:1px solid #c9d8d2;border-radius:18px;overflow:hidden"><header style="background:#d6e9dc;padding:28px"><small>AutoDev · CREATIVE WORKSHOP</small><h1 style="margin-bottom:0;font-size:26px">{title}</h1></header><div style="padding:28px"><p>{author}，你好。</p><h2>{name}</h2><p>{'这是一张由平台用户创作并公开的壁纸，可在公共壁纸中预览和选择。' if recommendation else '本次制作版本已通过制作者确认，正式加入个人设计。壁纸作为动态数据上线，系统没有停机或发布新的应用版本。'}</p><p><a style="display:inline-block;background:#ff582c;color:white;padding:12px 22px;border-radius:30px;text-decoration:none" href="{html.escape(link,quote=True)}">{'选择新壁纸' if recommendation else '查看作品与交互记录'} ↗</a></p><p style="font-size:12px;color:#607d85">{'不想收到壁纸推荐？可在创意工坊关闭推荐邮件。' if recommendation else '设计与制作每一轮记录、确认和使用统计均可在创意工坊查看。'}</p></div></div></div>'''
-        Mailer().send(to=emails,subject=f'【AutoDev 创意工坊】{title} · {job["design"]["name"]}',html_body=body,include_admin_copy=False)
-        return {'sent':True,'recipients':len(emails)}
+    def notify(self,job,*,cancelled=lambda:False):
+        for _ in range(36):
+            if cancelled():raise RuntimeError('邮件通知已停止或超时，记录保留。')
+            result=self.store.workshop_notify(job)
+            if not result.get('pending'):return result
+            for _ in range(5):
+                if cancelled():raise RuntimeError('邮件通知已停止或超时，记录保留。')
+                time.sleep(1)
+        raise RuntimeError('云端仍在等待邮件服务器响应；发送回执保留，不会自动重复投递。')

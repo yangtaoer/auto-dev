@@ -45,6 +45,9 @@ class WorkshopResult(WorkshopClaim):
     error_message:str=Field(default='',max_length=3000)
     result:dict|None=None
 
+class WorkshopNotify(WorkshopClaim):
+    claim_token:str=Field(max_length=80)
+
 class PreviewEvent(BaseModel,extra='forbid'):
     theme_id:str=Field(max_length=80)
 
@@ -122,10 +125,31 @@ def preference(payload:MailPreference,user:Annotated[dict,Depends(current_user)]
     return {'enabled':workshop.mail_preference(user['id'],payload.enabled)}
 
 @router.post('/api/runner/workshop/claim',dependencies=[Depends(runner_auth)])
-def claim(payload:WorkshopClaim):return {'job':workshop.claim(payload.runner_id)}
+def claim(payload:WorkshopClaim):
+    job=workshop.claim(payload.runner_id)
+    if job and job['kind'] in {'notification','recommendation'}:
+        # Mail belongs to the control plane, where SMTP is configured. Older
+        # runners also benefit without interrupting their in-flight code/image jobs.
+        from .services.workshop_mail import send_claimed,mail_error_detail
+        try:
+            result=send_claimed(job['id'],payload.runner_id,job['claim_token'])
+            if result.get('pending'):raise RuntimeError('云端已有邮件投递正在处理，回执保留，未重复发送。')
+            answer='邮件已通过平台默认邮箱发送。' if result.get('sent') else '收件人关闭推荐或没有可用邮箱，已跳过。'
+            workshop.update(job['id'],payload.runner_id,job['claim_token'],status='completed',answer=answer,result=result)
+        except Exception as exc:
+            detail=mail_error_detail(exc)
+            workshop.update(job['id'],payload.runner_id,job['claim_token'],status='failed',error_message=detail,
+                result={'failure':{'category':'mail','title':'邮件发送未完成，壁纸与设计记录不受影响。','details':detail}})
+        return {'job':None}
+    return {'job':job}
 
 @router.patch('/api/runner/workshop/jobs/{job_id}',dependencies=[Depends(runner_auth)])
 def update(job_id:str,payload:WorkshopResult):return {'job':learning_call(workshop.update,job_id,**payload.model_dump())}
+
+@router.post('/api/runner/workshop/jobs/{job_id}/notify',dependencies=[Depends(runner_auth)])
+def notify(job_id:str,payload:WorkshopNotify):
+    from .services.workshop_mail import send_claimed
+    return {'result':learning_call(send_claimed,job_id,payload.runner_id,payload.claim_token)}
 
 @router.get('/api/runner/workshop/jobs/{job_id}/assets/{asset_id}',dependencies=[Depends(runner_auth)])
 def runner_asset(job_id:str,asset_id:str,runner_id:str,claim_token:str):

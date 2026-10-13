@@ -43,4 +43,9 @@ CREATE INDEX IF NOT EXISTS ix_theme_usage_theme ON theme_usage_events(theme_id,k
 CREATE TABLE IF NOT EXISTS theme_mail_preferences (
  user_id INTEGER PRIMARY KEY REFERENCES users(id), recommendations INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS theme_mail_deliveries (
+ delivery_key TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES theme_jobs(id),
+ status TEXT NOT NULL, result_json TEXT NOT NULL DEFAULT '{}', error_message TEXT NOT NULL DEFAULT '',
+ updated_at TEXT NOT NULL
+);
 """

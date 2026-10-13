@@ -24,6 +24,10 @@ logger = logging.getLogger("autodev.remote_store")
 
 
 class LocalStore:
+    def workshop_notify(self,job):
+        from .services.workshop_mail import send_claimed
+        return send_claimed(job['id'],settings.runner_id,job['claim_token'])
+
     def workshop_claim(self):
         from .services import theme_workshop
         return theme_workshop.claim(settings.runner_id)
@@ -153,6 +157,10 @@ class LocalStore:
 
 class RemoteStore:
     """Cloud control-plane adapter used by the outbound-only Windows runner."""
+    def workshop_notify(self,job):
+        return self._json(self._request('POST',f'/api/runner/workshop/jobs/{job["id"]}/notify',json={
+            'runner_id':self.runner_id,'claim_token':job['claim_token']}))['result']
+
     def workshop_claim(self):
         return self._json(self._request('POST','/api/runner/workshop/claim',json={'runner_id':self.runner_id})).get('job')
 

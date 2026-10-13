@@ -58,7 +58,7 @@
         </button>
       </div>
       <div class="sidebar-foot">
-        <span class="sidebar-theme-edition"><b>AutoDev</b><span id="sidebar-theme-name">{{ appearance_theme.number|default('01') }} · {{ appearance_theme.name }}</span></span>
+        <span class="sidebar-theme-edition"><b>AutoDev</b><span id="sidebar-theme-name">{{ appearance_theme.number|default('01') }} · {{ appearance_theme.name }}</span><span id="sidebar-theme-author" {% if not (appearance_theme.is_custom|default(false) and appearance_theme.is_public|default(false)) %}hidden{% endif %}>{{ ('由 ' ~ appearance_theme.author|default('平台用户') ~ ' 创作') if appearance_theme.is_custom|default(false) and appearance_theme.is_public|default(false) else '' }}</span></span>
         <span class="sidebar-edition">AUTONOMOUS<br>SOFTWARE DEVELOPMENT<br>AND DELIVERY PLATFORM</span>
       </div>
     </aside>

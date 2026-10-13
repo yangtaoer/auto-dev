@@ -104,5 +104,19 @@ class WorkshopRecoveryTests(unittest.TestCase):
         self.assertEqual(final['status'],'failed');self.assertEqual(final['thread_id'],'native-thread')
         self.assertEqual(final['result']['partial_assets'],['partial']);self.assertEqual(final['error_message'].count('上游详情：'),1)
 
+    def test_mail_is_dispatched_to_store_and_errors_are_not_model_failures(self):
+        store=Mock();store.workshop_notify.return_value={'sent':True,'transport':'server_smtp','sender':'configured@example.com'}
+        job={'kind':'recommendation','design_id':'mail-test'}
+        with patch.object(Path,'mkdir'):
+            WorkshopProcessor(store).run(job,threading.Event())
+        store.workshop_notify.assert_called_once_with(job)
+        self.assertEqual(store.workshop_update.call_args.kwargs['status'],'completed')
+        self.assertEqual(store.workshop_update.call_args.kwargs['result']['transport'],'server_smtp')
+        store.workshop_notify.side_effect=RuntimeError('未配置 SMTP_HOST/SMTP_FROM')
+        with patch.object(Path,'mkdir'):
+            WorkshopProcessor(store).run(job,threading.Event())
+        final=store.workshop_update.call_args.kwargs
+        self.assertEqual(final['result']['failure']['category'],'mail');self.assertNotIn('Codex',final['error_message'])
+
 
 if __name__=='__main__':unittest.main()

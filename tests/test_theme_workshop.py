@@ -215,3 +215,86 @@ class ThemeWorkshopTests(unittest.TestCase):
         assert 'skin-primary-ink' in theme['tokens'] and 'skin-button-radius' in theme['tokens']
         assert theme['tokens']['skin-component-font'].endswith('sans-serif')
         ''')
+
+    def test_mail_uses_server_default_sender_has_creator_and_deduplicates_retries(self):
+        self.check('''
+        from app.services.workshop_mail import send_claimed
+        d=publish(production());d=publish(d,True)
+        w.action(d['id'],owner,'recommend',d['live_revision_id'],key())
+        j=w.claim(settings.runner_id)
+        while j['kind']=='notification':
+            w.update(j['id'],j['runner_id'],j['claim_token'],status='completed',answer='mock');j=w.claim(settings.runner_id)
+        with patch('app.services.workshop_mail.Mailer.configured',return_value=True),patch('app.services.workshop_mail.Mailer.send') as send:
+            result=send_claimed(j['id'],j['runner_id'],j['claim_token'])
+            assert result['sent'] and result['sender']==settings.smtp_from and result['author']==owner['display_name'],result
+            assert not send.call_args.kwargs['include_admin_copy']
+            assert '由 <strong' in send.call_args.kwargs['html_body'] and owner['display_name'] in send.call_args.kwargs['html_body']
+            assert send_claimed(j['id'],j['runner_id'],j['claim_token'])['deduplicated']
+            w.update(j['id'],j['runner_id'],j['claim_token'],status='failed',error_message='lost reply')
+            retry=w.retry_job(j['id'],owner,key())
+            # Other queued recipients can be processed independently; this retry shares the same durable key.
+            with db.transaction() as conn:
+                r=conn.execute('SELECT * FROM theme_jobs WHERE id=?',(retry['jobs'][-1]['id'],)).fetchone()
+                conn.execute("UPDATE theme_jobs SET status='running',claim_token='retry-token' WHERE id=?",(r['id'],))
+            assert send_claimed(r['id'],j['runner_id'],'retry-token')['deduplicated']
+            assert send.call_count==1
+        ''')
+
+    def test_mail_rechecks_opt_out_and_rejects_wrong_lease_or_non_mail_jobs(self):
+        self.check('''
+        from app.services.workshop_mail import send_claimed
+        d=publish(production());d=publish(d,True)
+        w.action(d['id'],owner,'recommend',d['live_revision_id'],key());j=w.claim(settings.runner_id)
+        while j['kind']=='notification':
+            w.update(j['id'],j['runner_id'],j['claim_token'],status='completed');j=w.claim(settings.runner_id)
+        rejects(lambda:send_claimed(j['id'],'other-runner',j['claim_token']))
+        w.mail_preference(j['input']['recipient_id'],False)
+        with patch('app.services.workshop_mail.Mailer.send') as send:
+            result=send_claimed(j['id'],j['runner_id'],j['claim_token']);assert not result['sent'];send.assert_not_called()
+        fresh=create();w.submit_round(fresh['id'],owner,'design','x',[],key())
+        # Directly lease this isolated design fixture to verify the endpoint cannot act as an arbitrary mail relay.
+        with db.transaction() as conn:
+            row=conn.execute("SELECT * FROM theme_jobs WHERE design_id=?",(fresh['id'],)).fetchone()
+            conn.execute("UPDATE theme_jobs SET status='running',claim_token='design-token' WHERE id=?",(row['id'],))
+        rejects(lambda:send_claimed(row['id'],settings.runner_id,'design-token'))
+        ''')
+
+    def test_mail_pending_and_ambiguous_delivery_never_sends_another_copy(self):
+        self.check('''
+        from app.services.workshop_mail import send_claimed
+        d=publish(production());j=w.claim(settings.runner_id)
+        k='live:'+j['input']['revision_id']+':'+__import__('hashlib').sha256('\\n'.join(sorted(e.casefold() for e in j['input']['emails'])).encode()).hexdigest()
+        with db.transaction() as conn:conn.execute("INSERT INTO theme_mail_deliveries(delivery_key,job_id,status,updated_at) VALUES(?,?,'sending',?)",(k,j['id'],db.utc_now()))
+        with patch('app.services.workshop_mail.Mailer.send') as send:
+            assert send_claimed(j['id'],j['runner_id'],j['claim_token'])['pending'];send.assert_not_called()
+        with db.transaction() as conn:conn.execute("DELETE FROM theme_mail_deliveries WHERE delivery_key=?",(k,))
+        with patch('app.services.workshop_mail.Mailer.configured',return_value=True),patch('app.services.workshop_mail.Mailer.send',side_effect=TimeoutError('server response lost')) as send:
+            rejects(lambda:send_claimed(j['id'],j['runner_id'],j['claim_token']))
+            rejects(lambda:send_claimed(j['id'],j['runner_id'],j['claim_token']))
+            assert send.call_count==1 and db.row('SELECT status FROM theme_mail_deliveries WHERE delivery_key=?',(k,))['status']=='uncertain'
+        ''')
+
+    def test_cloud_mail_endpoint_authentication_and_no_recipient_override(self):
+        self.check('''
+        from fastapi.testclient import TestClient
+        from app.main import app
+        from app.workshop_api import WorkshopNotify
+        client=TestClient(app)
+        assert client.post('/api/runner/workshop/jobs/missing/notify',json={'runner_id':'runner','claim_token':'token'}).status_code==401
+        from pydantic import ValidationError
+        rejects(lambda:WorkshopNotify(runner_id='runner',claim_token='token',to=['arbitrary@example.com']),errors=(ValidationError,))
+        ''')
+
+    def test_mail_queue_is_processed_on_control_plane_even_for_older_runner(self):
+        self.check('''
+        from app.main import app
+        from app.workshop_api import claim,WorkshopClaim
+        d=publish(production())
+        with patch('app.services.workshop_mail.Mailer.configured',return_value=True),patch('app.services.workshop_mail.Mailer.send') as send:
+            assert claim(WorkshopClaim(runner_id=settings.runner_id))=={'job':None}
+            assert send.call_count==1
+        mail=db.rows("SELECT status,output_json FROM theme_jobs WHERE kind='notification'")
+        assert any(j['status']=='completed' and json.loads(j['output_json']).get('transport')=='server_smtp' for j in mail),mail
+        fresh=create();w.submit_round(fresh['id'],owner,'design','new artwork',[],key())
+        job=claim(WorkshopClaim(runner_id=settings.runner_id))['job'];assert job['kind']=='design',job
+        ''')
