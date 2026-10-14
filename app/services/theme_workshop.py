@@ -186,8 +186,19 @@ def action(identifier: str, actor: dict, action: str, revision_id: str, key: str
             for user in conn.execute('''SELECT u.id,u.email FROM users u LEFT JOIN theme_mail_preferences p ON p.user_id=u.id
                 WHERE u.active=1 AND COALESCE(p.recommendations,1)=1''').fetchall():
                 mail_key=f'recommend:{revision_id}:{user["id"]}'
-                if not conn.execute('SELECT 1 FROM theme_jobs WHERE design_id=? AND idempotency_key=?',(identifier,mail_key)).fetchone():
+                prior=conn.execute('SELECT * FROM theme_jobs WHERE design_id=? AND idempotency_key=?',(identifier,mail_key)).fetchone()
+                if not prior:
                     _queue(conn,design,'recommendation','推荐公开壁纸',actor['id'],mail_key,{'revision_id':revision_id,'recipient_id':user['id']})
+                elif prior['status']=='failed':
+                    # Recommending again retries only failed recipients, not the
+                    # people already sent, queued, opted out, or uncertain.
+                    receipt=conn.execute('SELECT status FROM theme_mail_deliveries WHERE delivery_key=?',(mail_key,)).fetchone()
+                    if receipt and receipt['status'] in {'sent','skipped','sending','uncertain'}:continue
+                    latest=next((j for j in conn.execute("SELECT * FROM theme_jobs WHERE design_id=? AND kind='recommendation' ORDER BY created_at DESC,id DESC",(identifier,))
+                        if (p:=db.json_value(j['input_json'],{})).get('revision_id')==revision_id and p.get('recipient_id')==user['id']),prior)
+                    if latest['status']=='failed':
+                        _queue(conn,design,'recommendation','重试未发送成功的公开壁纸推荐',actor['id'],'recommend-retry:'+latest['id'],
+                            {'revision_id':revision_id,'recipient_id':user['id'],'retry_of':latest['id']})
             _audit(conn,actor['id'],'recommend_requested',identifier,{'revision_id':revision_id})
         else:
             raise ValueError('未知作品操作')

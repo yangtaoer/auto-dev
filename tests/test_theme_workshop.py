@@ -298,3 +298,17 @@ class ThemeWorkshopTests(unittest.TestCase):
         fresh=create();w.submit_round(fresh['id'],owner,'design','new artwork',[],key())
         job=claim(WorkshopClaim(runner_id=settings.runner_id))['job'];assert job['kind']=='design',job
         ''')
+
+    def test_recommend_button_retries_failed_recipients_without_repeating_others(self):
+        self.check('''
+        d=publish(production());d=publish(d,True);w.action(d['id'],owner,'recommend',d['live_revision_id'],key())
+        j=w.claim(settings.runner_id)
+        while j['kind']=='notification':
+            w.update(j['id'],j['runner_id'],j['claim_token'],status='completed');j=w.claim(settings.runner_id)
+        w.update(j['id'],j['runner_id'],j['claim_token'],status='failed',error_message='old runner missing SMTP')
+        count=db.row("SELECT count(*) n FROM theme_jobs WHERE kind='recommendation'")['n']
+        for i in range(2):w.action(d['id'],owner,'recommend',d['live_revision_id'],key())
+        jobs=db.rows("SELECT * FROM theme_jobs WHERE kind='recommendation'")
+        assert len(jobs)==count+1,jobs
+        assert sum(json.loads(r['input_json']).get('retry_of')==j['id'] for r in jobs)==1
+        ''')
