@@ -89,7 +89,8 @@ class TfsPipelineReleaseService:
                 "retryCount": len(retry_history),
                 "retryHistory": retry_history,
             }
-        return result
+        from .deployment_links import enrich_result
+        return enrich_result(result)
 
     def _invoke(
         self,

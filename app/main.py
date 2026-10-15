@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.14",
+    version="1.0-Beta.15",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -441,6 +441,9 @@ def public_engine_text(value: Any) -> Any:
 
 def public_request_payload(detail: dict[str, Any]) -> dict[str, Any]:
     result = dict(detail)
+    if detail.get('joint_children'):
+        from .services.deployment_links import services_for_request
+        result['deployment_services']=services_for_request(detail)
     result["can_continue_in_place"] = recoverable_preflight_failure(detail)
     result.pop("codex_thread_id", None)
     for key in ("title", "requirement_summary", "result_summary", "error_message"):
@@ -629,6 +632,7 @@ def joint_child_summary(child: dict[str, Any]) -> dict[str, Any]:
         "result_summary": public.get("result_summary") or "",
         "error_message": public.get("error_message") or "",
         "repository_states": public.get("repository_states") or [],
+        "deployment_services": public.get("deployment_services") or [],
         "pr_id": public.get("pr_id"),
         "pr_url": public.get("pr_url"),
         "created_at": public.get("created_at"),

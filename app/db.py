@@ -1003,6 +1003,11 @@ def request_detail(request_id: str) -> dict[str, Any] | None:
             for step in request["steps"]
             if step["step_code"] in ANALYSIS_PIPELINE_STEP_CODES
         ]
+    from .services.deployment_links import services_for_request
+    release_context=request
+    if any(a['kind']=='release_artifact' for a in request['artifacts']) and not any(e['event_type'] in {'release.completed','release.shared'} for e in request['events']):
+        release_context={**request,'events':rows("SELECT * FROM delivery_events WHERE request_id=? AND event_type IN ('release.completed','release.shared') ORDER BY id DESC LIMIT 8",(request_id,))}
+    request['deployment_services']=services_for_request(release_context)
     return request
 
 

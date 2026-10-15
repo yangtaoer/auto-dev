@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "checkedAt": "2026-10-15T11:05:31+08:00",
+  "source": "tfs-project-catalog deploymentAudit / tfs-run-pipeline automatic-deployment",
+  "collectionUrl": "http://dev.tellhowsoft.com/DefaultCollection",
+  "pipelines": [
+    {"projectKey":"sichuan-dispatch-network-command","standardName":"四川省调网络发令","tfsProject":"DCS","definitionId":1974,"releaseDefinitionId":53,"applicationUrl":"http://192.168.62.39:8581/netorder","portVerification":"runtime-listener-verified"},
+    {"projectKey":"ziyang-network-command","standardName":"资阳调度运行指挥平台","projectNames":["资阳网络发令"],"tfsProject":"DCS","definitionId":8442,"releaseDefinitionId":527,"applicationUrl":"http://192.168.62.39:58389/netorder","portVerification":"runtime-listener-verified"},
+    {"projectKey":"yibin-network-command","standardName":"宜宾网络发令","tfsProject":"DCS","definitionId":5489,"releaseDefinitionId":232,"applicationUrl":"http://192.168.62.39:8609/netorder","portVerification":"configuration-only-not-listening"},
+    {"projectKey":"bazhong-network-command","standardName":"巴中网络发令","tfsProject":"DCS","definitionId":7100,"releaseDefinitionId":450,"applicationUrl":"http://192.168.62.39:18080/netorder","portVerification":"runtime-listener-verified"}
+  ]
+}

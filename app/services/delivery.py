@@ -857,6 +857,17 @@ class Mailer:
           <td width="24%" valign="top" style="padding:9px 11px"><div style="color:#607d85;font-size:10px">PR</div><div style="margin-top:3px;color:#082c30;font-size:12px;word-break:break-all">{pr_value}</div></td>
         </tr>
       </table>"""
+        from .deployment_links import services_for_request,safe_url
+        services=services_for_request(detail) if detail.get('joint_children') or 'deployment_services' not in detail else detail['deployment_services']
+        service_rows=[]
+        for service in services:
+            url=safe_url(service.get('url'))
+            if not url:continue
+            warning=f'<div style="margin-top:7px;color:#a36412;font-size:12px">{safe_text(service["warning"])}</div>' if service.get('warning') else ''
+            release_url=safe_url(service.get('release_url'))
+            release_link=f'<a href="{html.escape(release_url,quote=True)}" style="color:#607d85">查看自动部署管道 ↗</a>' if release_url else ''
+            service_rows.append(f'''<tr><td style="padding:13px 15px;border:1px solid #c9d8d2;border-radius:8px;background:#f5f8f1"><b style="color:#082c30;font-size:14px">{safe_text(service.get('project_name'))}</b><a href="{html.escape(url,quote=True)}" style="display:block;margin-top:8px;color:#257e65;font-size:14px;font-weight:700;word-break:break-all">{html.escape(url)} ↗</a><div style="margin-top:9px;font-size:11px;color:#607d85">Build #{safe_text(service.get('build_id'))} · {release_link} · 部署登记 {safe_text(str(service.get('audit_checked_at',''))[:10])}</div>{warning}</td></tr>''')
+        deployment_section=('''<div style="margin-top:18px;margin-bottom:9px;color:#082c30;font-size:15px;font-weight:700">自动部署服务入口</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0">'''+''.join(service_rows)+'''</table><p style="margin:9px 0 0;color:#607d85;font-size:12px;line-height:1.7">构建产物已生成；TFS 按既有规则自动部署。本次部署进度和服务就绪未验证，可能需要稍候；请在可访问该内网地址的网络中打开。</p>''') if service_rows else ''
         return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{safe_text(status_label)}</title>
 <style>
 @media only screen and (max-width:600px) {{
@@ -912,6 +923,7 @@ class Mailer:
 
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:5px"><tr><td style="color:#607d85;font:700 9px Consolas,'Courier New',monospace;letter-spacing:.1em">{artifact_heading}</td><td align="right">{expiry_note}</td></tr></table>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">{artifacts}</table>
+      {deployment_section}
     </td></tr>
     <tr><td style="padding:16px 26px;border-radius:0 0 16px 16px;background:#edf3ee;border-top:1px solid #c9d8d2;color:#607d85;font-size:11px;line-height:1.5">
       此邮件由 <b style="color:#ff582c">AutoDev · 自主研发交付</b> 自动发送，研发与交付操作均保留审计记录。
