@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .delivery import added_files, menu_link_from_view_path
+from .delivery_assets import reconcile_delivery_assets
 
 
 _MIGRATION_VERSION = re.compile(r"(?i)(?:^|[/\\])V(?P<version>\d+(?:[._]\d+)*)[^/\\]*\.sql$")
@@ -114,6 +115,11 @@ def evaluate_development_quality(
         for relative in state.get("changed_files") or []
     ]
     ledger = normalize_acceptance_ledger(result)
+    delivery_assets, asset_blockers = reconcile_delivery_assets(project, repository_states, result)
+    blockers.extend(asset_blockers)
+    _check(checks, "delivery-scripts", "SQL / 配置交付完整性", "blocked" if asset_blockers else "passed",
+           "；".join(asset_blockers) if asset_blockers else f"已核对 {len(delivery_assets)} 个部署脚本/配置与本任务数据库写入记录",
+           [f"{item['repository']}/{item['path']}" for item in delivery_assets])
 
     if profile.get("require_acceptance_ledger"):
         if not result.get("acceptance_ledger"):
@@ -325,6 +331,9 @@ def evaluate_development_quality(
         "deployment_validation": result.get("deployment_validation") or {},
         "menu_changes": result.get("menu_changes") or [],
         "existing_implementation": result.get("existing_implementation") or {},
+        "delivery_assets": delivery_assets,
+        "database_changes": result.get("database_changes") or [],
+        "database_write_calls": result.get("database_write_calls") or [],
     }
 
 

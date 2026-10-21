@@ -25,16 +25,22 @@
   "package_patterns": [
     "release/bazhong-*.zip"
   ],
-  "sql_patterns": [
-    "**/*.sql"
-  ],
+  "sql_patterns": ["*.sql", "**/*.sql"],
   "config_patterns": [
     "**/*.yml",
     "**/*.yaml",
     "**/*.properties",
+    "**/*.conf",
+    "**/*.ini",
+    "**/*.cfg",
     "**/config/*.js",
-    "deploy/*.conf",
-    "deploy/*.sh"
+    "**/config/*.json",
+    "**/*config*.xml",
+    "**/application*.xml",
+    "deploy/*.sh",
+    "deploy/*.ps1",
+    "**/*.template",
+    "**/*.example"
   ],
   "protected_patterns": [
     "**/production/**",

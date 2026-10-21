@@ -203,12 +203,12 @@
           <div class="recipient-choice-list" id="request-email-options"></div>
         </fieldset>
         <fieldset class="field-block delivery-option-block" id="request-delivery-block" aria-labelledby="request-delivery-label">
-          <legend class="field-label" id="request-delivery-label">交付产物 <small>可多选</small></legend>
-          <p class="request-field-caption">适用于 PR 审核类项目；本地打包按项目定义交付</p>
+          <legend class="field-label" id="request-delivery-label">交付内容 <small>统一规则</small></legend>
+          <p class="request-field-caption">仅交付业务系统包、SQL 脚本和必要配置；脚本与配置有变更时自动随附，无需另选。</p>
           <div class="delivery-choice-grid" id="request-delivery-options">
-            <label class="delivery-choice"><input type="checkbox" name="delivery_options" value="merge_screenshot"><span class="choice-index" aria-hidden="true"><svg class="ui-icon"><use href="/static/editorial-icons.svg#layers"></use></svg></span><span><b>代码合并截图</b><small>每个仓库一张 PR 已合并页面原图</small></span><i aria-hidden="true">✓</i></label>
-            <label class="delivery-choice"><input type="checkbox" name="delivery_options" value="license_request"><span class="choice-index" aria-hidden="true"><svg class="ui-icon"><use href="/static/editorial-icons.svg#clipboard"></use></svg></span><span><b>自动填写 License 申请</b><small>创建申请并在说明中直接嵌入合并截图</small></span><i aria-hidden="true">✓</i></label>
-            <label class="delivery-choice featured"><input type="checkbox" name="delivery_options" value="auto_release" checked><span class="choice-index" aria-hidden="true"><svg class="ui-icon"><use href="/static/editorial-icons.svg#cube"></use></svg></span><span><b>自动发版</b><small>PR 合并后运行交付流水线并返回发布产物页</small></span><i aria-hidden="true">✓</i></label>
+            <label class="delivery-choice featured"><input type="checkbox" name="delivery_options" value="auto_release" checked><span class="choice-index" aria-hidden="true"><svg class="ui-icon"><use href="/static/editorial-icons.svg#cube"></use></svg></span><span><b>业务系统包 / 自动发版</b><small>按项目执行本地打包或交付流水线</small></span><i aria-hidden="true">✓</i></label>
+            <div class="delivery-choice"><span class="choice-index" aria-hidden="true"><svg class="ui-icon"><use href="/static/editorial-icons.svg#layers"></use></svg></span><span><b>SQL 脚本</b><small>建表、改表、数据迁移等业务脚本自动归集</small></span></div>
+            <div class="delivery-choice"><span class="choice-index" aria-hidden="true"><svg class="ui-icon"><use href="/static/editorial-icons.svg#clipboard"></use></svg></span><span><b>必要配置</b><small>交付配置项或模板，凭据使用占位符</small></span></div>
           </div>
         </fieldset>
         <p class="form-error span-2" id="request-error" hidden></p>

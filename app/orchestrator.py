@@ -26,6 +26,8 @@ from .domain import (
     TaskType,
 )
 from .services.codex_runner import CodexRunner
+from .services.artifact_contract import enforce_artifact_policy
+from .services.database_audit import DatabaseWriteJournal
 from .services.task_cancellation import TaskCancelled as Cancelled
 from .services.commit_policy import (
     assert_delivery_history, committable_changes, stage_delivery_changes, preserve_validation_before_sync,
@@ -303,7 +305,7 @@ class Worker:
         detail = self.store.detail(request_id)
         if not detail:
             return
-        project = detail["policy_snapshot"]
+        project = enforce_artifact_policy(detail["policy_snapshot"])
         task_type = str(detail.get("task_type") or TaskType.DEVELOPMENT.value)
         analysis_task = task_type == TaskType.ANALYSIS.value
         try:
@@ -661,16 +663,16 @@ class Worker:
                     state["status"] = "pushed"
                     self.store.update_request(request_id, repository_states=repository_states)
                     commits.append(commit_hash)
-                    if mode in {DeliveryMode.LOCAL_PACKAGE, DeliveryMode.SICHUAN_REVIEW_LOCAL_PACKAGE}:
-                        self.artifacts.collect_changed_assets(
-                            request_id,
-                            state_worktree,
-                            state["base_commit"],
-                            project,
-                            repository_name=state["name"],
-                        )
-                    if mode != DeliveryMode.LOCAL_PACKAGE:
-                        self.artifacts.collect_menu_links(request_id, state_worktree, state["base_commit"])
+                    self.artifacts.collect_changed_assets(
+                        request_id,
+                        state_worktree,
+                        state["base_commit"],
+                        project,
+                        repository_name=state["name"],
+                        declared_assets=quality_gate.get("delivery_assets") or [],
+                        changed_paths=[item["path"] for item in quality_gate.get("delivery_assets") or []
+                                       if item["repository"] == state["name"]],
+                    )
                 if mode == DeliveryMode.LOCAL_PACKAGE:
                     commits = self._merge_local_package_to_base(
                         request_id,
@@ -787,13 +789,21 @@ class Worker:
 
     def _run_with_recovery(self, *, request_id: str, repository_states: list[dict], **kwargs):
         """Let the same Codex thread repair ordinary gaps before escalating anything."""
+        audit = DatabaseWriteJournal(settings.data_dir / "runner" / "database-audit" / f"{request_id}.json")
+        if audit.entries:
+            kwargs["project"] = {**kwargs["project"], "development_instructions":
+                str(kwargs["project"].get("development_instructions") or "")
+                + "\n本任务先前数据库写入记录（仅 ID/用途/状态/指纹，请核对是否已保存业务 SQL，勿重复执行）：\n"
+                + json.dumps(list(audit.entries.values()), ensure_ascii=False)}
         for attempt in range(3):
             self._check_cancelled(request_id)
-            run = CodexRunner().run(**kwargs, is_cancelled=lambda: self.store.get_status(request_id) == 'cancelled')
+            run = CodexRunner().run(**kwargs, is_cancelled=lambda: self.store.get_status(request_id) == 'cancelled',
+                                    on_database_write=audit.observe)
             self._check_cancelled(request_id)
             self.store.update_request(request_id, codex_thread_id=run.thread_id)
             if kwargs.get("task_type") == "analysis":
                 return run
+            run.result["database_write_calls"] = list(audit.entries.values())
             for state in repository_states:
                 state["changed_files"] = committable_changes(Path(state["worktree_path"]), state["base_commit"])
             frozen = (kwargs.get("acceptance_context") or {}).get("items") or []
@@ -2022,7 +2032,9 @@ class Worker:
     def _complete_delivery(self, request_id: str) -> None:
         self._check_cancelled(request_id)
         detail = self.store.detail(request_id)
-        project = detail["policy_snapshot"]
+        project = enforce_artifact_policy(detail["policy_snapshot"])
+        self._collect_delivery_assets(request_id, detail, project)
+        detail = self.store.detail(request_id)
         options = self._delivery_options(detail)
         if detail["delivery_mode"] in REVIEW_DELIVERY_MODES and DELIVERY_OPTION_AUTO_RELEASE in options:
             if not self._coordinated_release(request_id, detail, project):
@@ -2127,9 +2139,31 @@ class Worker:
     @staticmethod
     def _delivery_options(detail: dict) -> set[str]:
         configured = detail.get("delivery_options")
-        if configured is None:
-            return {DELIVERY_OPTION_MERGE_SCREENSHOT, DELIVERY_OPTION_LICENSE_REQUEST}
-        return {str(item) for item in configured}
+        # Keep explicit auto-release consent; obsolete screenshot/License options no longer produce extras.
+        return {DELIVERY_OPTION_AUTO_RELEASE} if DELIVERY_OPTION_AUTO_RELEASE in (configured or []) else set()
+
+    def _collect_delivery_assets(self, request_id: str, detail: dict, project: dict) -> None:
+        """Cover resumed/older reviewed tasks too, without collecting concurrent target-branch changes."""
+        if project.get("simulation_mode"):
+            return
+        declared = (detail.get("quality_gate_result") or {}).get("delivery_assets") or []
+        for state in detail.get("repository_states") or []:
+            root = Path(str(state.get("worktree_path") or ""))
+            if not state.get("worktree_path") or not root.is_dir() or not state.get("base_commit"):
+                continue
+            self.artifacts.collect_changed_assets(
+                request_id, root, state["base_commit"], project,
+                repository_name=str(state.get("name") or ""), declared_assets=declared,
+                changed_paths=([item["path"] for item in declared if item["repository"] == state.get("name")]
+                               if "delivery_assets" in (detail.get("quality_gate_result") or {})
+                               else state.get("changed_files") or []),
+            )
+        refreshed = self.store.detail(request_id) or detail
+        found = {(item.get("kind"), item.get("name")) for item in refreshed.get("artifacts") or []}
+        missing = [f"{item['repository']}/{item['path']}" for item in declared
+                   if (item["kind"], f"{item['repository']}/{item['path']}") not in found]
+        if missing:
+            raise RuntimeError("交付文件归集不完整，保留当前现场：" + "、".join(missing))
 
     def _validate_delivery_plan(self, request_id: str, detail: dict, project: dict) -> None:
         if detail.get("task_type") == TaskType.ANALYSIS.value:
@@ -2138,6 +2172,8 @@ class Worker:
             return
         options = self._delivery_options(detail)
         if DELIVERY_OPTION_AUTO_RELEASE not in options:
+            if project.get("artifact_policy", {}).get("require_packages") and not project.get("simulation_mode"):
+                raise RuntimeError("审核交付需要业务系统包，请启用自动发版；SQL 脚本和必要配置会自动随附")
             return
         if project.get("simulation_mode"):
             self.store.add_event(

@@ -48,7 +48,7 @@ DELIVERY_OPTIONS = {
     DELIVERY_OPTION_LICENSE_REQUEST,
     DELIVERY_OPTION_AUTO_RELEASE,
 }
-REVIEW_DELIVERABLE_KINDS = {"merge_screenshot", "menu_link", "license_request", "release_artifact"}
+REVIEW_DELIVERABLE_KINDS = {"package", "release_artifact", "sql", "config"}
 
 
 def visible_delivery_artifacts(
@@ -56,36 +56,25 @@ def visible_delivery_artifacts(
     artifacts: list[dict],
     delivery_options: list[str] | None = None,
 ) -> list[dict]:
-    """Return only user-facing deliverables allowed by the configured delivery mode."""
-    visible = [
-        item
-        for item in artifacts
-        if item.get("kind") not in {"report", "pull_request", "merge_evidence", "email_preview", "delivery_manifest"}
-        and str(item.get("name") or "").replace("\\", "/").split("/")[-1].lower() != "delivery-validation-manifest.json"
-        and not (item.get("kind") == "merge_screenshot" and "凭证" in str(item.get("name") or ""))
+    """One contract for local, reviewed, legacy and joint deliveries.
+
+    Analysis reports are a separate task type's sole output, not development extras.
+    Options control whether a pipeline runs, never whether its SQL/config is visible.
+    """
+    from .services.artifact_contract import BUSINESS_ARTIFACT_KINDS, changed_asset_kind
+
+    del delivery_mode, delivery_options
+    return [
+        item for item in artifacts
+        if str(item.get("name") or "").replace("\\", "/").split("/")[-1].casefold() != "delivery-validation-manifest.json"
+        and (item.get("kind") == "analysis_report" or (
+            item.get("kind") in BUSINESS_ARTIFACT_KINDS
+            and (
+                item.get("kind") not in {"sql", "config"}
+                or changed_asset_kind(str(item.get("name") or ""), declared_kind=str(item["kind"])) == item["kind"]
+            )
+        ))
     ]
-    analysis_reports = [
-        item for item in visible if item.get("kind") in {"analysis_report", "verification_report", "delivery_manifest"}
-    ]
-    if delivery_mode in REVIEW_DELIVERY_MODES:
-        allowed = {"menu_link"}
-        # None marks pre-option legacy rows and keeps their original screenshot/License behavior.
-        if delivery_options is None:
-            allowed.update({"merge_screenshot", "license_request"})
-        else:
-            if DELIVERY_OPTION_MERGE_SCREENSHOT in delivery_options:
-                allowed.add("merge_screenshot")
-            if DELIVERY_OPTION_LICENSE_REQUEST in delivery_options:
-                allowed.add("license_request")
-            if DELIVERY_OPTION_AUTO_RELEASE in delivery_options:
-                allowed.add("release_artifact")
-        return analysis_reports + [
-            item
-            for item in visible
-            if item.get("kind") in allowed
-            and item.get("kind") not in {"analysis_report", "verification_report", "delivery_manifest"}
-        ]
-    return visible
 
 
 class RunStatus(StrEnum):

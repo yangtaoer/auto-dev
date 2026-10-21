@@ -37,17 +37,22 @@
   "repository_base_branches": {},
   "build_command": "pwsh.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\yangt\\Documents\\全自助需求研发交付\\local-runner\\project-scripts\\network-command-review.ps1\"",
   "package_patterns": [],
-  "sql_patterns": [
-    "**/*.sql"
-  ],
+  "sql_patterns": ["*.sql", "**/*.sql"],
   "config_patterns": [
     "**/*.yml",
     "**/*.yaml",
     "**/*.properties",
-    "**/*.xml",
+    "**/*.conf",
+    "**/*.ini",
+    "**/*.cfg",
     "**/config/*.js",
-    "deploy/*.conf",
-    "deploy/*.sh"
+    "**/config/*.json",
+    "**/*config*.xml",
+    "**/application*.xml",
+    "deploy/*.sh",
+    "deploy/*.ps1",
+    "**/*.template",
+    "**/*.example"
   ],
   "protected_patterns": [
     "**/production/**",

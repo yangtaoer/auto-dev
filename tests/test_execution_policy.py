@@ -306,7 +306,7 @@ class ExecutionPolicyTests(unittest.TestCase):
     def test_manifest_never_appears_in_delivery_or_mail_but_business_json_survives(self):
         from app.domain import visible_delivery_artifacts
         from app.services.delivery import Mailer
-        artifacts = [{'kind':'delivery_manifest','name':'delivery-validation-manifest.json'}, {'kind':'config','name':'delivery-validation-manifest.json'}, {'kind':'config','name':'business.json'}]
+        artifacts = [{'kind':'delivery_manifest','name':'delivery-validation-manifest.json'}, {'kind':'config','name':'delivery-validation-manifest.json'}, {'id':1,'kind':'config','name':'business.json'}]
         self.assertEqual([item['name'] for item in visible_delivery_artifacts('local_package', artifacts)], ['business.json'])
         detail = {'id':'example','work_item_id':1,'delivery_mode':'sichuan_auto_review','artifacts':artifacts,'status':'delivered','created_at':self.db.utc_now()}
         self.assertNotIn('delivery-validation-manifest.json', Mailer().delivery_html(detail))

@@ -28,6 +28,7 @@ from ..domain import DELIVERY_MODE_LABELS, STATUS_LABELS, DeliveryMode, RunStatu
 from .blocker_summary import summarize_blocker
 from .process_env import sanitized_process_env
 from .command_logs import clean_log, decode_output, command_failure
+from .artifact_contract import PACKAGE_EXTENSIONS, changed_asset_kind, configuration_template, enforce_artifact_policy, matches_patterns
 
 
 BRAND_MARK_CID = "autodev-brand-mark"
@@ -138,8 +139,7 @@ def menu_link_from_view_path(path: str) -> str | None:
 
 
 def matches_any(path: str, patterns: Iterable[str]) -> bool:
-    normalized = path.replace("\\", "/")
-    return any(fnmatch.fnmatch(normalized, pattern) for pattern in patterns)
+    return matches_patterns(path, patterns)
 
 
 def protected_changes(paths: list[str], patterns: list[str]) -> list[str]:
@@ -189,26 +189,48 @@ class ArtifactService:
         project: dict,
         *,
         repository_name: str = "",
+        declared_assets: list[dict[str, Any]] | None = None,
+        changed_paths: list[str] | None = None,
     ) -> list[int]:
         ids: list[int] = []
-        paths = changed_files(worktree, base_commit)
-        groups = {
-            "sql": project.get("sql_patterns", []),
-            "config": project.get("config_patterns", []),
+        paths = changed_files(worktree, base_commit) if changed_paths is None else changed_paths
+        project = enforce_artifact_policy(project)
+        declared = {
+            str(item.get("path") or "").replace("\\", "/"): str(item.get("kind") or "")
+            for item in declared_assets or []
+            if str(item.get("repository") or "").casefold() == repository_name.casefold()
         }
-        artifact_policy = project.get("artifact_policy") or {}
-        allowed_changed_kinds = set(artifact_policy.get("allowed_changed_asset_kinds") or groups)
-        for kind, patterns in groups.items():
-            if kind not in allowed_changed_kinds:
+        paths = list(dict.fromkeys([*paths, *declared]))
+        existing = {
+            (item.get("kind"), item.get("name")): item
+            for item in (self.detail_loader(request_id) or {}).get("artifacts", [])
+        }
+        root = worktree.resolve()
+        for relative in paths:
+            kind = changed_asset_kind(relative, project, declared_kind=declared.get(relative, ""))
+            if not kind:
                 continue
-            for relative in paths:
-                source = worktree / relative
-                if source.is_file() and matches_any(relative, patterns):
-                    delivery_relative = Path(repository_name) / relative if repository_name else Path(relative)
-                    target = self.request_dir(request_id) / kind / delivery_relative
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(source, target)
-                    ids.append(self.record(request_id, kind, delivery_relative.as_posix(), str(target)))
+            source = (worktree / relative).resolve()
+            if not source.is_relative_to(root):
+                raise RuntimeError(f"交付文件不能引用仓库外路径：{relative}")
+            if not source.is_file():
+                continue
+            if repository_name and Path(repository_name).name != repository_name:
+                raise RuntimeError("交付仓库名称必须是单层目录名")
+            delivery_relative = Path(repository_name) / relative if repository_name else Path(relative)
+            target = self.request_dir(request_id) / kind / delivery_relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if kind == "config":
+                target.write_text(configuration_template(source.read_text(encoding="utf-8-sig")), encoding="utf-8")
+            else:
+                shutil.copy2(source, target)
+            key = (kind, delivery_relative.as_posix())
+            if key in existing:
+                ids.append(int(existing[key]["id"]))
+            else:
+                artifact_id = self.record(request_id, kind, delivery_relative.as_posix(), str(target))
+                existing[key] = {"id": artifact_id}
+                ids.append(artifact_id)
         return ids
 
     def collect_menu_links(self, request_id: str, worktree: Path, base_commit: str) -> list[int]:
@@ -244,14 +266,10 @@ class ArtifactService:
             "delivery_manifest": "交付校验清单",
         }
         lines: list[str] = []
-        items = (
-            list(detail.get("artifacts", []))
-            if detail.get("joint_children")
-            else visible_delivery_artifacts(
+        items = visible_delivery_artifacts(
                 str(detail.get("delivery_mode") or ""),
                 detail.get("artifacts", []),
                 detail.get("delivery_options"),
-            )
         )
         for item in items:
             safe_name = html.escape(str(item.get("name") or "交付产物"))
@@ -281,35 +299,34 @@ class ArtifactService:
     ) -> list[int]:
         ids: list[int] = []
         policy = artifact_policy or {}
-        allowed_extensions = {str(item).casefold() for item in policy.get("allowed_package_extensions") or []}
+        allowed_extensions = PACKAGE_EXTENSIONS.intersection(
+            str(item).casefold() for item in policy.get("allowed_package_extensions") or PACKAGE_EXTENSIONS
+        )
         forbidden_extensions = {str(item).casefold() for item in policy.get("forbidden_standalone_extensions") or []}
         for pattern in patterns:
             for source in worktree.glob(pattern):
                 if not source.is_file():
                     continue
+                if not source.resolve().is_relative_to(worktree.resolve()):
+                    raise RuntimeError(f"交付包不能引用仓库外文件：{source.name}")
                 suffix = source.suffix.casefold()
-                if allowed_extensions and suffix not in allowed_extensions:
-                    raise RuntimeError(f"交付包 {source.name} 的扩展名不在项目白名单：{', '.join(sorted(allowed_extensions))}")
                 if suffix in forbidden_extensions:
                     raise RuntimeError(f"项目禁止把 {suffix} 文件作为独立交付物：{source.name}")
+                if suffix not in allowed_extensions:
+                    raise RuntimeError(f"交付包 {source.name} 的扩展名不在项目白名单：{', '.join(sorted(allowed_extensions))}")
+                if not source.stat().st_size:
+                    raise RuntimeError(f"交付包为空，不能作为正式业务系统包：{source.name}")
                 relative = source.relative_to(worktree)
                 target = self.request_dir(request_id) / "package" / relative.name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
                 ids.append(self.record(request_id, "package", relative.name, str(target)))
         if not ids:
-            if policy.get("require_packages"):
-                raise RuntimeError("构建成功，但项目要求的 package_patterns 未匹配到任何正式交付包")
-            marker = self.request_dir(request_id) / "package" / "README.txt"
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text("构建成功，但配置的 package_patterns 未匹配到文件。\n", encoding="utf-8")
-            ids.append(self.record(request_id, "package_note", marker.name, str(marker)))
+            raise RuntimeError("构建成功，但项目要求的 package_patterns 未匹配到任何正式交付包")
         return ids
 
     def validate_artifact_policy(self, request_id: str, project: dict[str, Any]) -> list[str]:
-        policy = project.get("artifact_policy") or {}
-        if not policy:
-            return []
+        policy = enforce_artifact_policy(project)["artifact_policy"]
         detail = self.detail_loader(request_id) or {}
         visible = visible_delivery_artifacts(
             str(detail.get("delivery_mode") or ""),
@@ -326,12 +343,21 @@ class ArtifactService:
         forbidden = [
             str(item.get("name") or "")
             for item in visible
-            if Path(str(item.get("name") or "")).suffix.casefold() in forbidden_extensions
+            if item.get("kind") == "package" and Path(str(item.get("name") or "")).suffix.casefold() in forbidden_extensions
         ]
         if forbidden:
             blockers.append("存在禁止独立交付的文件：" + "、".join(forbidden))
-        if policy.get("require_packages") and not any(item.get("kind") == "package" for item in visible):
+        if policy.get("require_packages") and not any(item.get("kind") in {"package", "release_artifact"} for item in visible):
             blockers.append("项目要求正式前后端交付包，但当前没有 package 产物")
+        for item in visible:
+            if item.get("kind") in {"sql", "config"}:
+                path = Path(str(item.get("local_path") or ""))
+                # RemoteStore returns cloud filesystem paths, not paths on this runner.
+                # Files are checked before upload; only recheck local delivery storage here.
+                if item.get("local_path") and path.resolve().is_relative_to(settings.delivery_dir.resolve()) and (
+                    not path.is_file() or not path.stat().st_size
+                ):
+                    blockers.append("交付脚本或配置不存在或为空：" + str(item.get("name") or ""))
         return blockers
 
     def create_delivery_validation_manifest(self, request_id: str, detail: dict[str, Any]) -> int:
@@ -696,14 +722,10 @@ class Mailer:
             "analysis_report": "问题分析报告",
         }
         artifact_lines = []
-        deliverable_items = (
-            list(detail.get("artifacts", []))
-            if detail.get("joint_children")
-            else visible_delivery_artifacts(
+        deliverable_items = visible_delivery_artifacts(
                 str(detail.get("delivery_mode") or ""),
                 detail.get("artifacts", []),
                 detail.get("delivery_options"),
-            )
         )
         for item in deliverable_items:
             artifact_url = item.get("external_url") or f"{settings.public_base_url}/api/artifacts/{item['id']}"

@@ -14,6 +14,8 @@ from .dm7_plugin import discover_dm7_plugin
 from .codex_runtime import resolve_codex_runtime
 from .process_env import sanitized_process_env
 from .tfs import TfsClient
+from .artifact_contract import DELIVERY_CONTRACT_INSTRUCTIONS
+from .database_audit import database_write_receipt
 
 
 RESULT_SCHEMA = {
@@ -157,6 +159,28 @@ RESULT_SCHEMA = {
         "sql_changes": {"type": "array", "items": {"type": "string"}},
         "config_changes": {"type": "array", "items": {"type": "string"}},
         "database_operations": {"type": "array", "items": {"type": "string"}},
+        "delivery_assets": {
+            "type": "array", "items": {
+                "type": "object",
+                "properties": {
+                    "repository": {"type": "string"}, "path": {"type": "string"},
+                    "kind": {"type": "string", "enum": ["sql", "config"]}, "purpose": {"type": "string"},
+                },
+                "required": ["repository", "path", "kind", "purpose"], "additionalProperties": False,
+            },
+        },
+        "database_changes": {
+            "type": "array", "items": {
+                "type": "object",
+                "properties": {
+                    "classification": {"type": "string", "enum": ["business_change", "temporary_verification"]},
+                    "call_ids": {"type": "array", "items": {"type": "string"}},
+                    "script_paths": {"type": "array", "items": {"type": "string"}},
+                    "evidence": {"type": "string"},
+                },
+                "required": ["classification", "call_ids", "script_paths", "evidence"], "additionalProperties": False,
+            },
+        },
         "supplement_requests": {
             "type": "array",
             "items": {
@@ -177,7 +201,7 @@ RESULT_SCHEMA = {
         "decision", "summary", "project_retrospective", "lesson_usage", "changed_files", "acceptance_mapping", "acceptance_ledger",
         "business_invariants", "database_validation", "visual_validation", "deployment_validation", "menu_changes",
         "existing_implementation", "risks", "sql_changes",
-        "config_changes", "database_operations", "supplement_requests", "blocking_risks",
+        "config_changes", "database_operations", "supplement_requests", "blocking_risks", "delivery_assets", "database_changes",
     ],
     "additionalProperties": False,
 }
@@ -326,6 +350,7 @@ class CodexRunner:
         task_type: str = "development",
         model_config: dict[str, str] | None = None,
         is_cancelled: Callable[[], bool] | None = None,
+        on_database_write: Callable[[dict[str, str]], None] | None = None,
     ) -> CodexRunResult:
         from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox, SkillInput, TextInput
 
@@ -467,7 +492,8 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
 2. {repository_rule}
 3. 不修改受保护路径：{protected}。
 4. 优先使用项目/区域专属扩展点，不改变其他区域的现有行为。
-5. SQL 与配置变更必须独立、明确，并在最终结果中列出。
+5. SQL 与配置变更必须独立、明确，并在最终结果中列出。{DELIVERY_CONTRACT_INSTRUCTIONS}
+   database_changes.call_ids 对应本任务数据库调用 ID，不知道时可留 []；平台会用脚本指纹匹配或返回需补齐的 ID。temporary_verification 必须有可复核的造数清理/事务回滚证据；purpose=migration/production_change 必须归属业务脚本。
 6. 不接触密钥、生产配置和真实数据。
 7. 实现需求并进行必要的低风险自检；项目构建命令由外层系统统一执行。
 8. 所有面向用户的分析摘要和最终结果必须使用简体中文（文件路径、代码和命令除外）。
@@ -544,7 +570,8 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
             cancelled = is_cancelled or (lambda: False)
             with interrupt_on_cancel(handle, cancelled):
                 try:
-                    final_text = self._collect_output(handle.stream(), on_event, on_live_event, task_type=task_type)
+                    final_text = self._collect_output(handle.stream(), on_event, on_live_event, task_type=task_type,
+                                                      on_database_write=on_database_write)
                 except Exception:
                     if cancelled():
                         raise TaskCancelled('任务已取消') from None
@@ -557,7 +584,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
             raise RuntimeError(f"DevCore 结果不是有效 JSON: {final_text[:500]}") from exc
         return CodexRunResult(thread.id, parsed)
 
-    def _collect_output(self, notifications, on_event, on_live_event=None, *, task_type="development") -> str:
+    def _collect_output(self, notifications, on_event, on_live_event=None, *, task_type="development", on_database_write=None) -> str:
         """A failed/interrupted turn must never be mistaken for a successful partial reply."""
         final_text = None
         last_error = None
@@ -566,6 +593,10 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
             for notification in notifications:
                 method = notification.method
                 payload = self._dump(notification.payload)
+                if task_type != "analysis" and on_database_write and method in {"item/started", "item/completed"}:
+                    receipt = database_write_receipt(payload.get("item") or {})
+                    if receipt:
+                        on_database_write(receipt)
                 if method == "error":
                     last_error = self._failure_message(payload.get("error") or {})
                     retrying = payload.get("willRetry", False)

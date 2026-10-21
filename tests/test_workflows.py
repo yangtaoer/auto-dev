@@ -587,9 +587,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("notice-srv · PR #202", rendered)
         self.assertIn("https://tfs.test/pr/201", rendered)
         self.assertIn("https://tfs.test/pr/202", rendered)
-        self.assertIn("/direct/views/operationTicketOverview", rendered)
-        self.assertIn("新增视图菜单链接", rendered)
-        self.assertNotIn("secret-source.yml", rendered)
+        self.assertNotIn("/direct/views/operationTicketOverview", rendered)
+        self.assertNotIn("新增视图菜单链接", rendered)
+        self.assertIn("secret-source.yml", rendered)
         self.assertNotIn("代码信息 / CODE DELIVERY", rendered)
 
         fallback_detail = {
@@ -622,14 +622,14 @@ class WorkflowTests(unittest.TestCase):
             ],
         }
         manifest = service.delivery_manifest_html(detail)
-        self.assertIn("https://oss.test/pr-202.png", manifest)
-        self.assertIn("/direct/views/operationTicketOverview", manifest)
-        self.assertIn("新增视图菜单链接", manifest)
-        self.assertIn("License 授权申请", manifest)
-        self.assertIn("https://tfs.test/_workitems/edit/1652475", manifest)
+        self.assertNotIn("https://oss.test/pr-202.png", manifest)
+        self.assertNotIn("/direct/views/operationTicketOverview", manifest)
+        self.assertNotIn("新增视图菜单链接", manifest)
+        self.assertNotIn("License 授权申请", manifest)
+        self.assertNotIn("https://tfs.test/_workitems/edit/1652475", manifest)
         self.assertIn("自动发版产物", manifest)
         self.assertIn("buildId=1170472", manifest)
-        self.assertNotIn("source.yml", manifest)
+        self.assertIn("source.yml", manifest)
 
     def test_only_new_view_xml_files_become_menu_link_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1288,11 +1288,9 @@ class WorkflowTests(unittest.TestCase):
         completed = self.client.get(f"/api/requests/{detail['id']}").json()["request"]
         self.assertEqual(completed["status"], "delivered")
         screenshots = [item for item in completed["artifacts"] if item["kind"] == "merge_screenshot"]
-        self.assertEqual(len(screenshots), 1)
-        self.assertIn("PR #", screenshots[0]["name"])
+        self.assertEqual(len(screenshots), 0)
         licenses = [item for item in completed["artifacts"] if item["kind"] == "license_request"]
-        self.assertEqual(len(licenses), 1)
-        self.assertIn("License 授权申请", licenses[0]["name"])
+        self.assertEqual(len(licenses), 0)
         self.assertFalse(any(item["kind"] == "release_artifact" for item in completed["artifacts"]))
         self.assertNotIn("pull_request", {item["kind"] for item in completed["artifacts"]})
 
@@ -1470,11 +1468,11 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(any(item["name"] == "delivery-email-preview.html" for item in completed["artifacts"]))
         self.assertEqual(
             len([item for item in completed["artifacts"] if item["kind"] == "merge_screenshot"]),
-            1,
+            0,
         )
         self.assertEqual(
             len([item for item in completed["artifacts"] if item["kind"] == "license_request"]),
-            1,
+            0,
         )
         releases = [item for item in completed["artifacts"] if item["kind"] == "release_artifact"]
         self.assertEqual(len(releases), 1)
@@ -2149,7 +2147,7 @@ else:
         self.assertIn('data-filter-select="task_type"', page.text)
         self.assertIn('data-filter-date="date_from"', page.text)
         self.assertNotIn('type="date"', page.text)
-        self.assertEqual(page.text.count('name="delivery_options"'), 3)
+        self.assertEqual(page.text.count('name="delivery_options"'), 1)
         self.assertIn('value="auto_release" checked', page.text)
         self.assertNotIn('value="merge_screenshot" checked', page.text)
         self.assertNotIn('value="license_request" checked', page.text)
@@ -2957,7 +2955,7 @@ else:
         )
         self.assertIn("-ValidateOnly", project["verification_command"])
         self.assertEqual(project["package_patterns"], ["release/ddyxzhyy.zip", "release/dcsd-app-starter*.jar"])
-        self.assertEqual(project["config_patterns"], [])
+        self.assertIn("**/*.properties", project["config_patterns"])
         self.assertIn("_sccd", project["development_instructions"])
         self.assertIn("serviceIdMap", project["development_instructions"])
         self.assertIn("不单独交付", project["development_instructions"])
@@ -3246,15 +3244,7 @@ else:
             multi_worker.poll_merge("multi-pr-request")
 
         completed.assert_called_once_with("multi-pr-request")
-        self.assertEqual(evidence.call_count, 2)
-        self.assertEqual(
-            [call.kwargs["repository_name"] for call in evidence.call_args_list],
-            ["repo-one", "repo-two"],
-        )
-        self.assertEqual(
-            [call.args[1]["id"] for call in evidence.call_args_list],
-            [101, 102],
-        )
+        evidence.assert_not_called()
         self.assertEqual(store.request["merge_commit"], "merge-one")
         self.assertTrue(all(item["status"] == "completed" for item in store.request["repository_states"]))
         self.assertEqual(
@@ -3455,7 +3445,7 @@ else:
                 self.assertTrue(project["artifact_policy"]["allowed_user_facing_kinds"])
         app_project = next(item for item in projects if item["project_key"] == "network-command-app")
         self.assertFalse(app_project["artifact_policy"]["require_manifest"])
-        self.assertEqual(app_project["artifact_policy"]["allowed_user_facing_kinds"], ["package", "sql"])
+        self.assertEqual(set(app_project["artifact_policy"]["allowed_user_facing_kinds"]), {"package", "release_artifact", "sql", "config"})
         self.assertEqual(app_project["artifact_policy"]["allowed_package_extensions"], [".zip", ".jar"])
         self.assertIn(".xml", app_project["artifact_policy"]["forbidden_standalone_extensions"])
         self.assertFalse(app_project["quality_profile"]["visual"]["required_for_frontend"])

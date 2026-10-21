@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.15",
+    version="1.0-Beta.16",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -148,8 +148,10 @@ class ProjectInput(BaseModel):
     artifact_policy: dict[str, Any] = Field(default_factory=dict)
     build_command: str = ""
     package_patterns: list[str] = []
-    sql_patterns: list[str] = ["**/*.sql"]
-    config_patterns: list[str] = ["**/*.yml", "**/*.yaml", "**/*.properties", "**/*.xml"]
+    sql_patterns: list[str] = ["*.sql", "**/*.sql"]
+    config_patterns: list[str] = ["**/*.yml", "**/*.yaml", "**/*.properties", "**/*.conf", "**/*.ini", "**/*.cfg",
+                                "**/*config*.xml", "**/application*.xml", "**/config/*.js", "**/config/*.json",
+                                "**/*.template", "**/*.example", "deploy/*.sh", "deploy/*.ps1"]
     protected_patterns: list[str] = ["**/common/**", "**/shared/**", "**/production/**"]
     notification_cc: str = ""
     runner_id: str = Field(default="yangtao-pc", pattern=r"^[a-zA-Z0-9_.-]{2,80}$")
