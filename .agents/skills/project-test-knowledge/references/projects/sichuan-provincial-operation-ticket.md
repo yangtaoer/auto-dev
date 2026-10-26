@@ -104,3 +104,18 @@
 - 六份 JavaScript 语法、差异空白及五份表单 XML 的公共脚本导入检查通过。`mvn -o -DskipTests package` 成功；生成 JAR 的六份修改脚本与源文件逐字节一致。Maven 打包本身跳过测试，151 项为另外执行的 Node 隔离测试，不混为 Maven 测试结果。
 
 本机证据：UI `target/ticket-command-import-regression.json`、分析目录内 `import-baseline-failure.txt`、`save-regression-after-import-fix.txt`、`fix-verification.json`。尚未使用业务账号走票，也未核对现场丢失指令的原始字段，SC-TICKET-AK-LOSS-001 的现场归因边界继续有效。
+
+## SC-TICKET-AK-BUTTON-001：新增预票两个追加按钮的补充检查
+
+来源：2026-10-26 用户提供“新增预票”截图，红框标出“追加安控”“追加定值单”，要求有问题一并修复。已核对普通预令 XML：两按钮分别绑定 akAppend()、dzdAppend()，最终均进入前述已修复的 loadCzpByWord()，所以原票保护也适用于该截图场景。
+
+- 进一步检查实际选择窗口：akqtTicket.js、dzdTicket.js 的 toolbarItemOnclick() 可以在未勾选时直接关闭窗口；getSelect() 返回空对象。父表单原先在判空前读取 ids.BHS.split，确实会报异常。新增公共 getTicketAppendNumbers()，先校验 IDs、编号及配对关系，再读取编号。
+- 父按钮回调增加 parseTicketAppendResponse()：空响应、无效响应、接口错误或无可导入指令时停止后续处理，避免空对象访问异常及在无有效结果时写入“追加”轨迹。合法的厂站解析提示数组保持原行为；空数组不再弹空提示框。关闭追加位置弹框时上游已写的既有轨迹仍不据此宣称回滚。
+- 顺控保留的 akAppend 脚本原先在请求前就写入安控编号/ID，已移至取得有效响应、导入指令后执行。当前顺控 XML 未声明这个按钮，本轮只覆盖其兼容脚本调用，不能表述为新增或验证了一个可见顺控按钮。
+- 同类保护覆盖普通正/预令的两个按钮、委托正/预令的追加安控，共六个 XML 实际绑定入口，以及一个顺控兼容脚本入口。生产修改仍在原六份四川专用 UI JavaScript 内。
+
+新增 tests/ticket-append-buttons.test.js，执行实际按钮函数、XML 绑定核对和子窗口 toolbarItemOnclick/getSelect 回调；接口与保存后端为内存替身，不是登录业务系统的浏览器验证。119 项通过，覆盖正常追加、空选择、选择信息缺失/不配对、关闭选择窗口、取消调整恢复、请求失败、接口空/错误返回、有效/空厂站提示及特殊定值单类型转发。TICKET_BUTTON_BASELINE=1 执行旧 HEAD 的按钮函数，在未勾选直接确定的案例按预期因 BHS.split 失败。
+
+原 95 项导入回归、56 项保存回归均通过，合计 270 项隔离检查。六份 JavaScript 语法与差异检查通过，UI Maven 打包成功，JAR 内六份资源与源码逐字节一致，五分钟自动保存间隔保留。没有提交或发布本轮业务代码，尚待现场复验。知识库同步属于文档维护，不代表业务代码已经合入 TFS。
+
+本机证据：target/ticket-append-buttons-regression.json，分析目录内 button-baseline-failure.txt、save-regression-after-button-fix.txt、button-fix-verification.json。
