@@ -811,9 +811,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(result["state"], "已解决")
         self.assertEqual(result["actual_version"], "V1.0")
 
-    def test_tfs_analysis_completion_sets_resolved_state_without_release_version(self) -> None:
+    def test_tfs_analysis_completion_sets_resolved_state_and_v1_version(self) -> None:
         client = TfsClient("https://tfs.test/DefaultCollection", pat="test-pat")
-        updated = {"fields": {"System.State": "已解决"}}
+        updated = {"fields": {"System.State": "已解决", ACTUAL_DELIVERY_VERSION_FIELD: "V1.0"}}
         with patch.object(client, "get_work_item", return_value={"state": "已评审"}), patch.object(
             client, "_request", return_value=updated
         ) as request:
@@ -825,8 +825,8 @@ class WorkflowTests(unittest.TestCase):
         )
         self.assertIn({"op": "replace", "path": "/fields/System.State", "value": "已解决"}, patch_body)
         self.assertIn({"op": "add", "path": f"/fields/{ACTUAL_DELIVERY_VERSION_FIELD}",
-                       "value": "不适用（问题分析，无代码发版）"}, patch_body)
-        self.assertEqual(result, {"previous_state": "已评审", "state": "已解决"})
+                       "value": "V1.0"}, patch_body)
+        self.assertEqual(result, {"previous_state": "已评审", "state": "已解决", "actual_version": "V1.0"})
         orchestrator_source = Path("app/orchestrator.py").read_text(encoding="utf-8")
         main_source = Path("app/main.py").read_text(encoding="utf-8")
         self.assertIn("tfs_client.complete_analysis", orchestrator_source)
@@ -2784,6 +2784,7 @@ else:
             )
         self.assertEqual(completed.json()["status"], "delivered")
         complete_delivery.assert_called_once()
+        self.assertEqual(complete_delivery.call_args.kwargs["actual_version"], "V1.0")
         intake = self.client.get(f"/api/intakes/{intake_id}").json()["intake"]
         self.assertEqual(intake["status"], "delivered")
         self.assertTrue(intake["joint"])
@@ -3251,6 +3252,45 @@ else:
             [event for event, _ in store.events].count("pr.merged"),
             2,
         )
+
+    @patch("app.main.send_joint_email")
+    @patch("app.main.TfsClient.complete_analysis")
+    def test_joint_analysis_resolves_with_v1_only_after_all_children_succeed(self, complete_analysis, send_mail) -> None:
+        project_ids = [self.create_project("joint-analysis-a", "local_package"),
+                       self.create_project("joint-analysis-b", "product_manual_review")]
+        projects = self.client.get("/api/projects").json()["projects"]
+        keys = [next(item["project_key"] for item in projects if item["id"] == project_id) for project_id in project_ids]
+        headers = {"Authorization": "Bearer test-runner-token"}
+        for index, final_child_status in enumerate(("delivered", "failed", "cancelled")):
+            with self.subTest(final_child_status=final_child_status):
+                complete_analysis.reset_mock()
+                send_mail.reset_mock()
+                created = self.client.post("/api/requests", json={"work_item_id": 910130 + index, "task_type": "analysis"})
+                self.assertEqual(created.status_code, 200, created.text)
+                intake_id = created.json()["id"]
+                claimed = self.client.post("/api/runner/intakes/claim", headers=headers, json={"runner_id": "yangtao-pc"})
+                self.assertEqual(claimed.json()["intake"]["id"], intake_id)
+                routed = self.client.post(f"/api/runner/intakes/{intake_id}/route", headers=headers, json={
+                    "runner_id": "yangtao-pc", "project_keys": keys, "work_item_title": "联合问题分析",
+                })
+                self.assertEqual(routed.status_code, 200, routed.text)
+                child_ids = routed.json()["request_ids"]
+                update_request(child_ids[0], status="delivered", analysis_result={"summary": "本项目分析完成"})
+                pending = self.client.post(f"/api/runner/requests/{child_ids[0]}/joint-finalize", headers=headers)
+                self.assertFalse(pending.json()["finalized"])
+                complete_analysis.assert_not_called()
+                update_request(child_ids[1], status=final_child_status, analysis_result={"summary": "另一项目"})
+                complete_analysis.return_value = {"state": "已解决", "actual_version": "V1.0"}
+                final = self.client.post(f"/api/runner/requests/{child_ids[1]}/joint-finalize", headers=headers)
+                self.assertEqual(final.status_code, 200, final.text)
+                self.assertEqual(final.json()["status"], "delivered" if final_child_status == "delivered" else "failed")
+                if final_child_status == "delivered":
+                    complete_analysis.assert_called_once()
+                    self.assertEqual(complete_analysis.call_args.kwargs["actual_version"], "V1.0")
+                else:
+                    complete_analysis.assert_not_called()
+                self.client.post(f"/api/runner/requests/{child_ids[1]}/joint-finalize", headers=headers)
+                self.assertEqual(complete_analysis.call_count, 1 if final_child_status == "delivered" else 0)
 
     def test_user_multiple_emails_edit_disable_and_request_selection(self) -> None:
         username = "multi_mail_pm"

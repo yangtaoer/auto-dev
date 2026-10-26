@@ -31,23 +31,114 @@ class AnalysisSyncTests(unittest.TestCase):
             self.db.add_artifact(rid, 'analysis_report', 'existing-report.md', external_url='https://example.invalid/report.md')
         return rid
 
-    def test_tfs_preserves_existing_version_and_guards_revision(self):
+    def test_tfs_analysis_uses_fixed_completion_version_and_guards_revision(self):
         from app.services.tfs import TfsClient, ACTUAL_DELIVERY_VERSION_FIELD
         c = TfsClient('https://tfs.test/DefaultCollection', pat='test')
-        with patch.object(c, 'get_work_item', return_value={'state': '新建', 'revision': 8, 'actual_delivery_version': 'V3.6'}), patch.object(c, '_request', return_value={'fields': {'System.State': '已解决'}}) as request:
+        with patch.object(c, 'get_work_item', return_value={'state': '新建', 'revision': 8, 'actual_delivery_version': 'V3.6'}), patch.object(c, '_request', return_value={'fields': {'System.State': '已解决', ACTUAL_DELIVERY_VERSION_FIELD: 'V1.0'}}) as request:
             c.complete_analysis(1, '<p>report</p>')
         body = request.call_args.kwargs['json']
         self.assertEqual(body[0], {'op': 'test', 'path': '/rev', 'value': 8})
-        self.assertFalse(any(i['path'].endswith(ACTUAL_DELIVERY_VERSION_FIELD) for i in body))
+        self.assertIn({'op': 'add', 'path': f'/fields/{ACTUAL_DELIVERY_VERSION_FIELD}', 'value': 'V1.0'}, body)
 
     def test_lost_write_response_reconciles_before_replay(self):
         from app.services.tfs import TfsClient, TfsError
         c = TfsClient('https://tfs.test/DefaultCollection', pat='test')
-        with patch.object(c, 'get_work_item', side_effect=[{'state': '新建', 'revision': 8}, {'state': '已解决', 'revision': 9, 'delivery_artifacts': '<p>report</p>'}]), patch.object(c, '_request', side_effect=TfsError('写入结果未知')) as request:
+        with patch.object(c, 'get_work_item', side_effect=[{'state': '新建', 'revision': 8}, {'state': '已解决', 'revision': 9, 'actual_delivery_version': 'V1.0', 'delivery_artifacts': '<p>report</p>'}]), patch.object(c, '_request', side_effect=TfsError('写入结果未知')) as request:
             with self.assertRaises(TfsError):
                 c.complete_analysis(1, '<p>report</p>')
             self.assertEqual(c.complete_analysis(1, '<p>report</p>')['state'], '已解决')
         self.assertEqual(request.call_count, 1)
+
+    def test_resolved_report_with_old_or_missing_version_still_writes_v1(self):
+        from app.services.tfs import TfsClient, ACTUAL_DELIVERY_VERSION_FIELD
+        for method in ('complete_analysis', 'complete_delivery'):
+            for old_version in ('', '不适用（问题分析，无代码发版）', 'V2.0'):
+                with self.subTest(method=method, old_version=old_version):
+                    c = TfsClient('https://tfs.test', pat='test')
+                    current = {'state': '已解决', 'revision': 8, 'delivery_artifacts': 'report', 'actual_delivery_version': old_version}
+                    updated = {'fields': {'System.State': '已解决', ACTUAL_DELIVERY_VERSION_FIELD: 'V1.0'}}
+                    with patch.object(c, 'get_work_item', return_value=current), patch.object(c, '_request', return_value=updated) as request:
+                        result = getattr(c, method)(1, 'report')
+                    self.assertEqual(result['actual_version'], 'V1.0')
+                    body = request.call_args.kwargs['json']
+                    self.assertFalse(any(i['path'] == '/fields/System.State' for i in body))
+                    self.assertIn({'op': 'add', 'path': f'/fields/{ACTUAL_DELIVERY_VERSION_FIELD}', 'value': 'V1.0'}, body)
+
+    def test_all_completion_fields_matching_skips_duplicate_patch(self):
+        from app.services.tfs import TfsClient
+        for method in ('complete_analysis', 'complete_delivery'):
+            c = TfsClient('https://tfs.test', pat='test')
+            current = {'state': '已解决', 'revision': 8, 'delivery_artifacts': 'report', 'actual_delivery_version': 'V1.0'}
+            with patch.object(c, 'get_work_item', return_value=current), patch.object(c, '_request') as request:
+                self.assertEqual(getattr(c, method)(1, 'report')['actual_version'], 'V1.0')
+            request.assert_not_called()
+
+    def test_unconfirmed_tfs_response_never_reports_success(self):
+        from app.services.tfs import TfsClient, TfsError, ACTUAL_DELIVERY_VERSION_FIELD
+        for fields in ({}, {'System.State': '新建', ACTUAL_DELIVERY_VERSION_FIELD: 'V1.0'},
+                       {'System.State': '已解决', ACTUAL_DELIVERY_VERSION_FIELD: 'V2.0'}):
+            c = TfsClient('https://tfs.test', pat='test')
+            with patch.object(c, 'get_work_item', return_value={'state': '新建'}), patch.object(c, '_request', return_value={'fields': fields}):
+                with self.assertRaisesRegex(TfsError, '未确认目标状态或实际交付版本'):
+                    c.complete_delivery(1, 'report')
+
+    def test_existing_implementation_resolves_tfs_without_duplicate_code_or_build(self):
+        from app.orchestrator import Worker
+        rid = self.request(status='developing', report=False)
+        self.db.update_request(rid, task_type='development')
+        worker = Worker()
+        result = {'summary': '最新目标分支已完成', 'existing_implementation': {'verified': True, 'evidence': ['dev:src/feature.java']}}
+        with patch('app.orchestrator.TfsClient') as tfs, patch.object(worker, '_send_status_email') as mail, patch('app.orchestrator.run_command') as build, patch.object(worker, '_commit_and_push') as commit:
+            tfs.return_value.complete_delivery.return_value = {'state': '已解决', 'actual_version': 'V1.0'}
+            worker._complete_existing_implementation(rid, result)
+        self.assertEqual(self.db.request_detail(rid)['status'], 'delivered')
+        self.assertEqual(tfs.return_value.complete_delivery.call_args.kwargs['actual_version'], 'V1.0')
+        tfs.return_value.update_delivery_artifacts.assert_not_called()
+        mail.assert_called_once()
+        build.assert_not_called()
+        commit.assert_not_called()
+
+    def test_existing_implementation_tfs_failure_is_not_success(self):
+        from app.orchestrator import Worker
+        from app.services.tfs import TfsError
+        rid = self.request(status='developing', report=False)
+        self.db.update_request(rid, task_type='development', completed_at=None)
+        worker = Worker()
+        with patch('app.orchestrator.TfsClient') as tfs, patch.object(worker, '_send_status_email') as mail:
+            tfs.return_value.complete_delivery.side_effect = TfsError('写入失败')
+            with self.assertRaises(TfsError):
+                worker._complete_existing_implementation(rid, {'summary': '目标分支已完成'})
+        self.assertNotEqual(self.db.request_detail(rid)['status'], 'delivered')
+        self.assertIsNone(self.db.request_detail(rid)['completed_at'])
+        mail.assert_not_called()
+
+    def test_joint_existing_implementation_defers_tfs_and_mail_to_aggregate(self):
+        from app.orchestrator import Worker
+        from app.store import LocalStore
+        rid = self.request(status='developing', report=False)
+        self.db.update_request(rid, task_type='development', joint_group_id='joint-existing')
+        class Store(LocalStore):
+            remote = True
+            def finalize_joint(self, request_id):
+                self.finalized_id = request_id
+                return {'finalized': False}
+        store = Store()
+        worker = Worker(store=store)
+        with patch('app.orchestrator.TfsClient') as tfs, patch.object(worker, '_send_status_email') as mail:
+            worker._complete_existing_implementation(rid, {'summary': '目标分支已完成'})
+        self.assertEqual(store.finalized_id, rid)
+        self.assertEqual(self.db.request_detail(rid)['status'], 'delivered')
+        tfs.assert_not_called()
+        mail.assert_not_called()
+
+    def test_cancelled_existing_implementation_does_not_touch_tfs(self):
+        from app.orchestrator import Worker
+        from app.services.task_cancellation import TaskCancelled
+        rid = self.request(status='cancelled', report=False)
+        with patch('app.orchestrator.TfsClient') as tfs:
+            with self.assertRaises(TaskCancelled):
+                Worker()._complete_existing_implementation(rid, {'summary': '目标分支已完成'})
+        tfs.assert_not_called()
 
     def test_get_work_item_exposes_existing_version_and_report(self):
         from app.services.tfs import TfsClient, ACTUAL_DELIVERY_VERSION_FIELD, DELIVERY_ARTIFACTS_FIELD

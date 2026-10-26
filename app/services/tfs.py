@@ -245,23 +245,35 @@ class TfsClient:
         work_item_id: int,
         html_value: str,
         *,
+        actual_version: str = "V1.0",
         resolved_state: str = "已解决",
     ) -> dict:
-        """Publish an analysis report and resolve the TFS item without inventing a release version."""
+        """Use the same completion convention for reports; V1.0 is not proof of a code release."""
+        return self.complete_delivery(
+            work_item_id, html_value, actual_version=actual_version, resolved_state=resolved_state,
+        )
+
+    def complete_delivery(
+        self,
+        work_item_id: int,
+        html_value: str,
+        *,
+        actual_version: str = "V1.0",
+        resolved_state: str = "已解决",
+    ) -> dict:
+        """Close the delivery loop on TFS with one atomic work-item update."""
         work_item = self.get_work_item(work_item_id)
         previous_state = str(work_item.get("state") or "")
-        # Reconcile before retrying: a lost PATCH response may already have resolved
-        # the item. Do not replay a state transition or overwrite a newer version.
-        if previous_state == resolved_state and work_item.get("delivery_artifacts") == html_value:
-            return {"previous_state": previous_state, "state": previous_state}
+        # A lost PATCH response may already have applied all three fields. Only
+        # reconcile as success if the state, version AND delivery record match.
+        if (previous_state == resolved_state
+                and work_item.get("actual_delivery_version") == actual_version
+                and work_item.get("delivery_artifacts") == html_value):
+            return {"previous_state": previous_state, "state": previous_state, "actual_version": actual_version}
         patch = [
-            {"op": "add", "path": f"/fields/{DELIVERY_ARTIFACTS_FIELD}", "value": html_value}
+            {"op": "add", "path": f"/fields/{DELIVERY_ARTIFACTS_FIELD}", "value": html_value},
+            {"op": "add", "path": f"/fields/{ACTUAL_DELIVERY_VERSION_FIELD}", "value": actual_version},
         ]
-        if not str(work_item.get("actual_delivery_version") or "").strip():
-            patch.append({
-                "op": "add", "path": f"/fields/{ACTUAL_DELIVERY_VERSION_FIELD}",
-                "value": "不适用（问题分析，无代码发版）",
-            })
         if previous_state != resolved_state:
             patch.append(
                 {"op": "replace", "path": "/fields/System.State", "value": resolved_state}
@@ -275,37 +287,8 @@ class TfsClient:
             headers={"Content-Type": "application/json-patch+json"},
         )
         fields = updated.get("fields", {})
-        return {
-            "previous_state": previous_state,
-            "state": fields.get("System.State", resolved_state),
-        }
-
-    def complete_delivery(
-        self,
-        work_item_id: int,
-        html_value: str,
-        *,
-        actual_version: str = "V1.0",
-        resolved_state: str = "已解决",
-    ) -> dict:
-        """Close the delivery loop on TFS with one atomic work-item update."""
-        work_item = self.get_work_item(work_item_id)
-        previous_state = str(work_item.get("state") or "")
-        patch = [
-            {"op": "add", "path": f"/fields/{DELIVERY_ARTIFACTS_FIELD}", "value": html_value},
-            {"op": "add", "path": f"/fields/{ACTUAL_DELIVERY_VERSION_FIELD}", "value": actual_version},
-        ]
-        if previous_state != resolved_state:
-            patch.append(
-                {"op": "replace", "path": "/fields/System.State", "value": resolved_state}
-            )
-        updated = self._request(
-            "PATCH",
-            f"{self.base_url}/_apis/wit/workitems/{work_item_id}?api-version=2.0",
-            json=patch,
-            headers={"Content-Type": "application/json-patch+json"},
-        )
-        fields = updated.get("fields", {})
+        if fields.get("System.State") != resolved_state or fields.get(ACTUAL_DELIVERY_VERSION_FIELD) != actual_version:
+            raise TfsError("TFS 完成回写未确认目标状态或实际交付版本，不能标记交付成功；请核对远端结果后重试")
         return {
             "previous_state": previous_state,
             "state": fields.get("System.State", resolved_state),

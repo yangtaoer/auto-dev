@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.16",
+    version="1.0-Beta.17",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -2721,7 +2721,7 @@ def runner_finalize_joint(request_id: str) -> dict:
             manifest = "<div><p><strong>AutoDev 联合问题分析完成</strong></p><ul>" + "".join(report_rows) + "</ul></div>"
             tfs_result = TfsClient(
                 aggregate["policy_snapshot"]["tfs_collection_url"]
-            ).complete_analysis(aggregate["work_item_id"], manifest)
+            ).complete_analysis(aggregate["work_item_id"], manifest, actual_version="V1.0")
             tfs_result["task_type"] = TaskType.ANALYSIS.value
         else:
             manifest = ArtifactService().delivery_manifest_html(aggregate)
@@ -2754,9 +2754,9 @@ def runner_finalize_joint(request_id: str) -> dict:
             item["id"],
             "joint.delivery_completed",
             (
-                "全部联合项目问题分析均已完成，分析报告已统一写入 TFS，需求状态已更新为已解决"
+                "全部联合项目问题分析均已完成，分析报告已统一写入 TFS，需求状态已更新为已解决，实际交付版本 V1.0"
                 if aggregate.get("task_type") == TaskType.ANALYSIS.value
-                else "全部联合项目均已交付，TFS 状态和交付产物已统一更新"
+                else "全部联合项目均已交付，TFS 已解决、实际交付版本 V1.0 和交付产物已统一更新"
             ),
             metadata={"joint_group_id": joint_group_id, "tfs": tfs_result},
         )

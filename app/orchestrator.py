@@ -1764,6 +1764,7 @@ class Worker:
 
     def _complete_existing_implementation(self, request_id: str, result: dict) -> None:
         """Close a duplicate run after latest-target-branch verification, without creating another PR."""
+        self._check_cancelled(request_id)
         detail = self.store.detail(request_id)
         if not detail:
             raise RuntimeError("历史实现验证任务不存在")
@@ -1806,10 +1807,20 @@ class Worker:
             metadata=existing,
         )
         detail = self.store.detail(request_id) or detail
-        if not project.get("simulation_mode"):
-            TfsClient(project["tfs_collection_url"]).update_delivery_artifacts(
-                int(detail["work_item_id"]), self.artifacts.delivery_manifest_html(detail)
+        self._check_cancelled(request_id)
+        if detail.get("joint_group_id") and self.store.remote:
+            self.store.update_request(
+                request_id, completed_at=utc_now(), status=RunStatus.DELIVERED.value,
+                current_step="deliver", progress=100,
             )
+            self.store.update_step(request_id, "deliver", "completed", "历史实现复核完成，等待联合项目全部完成后统一回写 TFS")
+            self.store.finalize_joint(request_id)
+            return
+        if not project.get("simulation_mode"):
+            tfs_result = TfsClient(project["tfs_collection_url"]).complete_delivery(
+                int(detail["work_item_id"]), self.artifacts.delivery_manifest_html(detail), actual_version="V1.0",
+            )
+            self.store.add_event(request_id, "tfs.delivery_completed", "历史实现已核验，TFS 已更新为已解决，实际交付版本 V1.0", metadata=tfs_result)
         completed_at = utc_now()
         self.store.update_request(request_id, completed_at=completed_at)
         self._send_status_email(request_id, action_required=False)
@@ -1820,8 +1831,6 @@ class Worker:
             progress=100,
         )
         self.store.update_step(request_id, "deliver", "completed", "历史实现验证报告已生成，未重复研发")
-        if detail.get("joint_group_id") and self.store.remote:
-            self.store.finalize_joint(request_id)
 
     def _complete_analysis(self, request_id: str, result: dict) -> None:
         """Persist and deliver a read-only problem-analysis result without entering the code pipeline."""
@@ -1888,14 +1897,14 @@ class Worker:
                 self.store.add_event(
                     request_id,
                     "tfs.analysis_updated",
-                    "本项目问题分析结论已写入 TFS，等待联合分析全部完成后统一更新为已解决",
+                    "本项目问题分析结论已写入 TFS，等待联合分析全部完成后统一更新为已解决，实际交付版本 V1.0",
                 )
             else:
-                tfs_result = tfs_client.complete_analysis(int(detail["work_item_id"]), manifest)
+                tfs_result = tfs_client.complete_analysis(int(detail["work_item_id"]), manifest, actual_version="V1.0")
                 self.store.add_event(
                     request_id,
                     "tfs.analysis_resolved",
-                    "问题分析结论与报告获取路径已写入 TFS，需求状态已更新为已解决",
+                    "问题分析结论与报告获取路径已写入 TFS，需求状态已更新为已解决，实际交付版本 V1.0",
                     metadata={"tfs": tfs_result},
                 )
 
