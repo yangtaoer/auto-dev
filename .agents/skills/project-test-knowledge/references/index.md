@@ -1,6 +1,6 @@
 # 项目测试知识索引
 
-更新时间：2026-10-26（Asia/Shanghai）。已在用户授权下完成两次成都 PC 操作票浏览器纯流程验证；尚未接入平台自动部署或浏览器测试流水线，不能将单次验证等同于完整自动回归能力。
+更新时间：2026-10-27（Asia/Shanghai）。已在用户授权下完成两次成都 PC 操作票浏览器纯流程验证；尚未接入平台自动部署或浏览器测试流水线，不能将单次验证等同于完整自动回归能力。
 
 | 范围 / 项目键 | 输入名称 | 资料 | 状态 |
 | --- | --- | --- | --- |
@@ -9,6 +9,7 @@
 | `chengdu-network-command` | 成都网络发令、成都网络下令；PC 端 | [成都测试档案](projects/chengdu-network-command.md)、[操作票实测流程](projects/chengdu-operation-ticket-flow.md) | 正值、值长、受令三会话已验证；两张纯流程票已归档，第二次计时及操作适配经验见实测记录 |
 | 测试环境 `101-14` | 101.14、192.168.101.14 | [只读盘点快照](environments/101-14.md) | 2026-09-18 快照，运行状态不可视为永久配置 |
 | `sichuan-provincial-network-command` | 四川省调 PC、委托操作票、审核丢指令、自动保存、指令联想、追加安控、追加定值单 | [操作票保存与丢行复现](projects/sichuan-provincial-operation-ticket.md) | 保存状态修复已合入 dev；追加误清理与按钮入口异常已本地修复，270 项隔离回归通过，待现场复验 |
+| `sichuan-provincial-network-command` | 四川省调 PC、厂站复诵、数字全绿、不一致提示、逐2026100286 | [复诵一致性与脚本规则差异](projects/sichuan-provincial-repeat-validation.md) | 已证实四川与通用脚本对配置0解释不同；同数据分支对照可复现差异，现场实际资源待核对 |
 
 其他地市和 APP 暂无独立完整测试档案。收到对应经验时新增 `projects/<project-key>.md` 并更新本索引，不复制成都账号、数据库 schema 或具体单位到其他项目。
 
