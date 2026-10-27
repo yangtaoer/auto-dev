@@ -203,9 +203,11 @@ class RemoteStore:
         if not token:
             raise RuntimeError("本机执行器缺少 AUTODEV_RUNNER_TOKEN 或对应 _FILE")
         self.runner_id = runner_id
+        self.execution_session_id = uuid.uuid4().hex
         self.client = httpx.Client(
             base_url=cloud_url.rstrip("/"),
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": f"Bearer {token}", "X-AutoDev-Runner-Id":runner_id,
+                     "X-AutoDev-Execution-Session":self.execution_session_id},
             timeout=httpx.Timeout(60, connect=15),
             follow_redirects=False,
         )
@@ -239,6 +241,7 @@ class RemoteStore:
                 "/api/runner/heartbeat",
                 json={
                     "runner_id": self.runner_id,
+                    "execution_session_id": self.execution_session_id,
                     "hostname": socket.gethostname(),
                     "version": settings.runner_version,
                     "state": state,
@@ -259,6 +262,10 @@ class RemoteStore:
             )
         )
         return data.get("projects", [])
+
+    def recover_interrupted(self) -> dict:
+        return self._json(self._request('POST','/api/runner/recover-interrupted',json={
+            'runner_id':self.runner_id,'execution_session_id':self.execution_session_id}))
 
     def claim_intake(self) -> dict[str, Any] | None:
         data = self._json(

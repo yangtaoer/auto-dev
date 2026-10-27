@@ -710,6 +710,10 @@ class Worker:
                     cancel_check=lambda: self._check_cancelled(request_id),
                 )
                 self.store.add_event(request_id, "verification.completed", "PR 前构建/校验通过", metadata={"output_tail": output[-1000:]})
+                self.store.update_request(request_id,recovery_context={
+                    'kind':'submission','state':'checkpoint',
+                    'verified_commits':{state['name']:state['commit_hash'] for state in changed_states},
+                })
 
             if project.get("simulation_mode"):
                 pr = self._create_pr(request_id, detail, project, worktree, work_item, branch)
@@ -842,7 +846,19 @@ class Worker:
                 self._fail(request_id, exc)
             return
         if detail and detail["status"] == RunStatus.WAITING_RETRY.value:
-            self.run_request(request_id)
+            if (detail.get('recovery_context') or {}).get('kind')=='submission':
+                try:
+                    from .services.submission_recovery import resume
+                    resume(self,request_id)
+                except Cancelled:
+                    self._cancel(request_id)
+                except TfsConnectionError as exc:
+                    self.store.update_request(request_id,status=RunStatus.WAITING_RETRY.value,error_message=str(exc))
+                    self._schedule_next_poll(request_id,backoff=True)
+                except Exception as exc:
+                    self._fail(request_id,exc)
+            else:
+                self.run_request(request_id)
             return
         if detail and detail["status"] == RunStatus.WAITING_RELEASE.value:
             try:

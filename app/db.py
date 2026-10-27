@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
     failed_item_ids TEXT NOT NULL DEFAULT '[]',
     protected_item_ids TEXT NOT NULL DEFAULT '[]',
     repair_context TEXT NOT NULL DEFAULT '{}',
+    recovery_context TEXT NOT NULL DEFAULT '{}',
     project_retrospective TEXT NOT NULL DEFAULT '{}',
     lesson_usage TEXT NOT NULL DEFAULT '[]',
     project_lesson_context TEXT NOT NULL DEFAULT '[]',
@@ -488,6 +489,7 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         "failed_item_ids": "TEXT NOT NULL DEFAULT '[]'",
         "protected_item_ids": "TEXT NOT NULL DEFAULT '[]'",
         "repair_context": "TEXT NOT NULL DEFAULT '{}'",
+        "recovery_context": "TEXT NOT NULL DEFAULT '{}'",
         "project_retrospective": "TEXT NOT NULL DEFAULT '{}'",
         "lesson_usage": "TEXT NOT NULL DEFAULT '[]'",
         "project_lesson_context": "TEXT NOT NULL DEFAULT '[]'",
@@ -867,6 +869,7 @@ def update_request(request_id: str, **fields: Any) -> None:
         "history_context", "acceptance_ledger", "quality_gate_result",
         "failed_item_ids", "protected_item_ids", "repair_context", "project_retrospective",
         "lesson_usage", "project_lesson_context",
+        "recovery_context",
     ):
         if json_field in fields and not isinstance(fields[json_field], str):
             fields[json_field] = json.dumps(fields[json_field], ensure_ascii=False)
@@ -985,7 +988,7 @@ def request_detail(request_id: str) -> dict[str, Any] | None:
     request["history_context"] = json_value(request.get("history_context"), [])
     request["acceptance_ledger"] = json_value(request.get("acceptance_ledger"), [])
     request["quality_gate_result"] = json_value(request.get("quality_gate_result"), {})
-    for key, fallback in (("failed_item_ids", []), ("protected_item_ids", []), ("repair_context", {}),
+    for key, fallback in (("failed_item_ids", []), ("protected_item_ids", []), ("repair_context", {}), ("recovery_context", {}),
                           ("project_retrospective", {}), ("lesson_usage", []), ("project_lesson_context", [])):
         request[key] = json_value(request.get(key), fallback)
     request["notification_emails"] = json_value(request.get("notification_emails"), [request["requester_email"]])

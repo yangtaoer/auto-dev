@@ -482,6 +482,9 @@ class TfsClient:
                 "api-version": "2.0",
             },
         ).get("value", [])
+        active=[p for p in active if p.get('sourceRefName')==source_ref and p.get('targetRefName')==target_ref]
+        if len(active)>1:
+            raise TfsError('相同源分支和目标分支存在多个活跃 PR，拒绝不明确的复用')
         if active:
             pr = self._request(
                 "PATCH",
@@ -611,6 +614,20 @@ class TfsClient:
                 'searchCriteria.targetRefName': 'refs/heads/' + target})
         return [int(pr['pullRequestId']) for pr in response.get('value', [])
                 if pr.get('sourceRefName') == 'refs/heads/' + branch and pr.get('targetRefName') == 'refs/heads/' + target]
+
+    def pull_requests_for_branch(self, repo_path: str, branch: str, target: str) -> list[dict]:
+        repo=self.repository_info(repo_path)
+        url=f"{self.base_url}/{quote(repo.project,safe='')}/_apis/git/repositories/{repo.id}/pullRequests"
+        result=self._request('GET',url,params={'api-version':'2.0','searchCriteria.status':'all',
+            'searchCriteria.sourceRefName':'refs/heads/'+branch,'searchCriteria.targetRefName':'refs/heads/'+target})
+        return [p for p in result.get('value',[]) if p.get('sourceRefName')=='refs/heads/'+branch
+                and p.get('targetRefName')=='refs/heads/'+target]
+
+    def branch_head(self, repo_path: str, branch: str) -> str | None:
+        repo=self.repository_info(repo_path)
+        url=f"{self.base_url}/{quote(repo.project,safe='')}/_apis/git/repositories/{repo.id}/refs"
+        result=self._request('GET',url,params={'api-version':'2.0','filter':'heads/'+branch})
+        return next((r.get('objectId') for r in result.get('value',[]) if r.get('name')=='refs/heads/'+branch),None)
 
     def abandon_pull_request(self, repo_path: str, pr_id: int) -> str:
         repo = self.repository_info(repo_path)

@@ -101,7 +101,6 @@ def main() -> None:
             try:
                 current_ids = worker.current_request_ids
                 current = current_ids[0] if current_ids else None
-                refresh_codex_usage()
                 store.heartbeat(
                     "working" if current_ids or worker.workshop_active_count else "idle",
                     current,
@@ -109,9 +108,19 @@ def main() -> None:
                     current_request_ids=current_ids,
                     max_concurrency=worker.max_concurrency,
                 )
+                recovery = store.recover_interrupted()
+                if recovery.get('recovered') or recovery.get('interrupted'):
+                    logger.warning('执行器中断检查：自动接续=%s，保留待核对=%s',recovery.get('recovered'),recovery.get('interrupted'))
             except Exception as exc:
                 logger.warning("心跳上报失败：%s", exc)
             heartbeat_stop.wait(20)
+
+    def usage_loop() -> None:
+        # Account/model catalogue calls can be slow. They must never stall the
+        # liveness heartbeat or publish an old snapshot of active request IDs.
+        refresh_codex_usage(force=True)
+        while not heartbeat_stop.wait(60):
+            refresh_codex_usage()
 
     def cleanup_loop() -> None:
         while not heartbeat_stop.is_set():
@@ -133,7 +142,6 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop_runner)
     signal.signal(signal.SIGINT, stop_runner)
     try:
-        refresh_codex_usage(force=True)
         monitor.start()
         report_initial_heartbeat(store, get_codex_usage(), worker.max_concurrency)
         try:
@@ -142,6 +150,7 @@ def main() -> None:
             logger.warning("首次同步本机项目目录失败，将随心跳重试：%s", exc)
         heartbeat_thread = threading.Thread(target=heartbeat_loop, name="autodev-heartbeat", daemon=True)
         heartbeat_thread.start()
+        threading.Thread(target=usage_loop, name='autodev-usage', daemon=True).start()
         if settings.oss_enabled:
             cleanup_thread = threading.Thread(target=cleanup_loop, name="autodev-oss-cleanup", daemon=True)
             cleanup_thread.start()

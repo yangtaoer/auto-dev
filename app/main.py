@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.17",
+    version="1.0-Beta.18",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -278,6 +278,7 @@ class RunnerIdentity(BaseModel):
 
 
 class RunnerHeartbeat(RunnerIdentity):
+    execution_session_id: str = Field(default="", max_length=80, pattern=r"^[a-zA-Z0-9_-]*$")
     hostname: str = Field(default="", max_length=200)
     version: str = Field(default="", max_length=80)
     state: str = Field(default="idle", max_length=40)
@@ -337,10 +338,18 @@ def admin_user(user: Annotated[dict, Depends(current_user)]) -> dict:
     return user
 
 
-def runner_auth(authorization: Annotated[str | None, Header()] = None) -> None:
+def runner_auth(request: Request, authorization: Annotated[str | None, Header()] = None) -> None:
     expected = f"Bearer {settings.runner_token}"
     if not settings.runner_token or not authorization or not hmac.compare_digest(authorization, expected):
         raise HTTPException(status_code=401, detail="本机执行器令牌无效")
+    if request.url.path != '/api/runner/heartbeat':
+        session = request.headers.get('X-AutoDev-Execution-Session')
+        runner_id = request.headers.get('X-AutoDev-Runner-Id')
+        if session and runner_id:
+            runner = row('SELECT detail FROM runners WHERE runner_id=?', (runner_id,))
+            current_session = json_value((runner or {}).get('detail'), {}).get('execution_session_id')
+            if current_session and current_session != session:
+                raise HTTPException(status_code=409, detail='执行器会话已变更，旧会话不能继续接管或写入任务')
 
 
 def runner_record_online(runner: dict | None, *, now: datetime | None = None) -> bool:
@@ -417,6 +426,9 @@ def add_runner_display_state(item: dict[str, Any]) -> dict[str, Any]:
     if item["display_status"] == "waiting_runner":
         item["current_activity"] = "执行器当前离线，任务已安全排队，待执行器上线后自动继续"
         item["display_message"] = item["current_activity"]
+    elif not online and actual_status in {'validating','developing','submitting','building','releasing','capturing','delivering'}:
+        item['current_activity']='执行器心跳已离线，现场保留；上线后将核对检查点，不代表任务仍在运行'
+        item['display_message']=item['current_activity']
     return item
 
 
@@ -2234,6 +2246,10 @@ def simulate_merge(request_id: str, user: Annotated[dict, Depends(admin_user)]) 
 def runner_heartbeat(payload: RunnerHeartbeat) -> dict:
     now = utc_now()
     with transaction() as conn:
+        from .services.execution_recovery import session_conflict
+        previous = conn.execute('SELECT * FROM runners WHERE runner_id=?', (payload.runner_id,)).fetchone()
+        if session_conflict(dict(previous) if previous else None, payload.execution_session_id):
+            raise HTTPException(status_code=409, detail='上一执行器会话仍有有效活跃心跳，稍后再尝试接管')
         conn.execute(
             """INSERT INTO runners(runner_id,hostname,version,state,current_request_id,last_seen_at,detail)
                VALUES(?,?,?,?,?,?,?)
@@ -2252,12 +2268,22 @@ def runner_heartbeat(payload: RunnerHeartbeat) -> dict:
                         "codex_usage": payload.codex_usage,
                         "current_request_ids": list(dict.fromkeys(payload.current_request_ids))[:5],
                         "max_concurrency": payload.max_concurrency,
+                        "execution_session_id": payload.execution_session_id,
                     },
                     ensure_ascii=False,
                 ),
             ),
         )
     return {"ok": True, "server_time": now}
+
+
+@app.post('/api/runner/recover-interrupted', dependencies=[Depends(runner_auth)])
+def runner_recover_interrupted(payload: RunnerHeartbeat) -> dict:
+    from .services.execution_recovery import recover
+    try:
+        return recover(payload.runner_id, payload.execution_session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/api/runner/intakes/claim", dependencies=[Depends(runner_auth)])
@@ -2516,6 +2542,7 @@ RUNNER_MUTABLE_FIELDS = {
     "supplement_requests", "supplement_answers", "supplement_requested_at", "supplemented_at",
     "analysis_result", "history_context", "acceptance_ledger", "quality_gate_result",
     "project_retrospective", "lesson_usage", "project_lesson_context",
+    "recovery_context",
 }
 
 
