@@ -264,7 +264,7 @@ class ExecutionPolicyTests(unittest.TestCase):
         worker = Worker(store=LocalStore())
         gap = {'decision':'completed','blocking_risks':['验收项未完成'],'risks':[]}
         success = {'decision':'completed','blocking_risks':[],'risks':[]}
-        kwargs = dict(request_id=request_id, repository_states=[], project={}, task_type='development')
+        kwargs = dict(request_id=request_id, repository_states=[], project={'simulation_mode': True}, task_type='development')
         with patch('app.orchestrator.CodexRunner.run', side_effect=[SimpleNamespace(result=gap,thread_id='same'),SimpleNamespace(result=success,thread_id='same')]) as run:
             self.assertEqual(worker._run_with_recovery(**kwargs).result, success)
             self.assertEqual(run.call_count, 2)

@@ -115,6 +115,19 @@ def evaluate_development_quality(
         for relative in state.get("changed_files") or []
     ]
     ledger = normalize_acceptance_ledger(result)
+    scope_blockers = list(result.get("workspace_scope_errors") or [])
+    registered = {str(state.get("name")) for state in repository_states}
+    unknown = sorted({name for item in ledger for name in item.get("repositories") or []
+                      if name not in registered}) if repository_states else []
+    if unknown:
+        scope_blockers.append("研发结果引用未登记仓库：" + "、".join(unknown)
+                              + "；请核对 starter 依赖及项目仓库清单，保留现有修改")
+    if result.get("decision") == "completed" and not changed_paths and not project.get("simulation_mode"):
+        scope_blockers.append("研发声明完成，但登记仓库中没有可提交变更；请核对实际修改仓库，"
+                              "仅在最新目标分支已有完整实现且证据充分时返回 already_satisfied")
+    blockers.extend(scope_blockers)
+    _check(checks, "repository-scope", "仓库范围与实际变更", "blocked" if scope_blockers else "passed",
+           "；".join(scope_blockers) if scope_blockers else f"已核对 {len(registered)} 个登记仓库、{len(changed_paths)} 个实际变更文件")
     delivery_assets, asset_blockers = reconcile_delivery_assets(project, repository_states, result)
     blockers.extend(asset_blockers)
     _check(checks, "delivery-scripts", "SQL / 配置交付完整性", "blocked" if asset_blockers else "passed",

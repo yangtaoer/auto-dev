@@ -363,6 +363,10 @@ class CodexRunner:
             if len(repository_names) > 1
             else "当前工作区是单仓库，只在该仓库内完成需求。"
         )
+        repository_rule += (
+            "工作区仓库已由平台登记；不得自行克隆或创建额外 Git 仓库后仅在 changed_files 中声明。"
+            "若实际 starter 依赖与登记清单不一致，明确报告缺少的仓库名并保留现场，不能声称已完成交付。"
+        )
         dm7 = discover_dm7_plugin()
         project_context = str(project.get("development_instructions") or "").strip()
         if project_context:

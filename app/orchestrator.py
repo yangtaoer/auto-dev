@@ -439,6 +439,8 @@ class Worker:
                 finally:
                     live_publisher.close()
                 result, codex_thread_id = run.result, run.thread_id
+                self.store.update_request(request_id, result_summary=str(result.get("summary") or ""),
+                                          codex_thread_id=codex_thread_id)
                 for state in repository_states:
                     state["changed_files"] = (changed_files if analysis_task else committable_changes)(Path(state["worktree_path"]), state["base_commit"])
                 changed_states = [state for state in repository_states if state["changed_files"]]
@@ -804,10 +806,13 @@ class Worker:
             run = CodexRunner().run(**kwargs, is_cancelled=lambda: self.store.get_status(request_id) == 'cancelled',
                                     on_database_write=audit.observe)
             self._check_cancelled(request_id)
-            self.store.update_request(request_id, codex_thread_id=run.thread_id)
+            self.store.update_request(request_id, codex_thread_id=run.thread_id,
+                                      result_summary=str(run.result.get("summary") or ""))
             if kwargs.get("task_type") == "analysis":
                 return run
             run.result["database_write_calls"] = list(audit.entries.values())
+            from .services.repository_composition import unregistered_workspaces
+            run.result["workspace_scope_errors"] = unregistered_workspaces(repository_states)
             for state in repository_states:
                 state["changed_files"] = committable_changes(Path(state["worktree_path"]), state["base_commit"])
             frozen = (kwargs.get("acceptance_context") or {}).get("items") or []
@@ -1210,6 +1215,8 @@ class Worker:
                         text=True,
                         env=fetch_env,
                     )
+                from .services.repository_composition import validate_starter_composition
+                validate_starter_composition(project, repositories)
                 branch_exists = any(
                     subprocess.run(
                         ["git", "-C", str(repo), "show-ref", "--verify", "--quiet", f"refs/heads/{base_branch_name}"],
