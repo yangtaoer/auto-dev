@@ -12,7 +12,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app/services"))
 from tfs_pipeline_runner import TfsBuildClient, DEFAULT_BASE_URL
-from tfs_release_integrity import GATE_FILE, GATE_NAME
+from tfs_release_integrity import GATE_FILE, GATE_NAME, gate_script
 
 
 def configure(client, *, confirm: bool, backup_dir: Path) -> dict:
@@ -20,23 +20,30 @@ def configure(client, *, confirm: bool, backup_dir: Path) -> dict:
     assert definition["repository"]["name"] == "dcsd-springboot-starter"
     assert definition["name"] == "标准版springboot-四川广安"
     steps = definition.get("build")
+    target = definition
     if not steps:
         phases = (definition.get("process") or {}).get("phases", [])
         if len(phases) != 1:
             raise RuntimeError("主包流水线不是已核实的单阶段结构，未更新")
         steps = phases[0]["steps"]
+        target = phases[0].setdefault("target", {"type": 1})
     maven = [i for i, s in enumerate(steps) if s.get("enabled", True) and (s.get("inputs") or {}).get("goals")]
     if len(maven) != 1 or "sichuanga" not in steps[maven[0]]["inputs"]["goals"]:
         raise RuntimeError("主包 Maven Profile 不符合广安配置，未更新")
-    source = GATE_FILE.read_text("utf-8")
+    source = gate_script()
     existing = [s for s in steps if s.get("displayName") == GATE_NAME]
     copies = [s for s in steps if s.get("enabled", True) and "TargetFolder" in (s.get("inputs") or {})]
     clean_copy = bool(copies) and all(str(s["inputs"].get("CleanTargetFolder", "false")).lower() == "true"
                                     and str(s["inputs"].get("OverWrite", "false")).lower() == "true" for s in copies)
+    critical = [s for s in steps if s.get("enabled", True) and ("TargetFolder" in (s.get("inputs") or {})
+                or "ArtifactName" in (s.get("inputs") or {}) or "sshEndpoint" in (s.get("inputs") or {}))]
+    strict_conditions = all(not s.get("alwaysRun") and not s.get("continueOnError") and s.get("condition") == "succeeded()" for s in critical)
+    linux_demand = "Agent.OS -equals Linux"
     if (len(existing) == 1 and existing[0].get("enabled") is True
             and not existing[0].get("continueOnError")
             and existing[0].get("inputs", {}).get("script", "").replace("\r\n", "\n") == source.replace("\r\n", "\n")
-            and clean_copy and (definition.get("variables", {}).get("AUTODEV_EXPECTED_MODULES") or {}).get("allowOverride")):
+            and clean_copy and strict_conditions and linux_demand in (target.get("demands") or [])
+            and (definition.get("variables", {}).get("AUTODEV_EXPECTED_MODULES") or {}).get("allowOverride")):
         return {"definitionId": 5481, "changed": False, "revision": definition["revision"]}
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup = backup_dir / ("5481-revision-" + str(definition["revision"]) + ".json")
@@ -46,24 +53,26 @@ def configure(client, *, confirm: bool, backup_dir: Path) -> dict:
     if not backup.exists():
         backup.write_text(raw, encoding="utf-8")
     tasks = client.request_json("GET", client.base_url + "/_apis/distributedtask/tasks?api-version=4.1").get("value", [])
-    powershell = [t for t in tasks if t.get("name") == "PowerShell" and (t.get("version") or {}).get("major") == 2]
-    if not powershell:
-        raise RuntimeError("服务器未安装 PowerShell v2 构建任务，未更新")
-    task = powershell[-1]
+    commands = [t for t in tasks if t.get("name") in {"CmdLine", "CommandLine"} and (t.get("version") or {}).get("major") == 2]
+    if not commands:
+        raise RuntimeError("服务器未安装命令行 v2 构建任务，未更新")
+    task = commands[-1]
     steps[:] = [s for s in steps if s.get("displayName") != GATE_NAME]
     index = next(i for i, s in enumerate(steps) if s.get("enabled", True) and (s.get("inputs") or {}).get("goals")) + 1
     steps.insert(index, {"enabled": True, "continueOnError": False, "alwaysRun": False,
         "condition": "succeeded()", "timeoutInMinutes": 10, "displayName": GATE_NAME,
         "task": {"id": task["id"], "versionSpec": "2.*", "definitionType": "task"},
-        "inputs": {"targetType": "inline", "script": source, "errorActionPreference": "stop",
-                   "failOnStderr": "true", "ignoreLASTEXITCODE": "false", "pwsh": "false",
-                   "workingDirectory": "$(Build.SourcesDirectory)"}})
+        "inputs": {"script": source, "failOnStderr": "false", "workingDirectory": "$(Build.SourcesDirectory)"}})
     if not copies:
         raise RuntimeError("主包流水线缺少已核实的产物复制步骤，未更新")
     for copy in copies:
         if "artifactstagingdirectory" not in str(copy["inputs"].get("TargetFolder", "")).lower():
             raise RuntimeError("产物复制目标不属于构建暂存目录，未更新")
         copy["inputs"].update(CleanTargetFolder="true", OverWrite="true")
+    for step in critical:
+        step.update(alwaysRun=False, continueOnError=False, condition="succeeded()")
+    if linux_demand not in target.setdefault("demands", []):
+        target["demands"].append(linux_demand)
     definition.setdefault("variables", {})["AUTODEV_EXPECTED_MODULES"] = {"value": "", "allowOverride": True, "isSecret": False}
     result = {"definitionId": 5481, "changed": True, "gateScriptSha256": hashlib.sha256(source.encode()).hexdigest(),
               "backup": str(backup), "confirmed": confirm}

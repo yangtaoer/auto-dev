@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -192,7 +193,8 @@ class TfsPipelineReleaseService:
     def _diagnostic_summary(diagnostics: str) -> str:
         lines = [line.strip() for line in diagnostics.splitlines() if line.strip()]
         malformed = [line for line in lines if "malformed \\uxxxx encoding" in line.casefold()]
-        selected = malformed[-1:] or lines[-8:]
+        errors = [line for line in lines if re.search(r"(?i)(##\[error\]|\[error\]|exception:|校验失败|过期的依赖|无法定位可执行文件)", line)]
+        selected = malformed[-1:] or errors[-6:] or lines[-8:]
         summary = "；".join(selected)
         return summary[-1800:] or "未知错误"
 
@@ -221,13 +223,16 @@ class TfsPipelineReleaseService:
                 timeline_response = client.get(timeline_url)
                 timeline_response.raise_for_status()
                 records = timeline_response.json().get("records", [])
+                failed_tasks = [record for record in records if str(record.get("result") or "").casefold() == "failed"
+                                and (record.get("type") == "Task" or record.get("issues"))]
                 failed_logs = [
                     int((record.get("log") or {}).get("id"))
-                    for record in records
+                    for record in failed_tasks
                     if str(record.get("result") or "").casefold() == "failed"
                     and (record.get("log") or {}).get("id")
                 ]
-                outputs: list[str] = []
+                outputs: list[str] = [str(issue.get("message") or "") for record in failed_tasks
+                                      for issue in record.get("issues") or [] if issue.get("type") == "error"]
                 for log_id in failed_logs[-4:]:
                     log_url = (
                         f"{base_url}/{quote(tfs_project, safe='')}/_apis/build/builds/{int(build_id)}"
@@ -235,7 +240,12 @@ class TfsPipelineReleaseService:
                     )
                     log_response = client.get(log_url)
                     log_response.raise_for_status()
-                    outputs.append(log_response.text[-6000:])
+                    try:
+                        document = log_response.json()
+                        lines = document.get("value", []) if isinstance(document, dict) else document
+                    except ValueError:
+                        lines = log_response.text.splitlines()
+                    outputs.append("\n".join(lines)[-6000:])
                 return "\n".join(outputs)[-12000:]
         except (ValueError, TypeError, httpx.HTTPError, json.JSONDecodeError):
             return ""

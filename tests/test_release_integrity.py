@@ -60,7 +60,8 @@ class ReleaseIntegrityTests(unittest.TestCase):
         self.assertEqual(len([p for p in pipelines if p["purpose"] == "dependency" and p["stage"] == 1]), 8)
         self.assertEqual([p["definitionId"] for p in pipelines if p["purpose"] == "delivery"], [5481])
         self.assertEqual(pipelines[-1]["stage"], 2)
-        self.assertEqual(pipelines[-1]["deploymentAudit"]["checkedAt"], "retained")
+        self.assertEqual(pipelines[-1]["deploymentAudit"]["status"], "linked-releases-found")
+        self.assertIn(579, [r["releaseDefinitionId"] for r in pipelines[-1]["deploymentAudit"]["releases"]])
         self.assertIn(9913, [p["definitionId"] for p in pipelines])
         self.assertEqual(result["projects"][1]["pipelines"], [{"definitionId": 99}])
 
@@ -248,14 +249,18 @@ class ReleaseIntegrityTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("VERIFIED_RUNNER_ENTRY", result.stdout)
 
-    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell not available")
-    def test_real_powershell_gate_blocks_old_module_before_publishing(self):
+    @unittest.skipUnless(shutil.which("java") and shutil.which("javac"), "JDK not available")
+    def test_real_jdk_gate_blocks_old_module_before_publishing(self):
         path = self.package(self.module)
         manifest = {"version": 1, "modules": {"dcsd-example": {"sha256": hashlib.sha256(self.module).hexdigest()}}}
+        source = self.integrity.GATE_FILE.with_name("AutoDevVerifyModules.java")
+        compiled = subprocess.run([shutil.which("javac"), "-encoding", "UTF-8", "-source", "8", "-target", "8", "-Xlint:-options",
+                                   "-d", str(self.root), str(source)], capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(compiled.returncode, 0, compiled.stderr)
         def run():
             encoded = base64.b64encode(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).decode()
-            return subprocess.run([shutil.which("pwsh"), "-NoProfile", "-File", str(self.integrity.GATE_FILE),
-                "-PackageDirectory", str(self.root), "-ExpectedModules", encoded], capture_output=True, text=True, encoding="utf-8")
+            return subprocess.run([shutil.which("java"), "-cp", str(self.root), "AutoDevVerifyModules", str(self.root), encoded],
+                                   capture_output=True, text=True, encoding="utf-8")
         success = run()
         self.assertEqual(success.returncode, 0, success.stderr)
         self.assertIn("AUTODEV_MODULES_VERIFIED:", success.stdout)
@@ -263,6 +268,13 @@ class ReleaseIntegrityTests(unittest.TestCase):
         failed = run()
         self.assertNotEqual(failed.returncode, 0)
         self.assertNotIn("AUTODEV_MODULES_VERIFIED:", failed.stdout)
+
+    def test_failure_summary_prefers_real_gate_error_over_cleanup_noise(self):
+        from app.services.pipeline_release import TfsPipelineReleaseService
+        text = 'failed build\n##[error]Missing JDK executable\nCleaning credentials\nCompleted job'
+        summary = TfsPipelineReleaseService._diagnostic_summary(text)
+        self.assertIn('Missing JDK executable', summary)
+        self.assertNotIn('Cleaning credentials', summary)
 
 
 class VerifiedReleaseRecordTests(unittest.TestCase):

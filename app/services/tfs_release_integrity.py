@@ -22,7 +22,12 @@ import zipfile
 PARAMETER = "AUTODEV_EXPECTED_MODULES"
 GATE_NAME = "AutoDev - Verify dependency modules"
 ROOT = Path(__file__).resolve().parents[2]
-GATE_FILE = ROOT / "local-runner/project-scripts/verify-release-modules.ps1"
+GATE_FILE = ROOT / "local-runner/project-scripts/verify-release-modules.sh"
+
+
+def gate_script() -> str:
+    java = GATE_FILE.with_name("AutoDevVerifyModules.java").read_text("utf-8")
+    return GATE_FILE.read_text("utf-8").replace("@@JAVA_SOURCE@@", java)
 
 
 def apply_workflows(catalog: dict) -> dict:
@@ -136,7 +141,7 @@ class ReleaseIntegrity:
             if not any("deploy" in str((s.get("inputs") or {}).get("goals", "")).split() for s in steps):
                 raise RuntimeError(f"依赖流水线 {plan['definitionId']} 不会发布 Maven 模块")
             return
-        expected_script = GATE_FILE.read_text("utf-8").replace("\r\n", "\n")
+        expected_script = gate_script().replace("\r\n", "\n")
         gates = [(i, s) for i, s in enumerate(steps) if s.get("displayName") == GATE_NAME]
         maven = [i for i, s in enumerate(steps) if (s.get("inputs") or {}).get("goals")]
         publish = [i for i, s in enumerate(steps) if (s.get("inputs") or {}).get("ArtifactName")]
@@ -148,6 +153,10 @@ class ReleaseIntegrity:
         if not copies or any(str(s["inputs"].get("CleanTargetFolder", "false")).lower() != "true"
                              or str(s["inputs"].get("OverWrite", "false")).lower() != "true" for s in copies):
             raise RuntimeError("主包暂存目录没有清理或覆盖保护，不能排除旧包混入")
+        critical = [s for s in steps if "TargetFolder" in (s.get("inputs") or {})
+                    or "ArtifactName" in (s.get("inputs") or {}) or "sshEndpoint" in (s.get("inputs") or {})]
+        if any(s.get("alwaysRun") or s.get("continueOnError") or s.get("condition") != "succeeded()" for s in critical):
+            raise RuntimeError("复制、加密或发布步骤仍允许失败后继续，不能保证交付完整")
 
     def read_log(self, client, build_id: int) -> list[str]:
         timeline = client.request_json("GET", client.api_url(f"builds/{build_id}/timeline"))
