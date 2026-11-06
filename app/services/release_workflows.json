@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "projects": {
+    "广安网络发令": {
+      "releaseIntegrity": {
+        "version": 1,
+        "artifactUrlPrefix": "http://192.168.14.27:8081/nexus/content/repositories/snapshots/",
+        "gateDefinitionId": 5481
+      },
+      "pipelines": [
+        {
+          "purpose": "dependency",
+          "stage": 1,
+          "definitionId": 9913,
+          "name": "dcsd-certify-ui-sichuanga",
+          "tfsProject": "DCS",
+          "repository": "dcsd-certify-ui-sichuanga",
+          "sourceBranch": "refs/heads/dev"
+        },
+        {
+          "purpose": "dependency",
+          "stage": 1,
+          "definitionId": 5482,
+          "name": "dcsd-direct-ui-sichuanga",
+          "tfsProject": "DCS",
+          "repository": "dcsd-direct-ui-sichuanga",
+          "sourceBranch": "refs/heads/dev"
+        },
+        {
+          "purpose": "dependency",
+          "stage": 1,
+          "definitionId": 5474,
+          "name": "dcsd-extrawork-ui-sichuanyb",
+          "tfsProject": "DCS",
+          "repository": "dcsd-extrawork-ui-sichuandd",
+          "sourceBranch": "refs/heads/dev"
+        },
+        {
+          "purpose": "dependency",
+          "stage": 1,
+          "definitionId": 5487,
+          "name": "dcsd-homepage-ui-sichuanga",
+          "tfsProject": "DCS",
+          "repository": "dcsd-homepage-ui-sichuanga",
+          "sourceBranch": "refs/heads/dev"
+        },
+        {
+          "purpose": "dependency",
+          "stage": 1,
+          "definitionId": 5476,
+          "name": "dcsd-notice-srv-sichuanyb",
+          "tfsProject": "DCS",
+          "repository": "dcsd-notice-srv-sichuandd",
+          "sourceBranch": "refs/heads/dev"
+        },
+        {
+          "purpose": "dependency",
+          "stage": 1,
+          "definitionId": 5478,
+          "name": "dcsd-notice-ui-sichuanyb",
+          "tfsProject": "DCS",
+          "repository": "dcsd-notice-ui-sichuandd",
+          "sourceBranch": "refs/heads/dev"
+        },
+        {
+          "purpose": "dependency",
+          "stage": 1,
+          "definitionId": 5479,
+          "name": "dcsd-permit-ui-sichuanyb",
+          "tfsProject": "DCS",
+          "repository": "dcsd-permit-ui-sichuandd",
+          "sourceBranch": "refs/heads/dev"
+        },
+        {
+          "purpose": "dependency",
+          "stage": 1,
+          "definitionId": 5483,
+          "name": "dcsd-report-ui-sichuanga",
+          "tfsProject": "DCS",
+          "repository": "dcsd-report-ui-sichuandd",
+          "sourceBranch": "refs/heads/dev"
+        },
+        {
+          "purpose": "delivery",
+          "stage": 2,
+          "definitionId": 5481,
+          "name": "标准版springboot-四川广安",
+          "tfsProject": "DCS",
+          "repository": "dcsd-springboot-starter",
+          "sourceBranch": "refs/heads/dev",
+          "buildProfile": "sichuanga",
+          "artifactName": "drop",
+          "deploymentAudit": {
+            "checkedAt": "2026-11-06T04:57:29+00:00",
+            "status": "linked-releases-found",
+            "releases": [
+              {
+                "releaseDefinitionId": 579,
+                "name": "标准版springboot开发-四川广安",
+                "definitionUrl": "http://dev.tellhowsoft.com/DefaultCollection/DCS/_release?definitionId=579&view=mine&_a=releases",
+                "artifactAliases": [
+                  "_标准版springboot-四川广安"
+                ],
+                "automaticTrigger": true,
+                "triggerConditions": [
+                  []
+                ],
+                "environments": [
+                  {
+                    "environmentId": 719,
+                    "name": "阶段 2",
+                    "conditions": [
+                      {
+                        "name": "ReleaseStarted",
+                        "conditionType": "event",
+                        "value": ""
+                      }
+                    ],
+                    "automaticApproval": true,
+                    "schedules": [],
+                    "targets": [
+                      {
+                        "endpointId": "39e8d4ec-e0db-4f0d-a894-d0cd28ddb1c7",
+                        "endpointName": "192.168.62.39",
+                        "host": "192.168.62.39",
+                        "hostEvidence": "service-connection-name",
+                        "sshPort": 22,
+                        "directories": [
+                          "/home/devczp/scgaczp/"
+                        ],
+                        "serviceScripts": [
+                          "/home/devczp/scgaczp/service.sh"
+                        ],
+                        "steps": [
+                          "停服务",
+                          "删除旧部署包",
+                          "上传新程序包",
+                          "启动服务"
+                        ]
+                      }
+                    ],
+                    "unexpandedTaskGroupIds": []
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

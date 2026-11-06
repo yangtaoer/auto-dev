@@ -62,7 +62,7 @@ class Settings:
     ).resolve()
     runner_token: str = env_secret("AUTODEV_RUNNER_TOKEN")
     cloud_url: str = os.getenv("AUTODEV_CLOUD_URL", "").rstrip("/")
-    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "1.0-Beta.19").strip() or "1.0-Beta.19"
+    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "1.0-Beta.20").strip() or "1.0-Beta.20"
     runner_monitor_host: str = os.getenv("AUTODEV_RUNNER_MONITOR_HOST", "127.0.0.1").strip()
     runner_monitor_port: int = int(os.getenv("AUTODEV_RUNNER_MONITOR_PORT", "28766"))
     # Exclusive single-file limit; MB uses 1024**2 bytes (1 GB = 1024 MB here).
@@ -94,7 +94,7 @@ class Settings:
     tfs_pipeline_skill_script: Path = Path(
         os.getenv(
             "TFS_PIPELINE_SKILL_SCRIPT",
-            str(Path.home() / ".codex" / "skills" / "tfs-run-pipeline" / "scripts" / "run_tfs_pipeline.py"),
+            str(ROOT / "app" / "services" / "tfs_pipeline_runner.py"),
         )
     ).resolve()
     tfs_pipeline_timeout_seconds: int = max(300, int(os.getenv("TFS_PIPELINE_TIMEOUT_SECONDS", "3600")))

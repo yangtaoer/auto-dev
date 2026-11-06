@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
 
@@ -44,25 +46,35 @@ class TfsPipelineReleaseService:
         return self.PROJECT_NAME_OVERRIDES.get(project_name.strip(), project_name.strip())
 
     def resolve_plan(self, project_name: str) -> dict[str, Any]:
-        return self._invoke(project_name, [])
+        payload = self._invoke(project_name, [])
+        stages = (payload.get("workflow") or {}).get("stages") or []
+        if stages:
+            plans = [p for stage in stages for p in stage.get("pipelines", [])]
+            delivery = next((p for p in reversed(plans) if p.get("purpose") == "delivery"), {})
+            payload = {**delivery, **payload, "workflowSummary": " → ".join(
+                "阶段 " + str(stage["stage"]) + "：" + "、".join(
+                    f"{p['pipelineName']} (ID {p['definitionId']})" for p in stage.get("pipelines", [])) for stage in stages)}
+        return payload
 
-    def run(self, project_name: str) -> dict[str, Any]:
+    def run(self, project_name: str, *, required_commits: dict | None = None, require_integrity: bool = False) -> dict[str, Any]:
         if not settings.tfs_pat:
             raise TfsPipelineReleaseError("未配置 TFS_PAT，无法执行自动发版")
         retry_history: list[dict[str, Any]] = []
         payload: dict[str, Any] | None = None
         for attempt in range(2):
             try:
-                payload = self._invoke(
-                    project_name,
-                    [
+                with tempfile.TemporaryDirectory(prefix="autodev-release-") as directory:
+                    arguments = [
                         "--confirm-run",
                         "--timeout-seconds",
                         str(settings.tfs_pipeline_timeout_seconds),
-                    ],
-                    require_pat=True,
-                    timeout=settings.tfs_pipeline_timeout_seconds + 90,
-                )
+                    ]
+                    if required_commits is not None:
+                        context = Path(directory) / "required-commits.json"
+                        context.write_text(json.dumps({"commits": required_commits}), encoding="utf-8")
+                        arguments.extend(["--required-commits", str(context)])
+                    payload = self._invoke(project_name, arguments, require_pat=True,
+                                           timeout=settings.tfs_pipeline_timeout_seconds + 90)
                 break
             except TfsPipelineReleaseError as exc:
                 if attempt or not exc.transient:
@@ -83,6 +95,9 @@ class TfsPipelineReleaseService:
             )
         if not result.get("expectedArtifactFound") or not result.get("artifactsUrl"):
             raise TfsPipelineReleaseError("自动发版完成但未找到预期发布产物")
+        from .release_policy import verified
+        if require_integrity and not verified(result):
+            raise TfsPipelineReleaseError("发布包缺少本轮依赖与包内文件校验，不能标记为已交付")
         if retry_history:
             result = {
                 **result,

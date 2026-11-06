@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.19",
+    version="1.0-Beta.20",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -290,6 +290,10 @@ class RunnerHeartbeat(RunnerIdentity):
 
 class RunnerRequestUpdate(BaseModel):
     fields: dict[str, Any]
+
+
+class RunnerVerifiedRelease(BaseModel):
+    result: dict[str, Any]
 
 
 class RunnerStepUpdate(BaseModel):
@@ -2554,6 +2558,16 @@ def runner_update_request(request_id: str, payload: RunnerRequestUpdate) -> dict
         raise HTTPException(status_code=400, detail=f"不允许更新字段：{', '.join(sorted(unknown))}")
     update_request(request_id, **payload.fields)
     return {"ok": True}
+
+
+@app.post("/api/runner/requests/{request_id}/verified-release", dependencies=[Depends(runner_auth)])
+def runner_record_verified_release(request_id: str, payload: RunnerVerifiedRelease) -> dict:
+    runner_request(request_id)
+    from .services.verified_release import record
+    try:
+        return record(request_id, payload.result)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.patch("/api/runner/requests/{request_id}/steps/{step_code}", dependencies=[Depends(runner_auth)])

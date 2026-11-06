@@ -15,6 +15,8 @@ def _scope(request: dict) -> str:
         "tfs_collection_url", "project_key", "base_branch", "repository_base_branches",
         "repository_tfs_paths", "simulation_mode",
     )}
+    from .release_policy import requires_integrity
+    contract["release_integrity_version"] = 1 if requires_integrity(policy) else 0
     return f"{request['project_id']}:" + hashlib.sha256(json.dumps(contract, sort_keys=True).encode()).hexdigest()
 
 
@@ -36,6 +38,16 @@ def claim(request_id: str, token: str | None = None) -> dict:
             artifact = conn.execute("SELECT name,external_url FROM delivery_artifacts WHERE request_id=? AND kind='release_artifact' AND external_url<>'' ORDER BY id DESC LIMIT 1", (abandoned['owner_id'],)).fetchone()
             result = ({'artifactsUrl':artifact['external_url'], 'pipelineName':artifact['name']} if artifact else
                       {'error':'合并发版执行任务已结束但未记录成功产物；已保留批次，不自动重复发版'})
+            if artifact:
+                from .release_policy import existing_proof, requires_integrity
+                policy = json.loads(conn.execute("SELECT policy_snapshot FROM delivery_requests WHERE id=?", (abandoned['owner_id'],)).fetchone()[0])
+                if requires_integrity(policy):
+                    events = [dict(e) for e in conn.execute("SELECT event_type,metadata FROM delivery_events WHERE request_id=? ORDER BY id DESC", (abandoned['owner_id'],))]
+                    try:
+                        result = existing_proof({"events": events}, artifact['external_url'])
+                    except RuntimeError:
+                        artifact = None
+                        result = {'error':'中断的发版缺少依赖校验回执，未复用旧包；工作现场已保留'}
             conn.execute("UPDATE release_batches SET status=?,result=?,updated_at=? WHERE id=?", ('completed' if artifact else 'failed', json.dumps(result, ensure_ascii=False), now, abandoned['id']))
         conn.execute("INSERT OR IGNORE INTO release_members(request_id,scope,created_at) VALUES (?,?,?)", (request_id, scope, now))
         batch = conn.execute("SELECT b.* FROM release_batches b JOIN release_members m ON m.batch_id=b.id WHERE m.request_id=?", (request_id,)).fetchone()

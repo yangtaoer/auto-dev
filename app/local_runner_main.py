@@ -53,6 +53,10 @@ def configure_logging() -> None:
 def main() -> None:
     configure_logging()
     logger.info("本机执行器启动 runner_id=%s cloud=%s", settings.runner_id, settings.cloud_url)
+    from .services.pipeline_bridge import install_pipeline_bridge
+    from .config import ROOT
+    if install_pipeline_bridge(ROOT):
+        logger.info("发版技能入口已同步至当前版本的依赖校验流程")
     store = RemoteStore(settings.cloud_url, settings.runner_token, settings.runner_id)
     worker = Worker(store=store)
     heartbeat_stop = threading.Event()

@@ -24,6 +24,11 @@ logger = logging.getLogger("autodev.remote_store")
 
 
 class LocalStore:
+    @staticmethod
+    def record_verified_release(request_id: str, result: dict) -> dict:
+        from .services.verified_release import record
+        return record(request_id, result)
+
     def workshop_notify(self,job):
         from .services.workshop_mail import send_claimed
         return send_claimed(job['id'],settings.runner_id,job['claim_token'])
@@ -157,6 +162,9 @@ class LocalStore:
 
 class RemoteStore:
     """Cloud control-plane adapter used by the outbound-only Windows runner."""
+    def record_verified_release(self, request_id: str, result: dict) -> dict:
+        return self._json(self._request("POST", f"/api/runner/requests/{request_id}/verified-release", json={"result": result}))
+
     def workshop_notify(self,job):
         return self._json(self._request('POST',f'/api/runner/workshop/jobs/{job["id"]}/notify',json={
             'runner_id':self.runner_id,'claim_token':job['claim_token']}))['result']

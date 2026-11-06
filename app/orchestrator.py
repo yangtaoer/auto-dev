@@ -2226,7 +2226,11 @@ class Worker:
         )
 
     def _coordinated_release(self, request_id: str, detail: dict, project: dict) -> bool:
-        if any(item.get("kind") == "release_artifact" for item in detail.get("artifacts") or []):
+        from .services.release_policy import requires_integrity, existing_proof, commits_for_release, verified
+        existing = next((item for item in detail.get("artifacts") or [] if item.get("kind") == "release_artifact"), None)
+        if existing:
+            if requires_integrity(project):
+                existing_proof(detail, existing["external_url"])
             return True
         decision = self.store.release_claim(request_id)
         action = decision["action"]
@@ -2247,23 +2251,38 @@ class Worker:
             self.store.add_event(request_id, "release.batch_claimed", "已领取同项目唯一发版批次", metadata=decision)
             try:
                 self._check_cancelled(request_id)
-                result = self._ensure_auto_release(request_id, detail, project)
+                if requires_integrity(project):
+                    members = [detail]
+                    for member_id in decision.get("members") or []:
+                        if member_id != request_id:
+                            member = self.store.detail(member_id)
+                            if not member:
+                                raise RuntimeError("合并发版成员记录缺失，不能遗漏需求提交后继续发版")
+                            members.append(member)
+                    result = self._ensure_auto_release(request_id, detail, project, required_commits=commits_for_release(members))
+                else:
+                    result = self._ensure_auto_release(request_id, detail, project)
             except Exception as exc:
                 self.store.release_finish(request_id, decision["batch_id"], {"error": str(exc)[:2000]}, failed=True)
                 raise
             self.store.release_finish(request_id, decision["batch_id"], result)
         else:
             result = decision["result"]
+            if requires_integrity(project) and not verified(result):
+                raise RuntimeError("同项目共享产物未通过依赖与包内文件校验，不能复用旧交付包")
             self.store.add_artifact(request_id, "release_artifact", f"合并发版 · {result.get('pipelineName')} · Build #{result.get('buildId')}", external_url=result["artifactsUrl"])
             self.store.add_event(request_id, "release.shared", "已复用同项目统一发版产物，无需重复发版", metadata=decision)
         return True
 
-    def _ensure_auto_release(self, request_id: str, detail: dict, project: dict) -> dict:
+    def _ensure_auto_release(self, request_id: str, detail: dict, project: dict, *, required_commits: dict | None = None) -> dict:
+        from .services.release_policy import requires_integrity, existing_proof, commits_for_release
         existing = next(
             (item for item in detail.get("artifacts", []) if item.get("kind") == "release_artifact"),
             None,
         )
         if existing:
+            if requires_integrity(project):
+                return existing_proof(detail, existing["external_url"])
             return {"artifactsUrl": existing["external_url"], "pipelineName": existing["name"]}
         if project.get("simulation_mode"):
             build_id = 1100000 + int(detail["work_item_id"]) % 100000
@@ -2291,10 +2310,15 @@ class Worker:
                 (
                     f"开始自动发版：{plan.get('pipelineName')} (ID {plan.get('definitionId')}) / "
                     f"{plan.get('sourceBranch')}"
+                    + ("；" + plan["workflowSummary"] if plan.get("workflowSummary") else "")
                 ),
                 metadata=plan,
             )
-            result = service.run(str(project.get("name") or detail.get("project_name") or ""))
+            name = str(project.get("name") or detail.get("project_name") or "")
+            if requires_integrity(project):
+                result = service.run(name, required_commits=required_commits or commits_for_release([detail]), require_integrity=True)
+            else:
+                result = service.run(name)
             self._check_cancelled(request_id)
             if result.get("retryCount"):
                 failed_builds = [
@@ -2312,6 +2336,9 @@ class Worker:
                     level="warning",
                     metadata={"retry_history": result.get("retryHistory", [])},
                 )
+        if requires_integrity(project):
+            self.store.record_verified_release(request_id, result)
+            return result
         self.store.add_artifact(
             request_id,
             "release_artifact",

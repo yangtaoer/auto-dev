@@ -27,6 +27,7 @@
   "base_branch": "dev",
   "repository_base_branches": {},
   "quality_profile": {
+    "release_integrity": {"required": true, "version": 1},
     "repository_composition": {
       "starter_repository": "dcsd-springboot-starter",
       "maven_profile": "sichuanga"
