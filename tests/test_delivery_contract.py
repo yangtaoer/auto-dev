@@ -15,10 +15,11 @@ from app.services.delivery_assets import reconcile_delivery_assets
 
 
 class DeliveryContractTests(unittest.TestCase):
-    def test_all_twelve_presets_include_root_sql_config_and_global_policy(self):
+    def test_all_presets_include_root_sql_config_and_global_policy(self):
         from app.project_experience import apply_project_experience
         paths = list((Path(__file__).resolve().parents[1] / "local-runner/project-presets").glob("*.json"))
-        self.assertEqual(len(paths), 12)
+        self.assertIn("aba-self-developed.json", {path.name for path in paths})
+        self.assertGreaterEqual(len(paths), 13)
         for path in paths:
             with self.subTest(project=path.stem):
                 project = apply_project_experience(json.loads(path.read_text(encoding="utf-8")))

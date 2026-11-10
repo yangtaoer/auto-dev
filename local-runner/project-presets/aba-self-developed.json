@@ -1,0 +1,71 @@
+{
+  "project_key": "aba-self-developed",
+  "name": "阿坝自巡航-自研",
+  "enabled": true,
+  "simulation_mode": false,
+  "delivery_mode": "local_package",
+  "allow_requirement_override": false,
+  "tfs_collection_url": "http://dev.tellhowsoft.com/DefaultCollection",
+  "tfs_project": "XiNanArea-New",
+  "tfs_area_path": "XiNanArea-New\\四川省区团队",
+  "routing_title_keywords": [
+    "阿坝自巡航自研",
+    "阿坝自巡航",
+    "阿坝自巡航系统"
+  ],
+  "allowed_work_item_types": [
+    "用户情景"
+  ],
+  "allowed_states": [
+    "新建",
+    "已评审"
+  ],
+  "repository_path": "C:\\work\\workSpaceTellHow\\th-dc-biz-aba",
+  "base_branch": "dev",
+  "build_command": "pwsh.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\yangt\\Documents\\全自助需求研发交付\\local-runner\\project-scripts\\aba-package.ps1\"",
+  "package_patterns": [
+    "release/aba-*.zip"
+  ],
+  "sql_patterns": [
+    "*.sql",
+    "**/*.sql"
+  ],
+  "config_patterns": [
+    "**/*.yml",
+    "**/*.yaml",
+    "**/*.properties",
+    "**/*.conf",
+    "**/*.ini",
+    "**/*.cfg",
+    "**/config/*.js",
+    "**/config/*.json",
+    "**/*config*.xml",
+    "**/application*.xml",
+    "deploy/*.sh",
+    "deploy/*.ps1",
+    "**/*.template",
+    "**/*.example"
+  ],
+  "protected_patterns": [
+    "**/production/**",
+    "**/*prod*.yml",
+    "**/*prod*.yaml",
+    "**/*prod*.properties"
+  ],
+  "notification_cc": "",
+  "runner_id": "yangtao-pc",
+  "verification_command": "pwsh.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\yangt\\Documents\\全自助需求研发交付\\local-runner\\project-scripts\\aba-package.ps1\"",
+  "repository_paths": [
+    "C:\\work\\workSpaceTellHow\\th-dc-biz-aba"
+  ],
+  "repository_tfs_paths": {
+    "th-dc-biz-aba": "http://dev.tellhowsoft.com/DefaultCollection/XiNanArea-New/_git/th-dc-biz-aba"
+  },
+  "repository_base_branches": {
+    "th-dc-biz-aba": "dev"
+  },
+  "repository_expectations": {
+    "th-dc-biz-aba": "th-dc-biz-aba"
+  },
+  "development_instructions": "这是阿坝自巡航自研单仓项目。前端构建要求 Node 18+，后端使用 Maven；业务表引用必须使用 ${BIZ_SCHEMA}，跨 Schema 来源必须明确写出 Schema。版本化 SQL 在合入最新 dev 后必须检查版本号冲突并同步 docs/sql-changelog.md。DM7 中不要向带聚集键的既有表直接增加 CLOB/BLOB；大字段优先使用独立数据表并验证迁移。绩效、工作量和统计页面必须用开发库代表性样例核对实时数据与快照数据的时间一致性、总分公式、排序、导出、未同步与重新同步状态。涉及云端目录删除或批量文件操作时先将物理文件移入可恢复暂存区，再提交数据库事务，失败时恢复文件，禁止先永久删除文件。\n本项目继承巴中开发策略，独立工程约束见 AGENTS.md；阿坝业务使用 SCAB_COMBIZ、SCAB_RELAY，组织来源 SCAB_PLATFORM，OMS/操作票来源按部署配置，禁止写入巴中模式。"
+}

@@ -112,7 +112,7 @@ def apply_project_experience(project: dict[str, Any]) -> dict[str, Any]:
             },
             result.get("artifact_policy") or {},
         )
-    elif key == "bazhong-self-developed":
+    elif key in {"bazhong-self-developed", "aba-self-developed"}:
         result["quality_profile"] = _deep_merge(
             COMMON_QUALITY_PROFILE,
             {
@@ -154,7 +154,7 @@ def apply_project_experience(project: dict[str, Any]) -> dict[str, Any]:
 
     from .services.commit_policy import COMMIT_POLICY_INSTRUCTIONS
     instructions = [COMMIT_POLICY_INSTRUCTIONS, DELIVERY_CONTRACT_INSTRUCTIONS]
-    if key not in {"network-command-app", "bazhong-self-developed"}:
+    if key not in {"network-command-app", "bazhong-self-developed", "aba-self-developed"}:
         instructions.append(NETWORK_COMMON_INSTRUCTIONS)
     if PROJECT_SPECIFIC_INSTRUCTIONS.get(key):
         instructions.append(PROJECT_SPECIFIC_INSTRUCTIONS[key])
