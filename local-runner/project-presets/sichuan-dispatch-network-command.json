@@ -33,10 +33,17 @@
     "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuan\\dcsd-notice-ui-sichuan",
     "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuan\\dcsd-permit-ui-sichuan",
     "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuan\\dcsd-report-ui-sichuan",
-    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuan\\dcsd-springboot-starter"
+    "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuan\\dcsd-springboot-starter",
+    "C:\\work\\workSpaceTellHow\\webservice-scczp-sd"
   ],
   "base_branch": "dev",
-  "repository_base_branches": {},
+  "repository_base_branches": {"webservice-scczp-sd": "dev_sd"},
+  "repository_expectations": {"webservice-scczp-sd": "webservice-scczp"},
+  "quality_profile": {
+    "companion_repositories": [
+      {"name": "webservice-scczp-sd", "repository": "webservice-scczp", "target_branch": "dev_sd", "role": "interface", "module": "四川省调接口程序", "maven_profile": "sd"}
+    ]
+  },
   "build_command": "pwsh.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\yangt\\Documents\\全自助需求研发交付\\local-runner\\project-scripts\\network-command-review.ps1\"",
   "package_patterns": [],
   "sql_patterns": ["*.sql", "**/*.sql"],

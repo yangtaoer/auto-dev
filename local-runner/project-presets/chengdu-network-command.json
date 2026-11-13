@@ -11,7 +11,8 @@
   "reviewer_name": "朱星舟",
   "routing_title_keywords": [
     "成都网络下令",
-    "成都网络发令"
+    "成都网络发令",
+    "成都接口程序"
   ],
   "allowed_work_item_types": [
     "用户情景"
@@ -30,9 +31,17 @@
     "C:\\work\\workSpaceTellHow\\dcsd-sichan-cd\\dcsd-notice-ui-sichuancd-dm",
     "C:\\work\\workSpaceTellHow\\dcsd-sichan-cd\\dcsd-permit-ui-sichuancd-dm",
     "C:\\work\\workSpaceTellHow\\dcsd-sichan-cd\\dcsd-report-ui-sichuancd-dm",
-    "C:\\work\\workSpaceTellHow\\dcsd-sichan-cd\\dcsd-springboot-starter"
+    "C:\\work\\workSpaceTellHow\\dcsd-sichan-cd\\dcsd-springboot-starter",
+    "C:\\work\\workSpaceTellHow\\webservice-scczp"
   ],
   "base_branch": "dev",
+  "repository_base_branches": {"webservice-scczp": "dev_cd"},
+  "repository_expectations": {"webservice-scczp": "webservice-scczp"},
+  "quality_profile": {
+    "companion_repositories": [
+      {"name": "webservice-scczp", "repository": "webservice-scczp", "target_branch": "dev_cd", "role": "interface", "module": "成都接口程序", "maven_profile": ""}
+    ]
+  },
   "build_command": "pwsh.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\yangt\\Documents\\全自助需求研发交付\\local-runner\\project-scripts\\chengdu-network-command-review.ps1\"",
   "package_patterns": [],
   "sql_patterns": ["*.sql", "**/*.sql"],

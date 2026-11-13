@@ -40,7 +40,8 @@ def validate_starter_composition(project: dict, repositories: list[Path]) -> Non
             raise RuntimeError(f"{profile_name} 存在无法确定的内部依赖，未创建研发工作区")
         if artifact not in binary_only:
             required.add(artifact)
-    configured = {repo.name for repo in repositories}
+    companion_names = {item["name"] for item in (project.get("quality_profile") or {}).get("companion_repositories", [])}
+    configured = {repo.name for repo in repositories} - companion_names
     missing, extra = sorted(required - configured), sorted(configured - required)
     if missing or extra:
         details = []

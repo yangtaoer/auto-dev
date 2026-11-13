@@ -1146,6 +1146,8 @@ class Worker:
         names = [repo.name.casefold() for repo in repositories]
         if len(names) != len(set(names)):
             raise RuntimeError("多仓项目存在同名仓库目录，无法创建隔离工作区")
+        from .services.companion_repositories import validate_configuration
+        validate_configuration(project, repositories)
         return repositories
 
     @staticmethod
@@ -1189,6 +1191,8 @@ class Worker:
         repositories = self._configured_repository_paths(project)
         fetch_env = git_authenticated_env(settings.tfs_pat) if settings.tfs_pat else sanitized_process_env()
         base_branch_name = f"feature/{work_item['id']}-{settings.tfs_user_alias}"
+        from .services.companion_repositories import feature_branch
+        base_branch_name = feature_branch(project, base_branch_name)
         workspace_root = settings.worktree_dir / request_id
         states: list[dict] = []
         attempted: list[tuple[Path, Path]] = []
@@ -1623,6 +1627,9 @@ class Worker:
         ]
         return {
             "AUTODEV_CHANGED_REPOSITORIES": json.dumps(changed_names, ensure_ascii=False),
+            "AUTODEV_REPOSITORY_BRANCHES": json.dumps({state["name"]: state.get("base_branch", "dev") for state in repository_states}, ensure_ascii=False),
+            "AUTODEV_REPOSITORY_PROFILES": json.dumps({spec["name"]: spec.get("maven_profile", "") for spec in
+                (detail.get("policy_snapshot", {}).get("quality_profile") or {}).get("companion_repositories", [])}, ensure_ascii=False),
             "AUTODEV_WORK_ITEM_ID": str(detail.get("work_item_id") or ""),
             "AUTODEV_REQUEST_ID": str(detail.get("id") or ""),
             "AUTODEV_APP_FRONTEND_SOURCE": next((str(state.get("repository_path") or "") for state in repository_states
@@ -2086,6 +2093,13 @@ class Worker:
         else:
             reason = "本地打包项目不执行 TFS 自动发版" if detail["delivery_mode"] not in REVIEW_DELIVERY_MODES else "发起人未选择自动发版"
             self.store.update_step(request_id, "release", "skipped", reason)
+        from .services.companion_repositories import deliver_packages, specifications
+        if specifications(project):
+            deliver_packages(self, request_id)
+            detail = self.store.detail(request_id)
+            if any(state.get("companion_delivery") for state in detail.get("repository_states") or []):
+                message = "主程序发版与接口程序打包均已完成" if DELIVERY_OPTION_AUTO_RELEASE in options else "接口程序已合入目标分支并生成系统包"
+                self.store.update_step(request_id, "release", "completed", message)
         self.store.update_request(request_id, status=RunStatus.DELIVERING.value, current_step="deliver", progress=96)
         self._check_cancelled(request_id)
         if (
@@ -2251,6 +2265,18 @@ class Worker:
             self.store.add_event(request_id, "release.batch_claimed", "已领取同项目唯一发版批次", metadata=decision)
             try:
                 self._check_cancelled(request_id)
+                from .services.companion_repositories import deliver_packages, specifications
+                if specifications(project):
+                    for member_id in dict.fromkeys([request_id, *(decision.get("members") or [])]):
+                        member = self.store.detail(member_id)
+                        if member_id != request_id and member and member["status"] in {"cancelled", "rejected"}:
+                            continue
+                        try:
+                            deliver_packages(self, member_id)
+                        except Cancelled:
+                            if member_id == request_id:
+                                raise
+                            self.store.add_event(request_id, "companion.member_cancelled", "合并发版中的接口打包任务已取消", metadata={"request_id": member_id})
                 if requires_integrity(project):
                     members = [detail]
                     for member_id in decision.get("members") or []:

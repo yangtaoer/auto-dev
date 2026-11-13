@@ -17,6 +17,9 @@ def _scope(request: dict) -> str:
     )}
     from .release_policy import requires_integrity
     contract["release_integrity_version"] = 1 if requires_integrity(policy) else 0
+    companions = (policy.get("quality_profile") or {}).get("companion_repositories", [])
+    if companions:
+        contract["companion_repositories"] = companions
     return f"{request['project_id']}:" + hashlib.sha256(json.dumps(contract, sort_keys=True).encode()).hexdigest()
 
 

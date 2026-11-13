@@ -438,7 +438,7 @@ class TfsClient:
         )
         if result.returncode:
             raise TfsError(f"无法读取仓库 origin: {result.stderr.strip()}")
-        origin = result.stdout.strip().removesuffix(".git")
+        origin = result.stdout.strip().rstrip("/").removesuffix(".git")
         match = re.search(r"/DefaultCollection/([^/]+)/_git/([^/]+)$", origin, re.IGNORECASE)
         if not match:
             raise TfsError(f"仓库不是可识别的 TFS Git 地址: {origin}")

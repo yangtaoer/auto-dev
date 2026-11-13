@@ -7,6 +7,7 @@ from typing import Any
 
 from .delivery import added_files, menu_link_from_view_path
 from .delivery_assets import reconcile_delivery_assets
+from .commit_policy import is_local_validation_file
 
 
 _MIGRATION_VERSION = re.compile(r"(?i)(?:^|[/\\])V(?P<version>\d+(?:[._]\d+)*)[^/\\]*\.sql$")
@@ -115,6 +116,12 @@ def evaluate_development_quality(
         for relative in state.get("changed_files") or []
     ]
     ledger = normalize_acceptance_ledger(result)
+    from .companion_repositories import review_problems, specifications
+    companion_blockers = review_problems(project, repository_states, result)
+    blockers.extend(companion_blockers)
+    if specifications(project) and not project.get("simulation_mode"):
+        _check(checks, "companion-impact", "关联接口程序检索与联动", "blocked" if companion_blockers else "passed",
+               "；".join(companion_blockers) if companion_blockers else "已检索关联接口程序并核对联动修改范围")
     scope_blockers = list(result.get("workspace_scope_errors") or [])
     registered = {str(state.get("name")) for state in repository_states}
     unknown = sorted({name for item in ledger for name in item.get("repositories") or []
@@ -298,6 +305,8 @@ def evaluate_development_quality(
             if not root.is_dir() or not base_commit:
                 continue
             for relative in added_files(root, base_commit):
+                if is_local_validation_file(relative):
+                    continue
                 link = menu_link_from_view_path(relative)
                 if link:
                     required_links.append(link)
@@ -347,6 +356,7 @@ def evaluate_development_quality(
         "delivery_assets": delivery_assets,
         "database_changes": result.get("database_changes") or [],
         "database_write_calls": result.get("database_write_calls") or [],
+        "companion_reviews": result.get("companion_reviews") or [],
     }
 
 

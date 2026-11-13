@@ -2929,7 +2929,7 @@ else:
         self.assertEqual(chengdu["delivery_mode"], "sichuan_auto_review")
         self.assertEqual(chengdu["reviewer_name"], "朱星舟")
         self.assertEqual(chengdu["base_branch"], "dev")
-        self.assertEqual(len(chengdu["repository_paths"]), 9)
+        self.assertEqual(len(chengdu["repository_paths"]), 10)
 
     def test_local_project_preset_catalog_contains_nanchong_sichuan_review(self) -> None:
         projects = load_project_presets()
@@ -3076,7 +3076,7 @@ else:
     def test_local_project_catalog_contains_new_network_command_projects(self) -> None:
         projects = {item["project_key"]: item for item in load_project_presets()}
         expected = {
-            "sichuan-dispatch-network-command": ("四川省调网络发令", "sichuan_auto_review", 9),
+            "sichuan-dispatch-network-command": ("四川省调网络发令", "sichuan_auto_review", 10),
             "chongqing-dispatch-network-command": ("重庆市调网络发令", "sichuan_auto_review", 10),
             "aba-network-command": ("阿坝网络发令", "sichuan_auto_review", 9),
             "guangan-network-command": ("广安网络发令", "sichuan_auto_review", 9),

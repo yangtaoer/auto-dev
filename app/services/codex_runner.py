@@ -62,6 +62,21 @@ RESULT_SCHEMA = {
             },
         },
         "changed_files": {"type": "array", "items": {"type": "string"}},
+        "companion_reviews": {
+            "type": "array", "items": {
+                "type": "object",
+                "properties": {
+                    "repository": {"type": "string"},
+                    "target_branch": {"type": "string"},
+                    "inspected": {"type": "boolean"},
+                    "requires_changes": {"type": "boolean"},
+                    "reason": {"type": "string"},
+                    "evidence": {"type": "array", "items": {"type": "string"}}
+                },
+                "required": ["repository", "target_branch", "inspected", "requires_changes", "reason", "evidence"],
+                "additionalProperties": False
+            }
+        },
         "acceptance_mapping": {"type": "array", "items": {"type": "string"}},
         "acceptance_ledger": {
             "type": "array",
@@ -198,7 +213,7 @@ RESULT_SCHEMA = {
         },
     },
     "required": [
-        "decision", "summary", "project_retrospective", "lesson_usage", "changed_files", "acceptance_mapping", "acceptance_ledger",
+        "decision", "summary", "project_retrospective", "lesson_usage", "changed_files", "companion_reviews", "acceptance_mapping", "acceptance_ledger",
         "business_invariants", "database_validation", "visual_validation", "deployment_validation", "menu_changes",
         "existing_implementation", "risks", "sql_changes",
         "config_changes", "database_operations", "supplement_requests", "blocking_risks", "delivery_assets", "database_changes",
@@ -371,6 +386,12 @@ class CodexRunner:
         project_context = str(project.get("development_instructions") or "").strip()
         if project_context:
             project_context = "项目专属开发约定（以本次隔离仓库和已验证代码为准）：\n" + project_context
+        from .companion_repositories import specifications
+        companions = specifications(project)
+        if companions:
+            project_context += "\n本地区关联接口程序：\n" + json.dumps(companions, ensure_ascii=False, indent=2)
+            if task_type != "analysis":
+                project_context += "\n结合当前需求检索上述接口程序，并逐项填写 companion_reviews。repository 使用工作区目录名，target_branch 使用登记的地区目标分支，evidence 写实际文件或符号。"
         quality_profile = project.get("quality_profile") or {}
         quality_context = (
             "项目自动质量门禁（最终结果必须提供对应证据）：\n"

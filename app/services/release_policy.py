@@ -22,7 +22,11 @@ def verified(result: dict) -> bool:
 def commits_for_release(details: list[dict]) -> dict[str, list[str]]:
     result: dict[str, set[str]] = {}
     for detail in details:
+        policy = detail.get("policy_snapshot") or {}
+        companions = {item["name"] for item in (policy.get("quality_profile") or {}).get("companion_repositories", [])}
         for state in detail.get("repository_states") or []:
+            if state["name"] in companions:
+                continue
             for key in ("commit_hash", "merge_commit"):
                 commit = state.get(key)
                 if not commit:

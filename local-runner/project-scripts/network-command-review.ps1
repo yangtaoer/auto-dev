@@ -18,15 +18,33 @@ else {
 }
 
 $ChangedRepositories = @()
+$Branches = @{}
+$Profiles = @{}
+$SelectedNames = @()
+if ($env:AUTODEV_REPOSITORY_BRANCHES) {
+    (ConvertFrom-Json $env:AUTODEV_REPOSITORY_BRANCHES).PSObject.Properties | ForEach-Object { $Branches[$_.Name] = [string]$_.Value }
+}
+if ($env:AUTODEV_REPOSITORY_PROFILES) {
+    (ConvertFrom-Json $env:AUTODEV_REPOSITORY_PROFILES).PSObject.Properties | ForEach-Object { $Profiles[$_.Name] = [string]$_.Value }
+}
+if ($env:AUTODEV_CHANGED_REPOSITORIES) {
+    $SelectedNames = @(ConvertFrom-Json $env:AUTODEV_CHANGED_REPOSITORIES)
+}
 Get-ChildItem -LiteralPath $WorkspaceRoot -Directory | ForEach-Object {
     $Repository = $_.FullName
     if (-not (Test-Path -LiteralPath (Join-Path $Repository ".git"))) {
+        return
+    }
+    if ($SelectedNames.Count -gt 0 -and $_.Name -notin $SelectedNames) {
         return
     }
 
     $BaseBranch = $DefaultBaseBranch
     if ($_.Name -eq "dcsd-springboot-starter" -and $StarterBaseBranch) {
         $BaseBranch = $StarterBaseBranch
+    }
+    if ($Branches.ContainsKey($_.Name)) {
+        $BaseBranch = $Branches[$_.Name]
     }
     & git -C $Repository rev-parse --verify --quiet "origin/$BaseBranch"
     if ($LASTEXITCODE -ne 0) {
@@ -56,7 +74,12 @@ foreach ($Changed in $ChangedRepositories) {
         throw "仓库 $($Repository.Name) 缺少 pom.xml，无法执行标准 Maven 构建"
     }
     Write-Host "正在构建变更仓库：$($Repository.Name)（基础分支：$($Changed.BaseBranch)）"
-    & $Maven -f $Pom -DskipTests package
+    if ($Profiles.ContainsKey($Repository.Name)) {
+        & (Join-Path $PSScriptRoot 'interface-package.ps1') -RepositoryPath $Repository.FullName -MavenProfile $Profiles[$Repository.Name]
+    }
+    else {
+        & $Maven -f $Pom -DskipTests package
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "仓库 $($Repository.Name) 构建失败，Maven 退出码：$LASTEXITCODE"
     }

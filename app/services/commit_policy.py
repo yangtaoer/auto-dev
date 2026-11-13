@@ -16,6 +16,8 @@ def is_local_validation_file(path: str) -> bool:
         return False
     name = parts[-1].casefold()
     directories = {part.casefold() for part in parts[:-1]}
+    if parts[0].casefold() in {"target", "node_modules", "__pycache__"}:
+        return True
     return (name.endswith(".json") and "docs" in directories) or (
         name.endswith(".py") and (bool(directories & {"test", "tests"}) or
                                  name.startswith("test") or name.endswith("_test.py") or name == "conftest.py")
