@@ -21,6 +21,45 @@ def request(project='sichuan-dispatch-network-command',value=None):
 
 
 class DeploymentLinksTests(unittest.TestCase):
+    def deployed14(self, definition=1956, build=1243166, directory='nc', port=28116):
+        value=result(definition,build)
+        value['deployment14']={'eligible':True,'status':'deployed','directory':directory,'buildId':build,
+            'applicationUrl':f'http://192.168.101.14:{port}/netorder/',
+            'authUrl':f'http://192.168.101.14:{port-5}/auth/',
+            'runtime':{'health':'healthy','httpStatus':200,'startedAt':'2026-11-17T01:11:53Z'}}
+        return value
+
+    def test_server14_uses_successful_deployment_metadata_and_historical_event_json(self):
+        from app.services.delivery import Mailer
+        value=self.deployed14()
+        service=services_for_result(value)[0]
+        self.assertEqual(service['url'],'http://192.168.101.14:28116/netorder/')
+        self.assertEqual(service['environment'],'14 环境')
+        self.assertEqual(service['readiness_status'],'verified')
+        detail=request('nanchong-network-command',value)
+        self.assertEqual(len(services_for_request(detail)),1)
+        body=Mailer().delivery_html(detail)
+        self.assertIn(service['url'],body)
+        self.assertIn(service['auth_url'],body)
+        self.assertIn('14 环境',body)
+        self.assertNotIn('本次部署进度和服务就绪未验证',body)
+
+    def test_multiple_joint_server14_addresses_are_deduplicated_without_hiding_company_addresses(self):
+        nc=request('nanchong-network-command',self.deployed14())
+        sd=request(value=self.deployed14(1974,1243167,'sd',28086))
+        services=services_for_request({'joint_children':[nc,sd,nc]})
+        self.assertEqual(len(services),3)
+        self.assertEqual(len([s for s in services if s.get('environment')=='14 环境']),2)
+        self.assertIn('http://192.168.62.39:8581/netorder',[s['url'] for s in services])
+
+    def test_failed_missing_or_mismatched_server14_deployments_have_no_address(self):
+        for update in [{'status':'failed-rolled-back'},{'status':'blocked'},{'eligible':False},
+                       {'directory':'ga'},{'buildId':1},{'applicationUrl':'http://external.test/netorder/'}]:
+            value=self.deployed14()
+            value['deployment14'].update(update)
+            self.assertEqual(services_for_result(value),[],update)
+        self.assertEqual(services_for_result(result(1956)),[])
+
     def test_exact_four_automatic_pipelines_and_manual_or_unknown_never_get_link(self):
         expected={1974:8581,8442:58389,5489:8609,7100:18080}
         self.assertEqual({p['definitionId'] for p in registry()['pipelines']},set(expected))

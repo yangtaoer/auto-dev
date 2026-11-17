@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
@@ -457,7 +458,7 @@ class CodexRunner:
             if dm7.available
             else dm7.message
         )
-        requirement_image_context = self._requirement_image_context(work_item, project, on_event)
+        requirement_image_context = self._requirement_attachment_context(work_item, project, on_event)
 
         if task_type == "analysis":
             tfs_relations = json.dumps(work_item.get("relations") or [], ensure_ascii=False)[:12000]
@@ -733,6 +734,18 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                 + json.dumps(lessons[:5], ensure_ascii=False, indent=2)[:22000]
             )
         return "\n\n".join(sections)
+
+    @staticmethod
+    def _requirement_attachment_context(work_item: dict, project: dict, on_event) -> str:
+        collection = str(project.get('tfs_collection_url') or '').strip()
+        if not collection or not TfsClient._requirement_attachment_sources(work_item):
+            return ''
+        from .requirement_attachments import context
+        root = settings.data_dir/'requirement-attachments'
+        root.mkdir(parents=True, exist_ok=True)
+        prefix = f"{int(work_item.get('id') or 0)}-r{int(work_item.get('revision') or 0)}-"
+        destination = Path(tempfile.mkdtemp(prefix=prefix, dir=root))
+        return context(TfsClient(collection), work_item, destination, on_event)
 
     @staticmethod
     def _requirement_image_context(

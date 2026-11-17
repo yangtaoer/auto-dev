@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import html
 import mimetypes
 import re
 import subprocess
 import logging
 import time
+import uuid
 from datetime import UTC, datetime
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,7 +59,6 @@ def recoverable_preflight_failure(detail: dict) -> bool:
 
 
 class TfsClient:
-    REQUIREMENT_IMAGE_LIMIT = 30
     REQUIREMENT_IMAGE_BYTES = 20 * 1024 * 1024
 
     def __init__(self, base_url: str, pat: str | None = None) -> None:
@@ -152,7 +153,74 @@ class TfsClient:
             candidate = name or unquote(query_name)
             if Path(candidate).suffix.casefold() in image_extensions:
                 add(url, candidate)
-        return sources[: TfsClient.REQUIREMENT_IMAGE_LIMIT]
+        return sources
+
+    @classmethod
+    def _requirement_attachment_sources(cls, work_item: dict) -> list[tuple[str, str]]:
+        sources = dict(cls._requirement_image_sources(work_item))
+        for relation in work_item.get('relations') or []:
+            if not isinstance(relation, dict) or str(relation.get('rel') or '').casefold() != 'attachedfile':
+                continue
+            source = html.unescape(str(relation.get('url') or '')).strip()
+            attributes = relation.get('attributes') or {}
+            name = str(attributes.get('name') or '').strip()
+            if not name:
+                name = parse_qs(urlsplit(source).query).get('fileName', [''])[0]
+            if source:
+                sources[source] = name or sources.get(source, '')
+        return list(sources.items())
+
+    def _download_requirement_attachment(self, source: str) -> tuple[bytes, str]:
+        if source.casefold().startswith('data:image/'):
+            return self._download_requirement_image(source)
+        url = urljoin(self.base_url + '/', source)
+        base = urlsplit(self.base_url)
+        with self._client() as client:
+            for _ in range(6):
+                parsed = urlsplit(url)
+                if (parsed.scheme, parsed.hostname, parsed.port) != (base.scheme, base.hostname, base.port) or parsed.username or parsed.password:
+                    raise TfsError('需求附件地址不属于当前 TFS 服务')
+                with client.stream('GET', url, follow_redirects=False) as response:
+                    if response.is_redirect:
+                        location = response.headers.get('location')
+                        if not location:
+                            raise TfsError('需求附件重定向缺少目标地址')
+                        url = urljoin(url, location)
+                        continue
+                    if response.is_error:
+                        raise TfsError(f'TFS 需求附件下载返回 {response.status_code}')
+                    content = bytearray()
+                    for chunk in response.iter_bytes():
+                        content.extend(chunk)
+                    return bytes(content), response.headers.get('content-type', '')
+        raise TfsError('需求附件重定向次数过多')
+
+    def download_requirement_attachments(self, work_item: dict, destination: Path) -> dict:
+        files, errors = [], []
+        for index, (source, suggested_name) in enumerate(self._requirement_attachment_sources(work_item), 1):
+            try:
+                content, content_type = self._download_requirement_attachment(source)
+                if not content:
+                    continue
+                destination.mkdir(parents=True, exist_ok=True)
+                name = suggested_name.replace('\\', '/').rsplit('/', 1)[-1]
+                extension = self._image_extension(content, content_type, name)
+                suffix = extension or Path(name).suffix or mimetypes.guess_extension(content_type.split(';', 1)[0]) or '.bin'
+                if content.startswith(b'%PDF-'):
+                    suffix = '.pdf'
+                stem = re.sub(r'[^\w.()-]+', '-', Path(name).stem).strip('-.')[:100] or 'attachment'
+                path = destination / f'{index:03d}-{stem}{suffix}'
+                temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.pending')
+                try:
+                    temporary.write_bytes(content)
+                    temporary.replace(path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+                files.append({'name': name or path.name, 'path': str(path.resolve()), 'image': bool(extension),
+                              'size': len(content), 'sha256': hashlib.sha256(content).hexdigest()})
+            except (OSError, ValueError, TfsError, httpx.HTTPError) as exc:
+                errors.append(f'{suggested_name or "第 " + str(index) + " 个附件"}：{exc}')
+        return {'files': files, 'errors': errors}
 
     @staticmethod
     def _image_extension(content: bytes, content_type: str, suggested_name: str) -> str:

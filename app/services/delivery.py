@@ -887,9 +887,13 @@ class Mailer:
             if not url:continue
             warning=f'<div style="margin-top:7px;color:#a36412;font-size:12px">{safe_text(service["warning"])}</div>' if service.get('warning') else ''
             release_url=safe_url(service.get('release_url'))
-            release_link=f'<a href="{html.escape(release_url,quote=True)}" style="color:#607d85">查看自动部署管道 ↗</a>' if release_url else ''
-            service_rows.append(f'''<tr><td style="padding:13px 15px;border:1px solid #c9d8d2;border-radius:8px;background:#f5f8f1"><b style="color:#082c30;font-size:14px">{safe_text(service.get('project_name'))}</b><a href="{html.escape(url,quote=True)}" style="display:block;margin-top:8px;color:#257e65;font-size:14px;font-weight:700;word-break:break-all">{html.escape(url)} ↗</a><div style="margin-top:9px;font-size:11px;color:#607d85">Build #{safe_text(service.get('build_id'))} · {release_link} · 部署登记 {safe_text(str(service.get('audit_checked_at',''))[:10])}</div>{warning}</td></tr>''')
-        deployment_section=('''<div style="margin-top:18px;margin-bottom:9px;color:#082c30;font-size:15px;font-weight:700">自动部署服务入口</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0">'''+''.join(service_rows)+'''</table><p style="margin:9px 0 0;color:#607d85;font-size:12px;line-height:1.7">构建产物已生成；TFS 按既有规则自动部署。本次部署进度和服务就绪未验证，可能需要稍候；请在可访问该内网地址的网络中打开。</p>''') if service_rows else ''
+            release_link=f'<a href="{html.escape(release_url,quote=True)}" style="color:#607d85">查看发布记录 ↗</a>' if release_url else ''
+            auth_url=safe_url(service.get('auth_url'))
+            auth_link=f'<a href="{html.escape(auth_url,quote=True)}" style="color:#607d85">认证入口 ↗</a>' if auth_url else ''
+            environment=f" · {safe_text(service['environment'])}" if service.get('environment') else ''
+            notice=service.get('notice') or '本次部署进度和服务就绪未验证，请在可访问该内网地址的网络中打开。'
+            service_rows.append(f'''<tr><td style="padding:13px 15px;border:1px solid #c9d8d2;border-radius:8px;background:#f5f8f1"><b style="color:#082c30;font-size:14px">{safe_text(service.get('project_name'))}{environment}</b><a href="{html.escape(url,quote=True)}" style="display:block;margin-top:8px;color:#257e65;font-size:14px;font-weight:700;word-break:break-all">{html.escape(url)} ↗</a><div style="margin-top:9px;font-size:11px;color:#607d85">Build #{safe_text(service.get('build_id'))} · {auth_link} {release_link}</div>{warning}<p style="margin:9px 0 0;color:#607d85;font-size:12px;line-height:1.7">{safe_text(notice)}</p></td></tr>''')
+        deployment_section=('''<div style="margin-top:18px;margin-bottom:9px;color:#082c30;font-size:15px;font-weight:700">自动部署服务入口</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0">'''+''.join(service_rows)+'''</table>''') if service_rows else ''
         return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{safe_text(status_label)}</title>
 <style>
 @media only screen and (max-width:600px) {{

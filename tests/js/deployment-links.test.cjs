@@ -10,6 +10,13 @@ test('unknown, absent or unsafe destinations do not generate a service panel',()
  assert.ok(links.section([{...service,project_name:'<img onerror="bad">',warning:'配置未监听'}]).includes('&lt;img'));
  assert.ok(links.section([{...service,warning:'配置未监听'}]).includes('配置未监听'));
 });
+test('server 14 addresses and authentication links preserve verified release status',()=>{
+ const first={...service,environment:'14 环境',url:'http://192.168.101.14:28116/netorder/',auth_url:'http://192.168.101.14:28111/auth/',readiness_status:'verified',notice:'14 环境自动部署完成，发布时服务健康与 HTTP 入口已核验。'};
+ const second={...first,project_name:'成都网络发令',url:'http://192.168.101.14:28096/netorder/'};
+ const html=links.section([first,second]);
+ assert.ok(html.includes(first.url));assert.ok(html.includes(second.url));assert.ok(html.includes('认证入口'));
+ assert.ok(html.includes('发布时验证通过'));assert.equal(html.includes('部署与就绪未验证'),false);
+});
 test('overview and merge/release tab share the same service component loaded before app',()=>{
  const app=fs.readFileSync('app/static/app.js','utf8'),page=fs.readFileSync('app/templates/index.html','utf8');
  assert.ok(app.includes('AutoDevDeploymentLinks?.section(d.deployment_services)'));assert.ok(app.includes('${deliverySummary}${deploymentServices}'));

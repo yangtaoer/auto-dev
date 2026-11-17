@@ -8,5 +8,19 @@
     {"projectKey":"ziyang-network-command","standardName":"资阳调度运行指挥平台","projectNames":["资阳网络发令"],"tfsProject":"DCS","definitionId":8442,"releaseDefinitionId":527,"applicationUrl":"http://192.168.62.39:58389/netorder","portVerification":"runtime-listener-verified"},
     {"projectKey":"yibin-network-command","standardName":"宜宾网络发令","tfsProject":"DCS","definitionId":5489,"releaseDefinitionId":232,"applicationUrl":"http://192.168.62.39:8609/netorder","portVerification":"configuration-only-not-listening"},
     {"projectKey":"bazhong-network-command","standardName":"巴中网络发令","tfsProject":"DCS","definitionId":7100,"releaseDefinitionId":450,"applicationUrl":"http://192.168.62.39:18080/netorder","portVerification":"runtime-listener-verified"}
+  ],
+  "server14Projects": [
+    {"definitionId":1974,"projectKey":"sichuan-dispatch-network-command","standardName":"四川省调网络发令","directory":"sd"},
+    {"definitionId":1972,"projectKey":"chengdu-network-command","standardName":"成都网络发令","directory":"cd"},
+    {"definitionId":7065,"projectKey":"aba-network-command","standardName":"阿坝网络发令","directory":"ab"},
+    {"definitionId":1956,"projectKey":"nanchong-network-command","standardName":"南充网络发令","directory":"nc"},
+    {"definitionId":5481,"projectKey":"guangan-network-command","standardName":"广安网络发令","directory":"ga"},
+    {"definitionId":7100,"projectKey":"bazhong-network-command","standardName":"巴中网络发令","directory":"bz"},
+    {"definitionId":6495,"projectKey":"leshan-network-command","standardName":"乐山网络发令","directory":"ls"},
+    {"definitionId":8442,"projectKey":"ziyang-network-command","standardName":"资阳调度运行指挥平台","directory":"zy"},
+    {"definitionId":9596,"projectKey":"ganzi-network-command","standardName":"甘孜网络发令","directory":"gz"},
+    {"definitionId":5489,"projectKey":"yibin-network-command","standardName":"宜宾网络发令","directory":"yb"},
+    {"definitionId":7096,"projectKey":"luzhou-network-command","standardName":"泸州网络发令","directory":"lz"},
+    {"definitionId":7945,"projectKey":"suining-network-command","standardName":"遂宁网络发令","directory":"sn"}
   ]
 }

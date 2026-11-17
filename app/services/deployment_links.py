@@ -57,13 +57,14 @@ def services_for_result(result):
     try:definition_id=int(result.get('definitionId',0));build_id=int(result.get('buildId',0))
     except (ValueError,TypeError):return []
     if build_id!=identity[1]:return []
+    server14 = server14_services(result, identity)
     definition=next((p for p in registry()['pipelines'] if p['definitionId']==definition_id and p['tfsProject'].casefold()==identity[0]),None)
-    if not definition or str(result.get('tfsProject') or identity[0]).casefold()!=identity[0]:return []
+    if not definition or str(result.get('tfsProject') or identity[0]).casefold()!=identity[0]:return server14
     candidates=[];checked=registry()['checkedAt']
     audit=result.get('deploymentAudit')
     if isinstance(audit,dict):
         # Fresh explicit negative/manual/failed audit overrides the dated fallback.
-        if audit.get('status')!='linked-releases-found':return []
+        if audit.get('status')!='linked-releases-found':return server14
         checked=audit.get('checkedAt') or checked
         for release in audit.get('releases') or []:
             if not isinstance(release,dict):continue
@@ -85,11 +86,41 @@ def services_for_result(result):
             'audit_checked_at':checked,'port_verification':verification,'deployment_status':'not_monitored',
             'readiness_status':'not_checked','notice':NOTICE,
             'warning':'登记时仅核对到配置，未观察到应用端口监听。' if verification=='configuration-only-not-listening' else ''})
-    return list({(item['url'],item['release_definition_id']):item for item in links}.values())
+    return server14 + list({(item['url'],item['release_definition_id']):item for item in links}.values())
+
+
+def server14_services(result, identity):
+    definition = next((p for p in registry().get('server14Projects', [])
+                       if p['definitionId'] == result.get('definitionId')), None)
+    if not definition or identity[0] != 'dcs' or str(result.get('tfsProject') or 'DCS').casefold() != 'dcs':
+        return []
+    deployment = _object(result.get('deployment14'))
+    if not deployment.get('eligible') or deployment.get('status') not in {'deployed', 'already-current'}:
+        return []
+    url = safe_url(deployment.get('applicationUrl'))
+    if not url or urlsplit(url).hostname != '192.168.101.14':
+        return []
+    if deployment.get('directory') != definition['directory']:
+        return []
+    if deployment.get('buildId') is not None and deployment['buildId'] != result.get('buildId'):
+        return []
+    runtime = _object(deployment.get('runtime'))
+    ready = runtime.get('health') == 'healthy' and runtime.get('httpStatus') in {200, 302}
+    auth = safe_url(deployment.get('authUrl'))
+    if auth and urlsplit(auth).hostname != '192.168.101.14':
+        auth = ''
+    return [{'project_key': definition['projectKey'], 'project_name': definition['standardName'],
+             'url': url, 'auth_url': auth, 'environment': '14 环境',
+             'build_id': result['buildId'], 'definition_id': result['definitionId'],
+             'release_url': safe_url(result.get('resultsUrl')), 'deployment_status': deployment['status'],
+             'readiness_status': 'verified' if ready else 'not_checked',
+             'audit_checked_at': runtime.get('startedAt', ''),
+             'notice': '14 环境自动部署完成，发布时服务健康与 HTTP 入口已核验。' if ready else '14 环境自动部署完成，服务就绪状态请以实际访问为准。'}]
 
 
 def enrich_result(result):
-    return {**result,'autoDeploymentServices':services_for_result(result),'deploymentMonitoring':'not-included-in-build-monitoring'}
+    return {**result,'autoDeploymentServices':services_for_result(result),
+            'deploymentMonitoring':result.get('deploymentMonitoring','not-included-in-build-monitoring')}
 
 
 def services_for_request(detail):
@@ -111,7 +142,8 @@ def services_for_request(detail):
         identity=_build_identity(result.get('artifactsUrl',''))
         if identity not in evidence:continue
         for service in services_for_result(result):
-            definition=next(p for p in registry()['pipelines'] if p['definitionId']==service['definition_id'])
+            definition=next(p for p in [*registry()['pipelines'], *registry().get('server14Projects', [])]
+                            if p['definitionId']==service['definition_id'])
             key=detail.get('project_key') or policy.get('project_key')
             if key:
                 if key!=definition['projectKey']:continue
