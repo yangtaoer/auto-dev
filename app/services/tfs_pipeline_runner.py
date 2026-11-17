@@ -375,6 +375,11 @@ def attach_deployment14(result, project, plan, client, completed, args):
     if build_result_exit_code(result) != 0:
         return
     try:
+        try:
+            from .pipeline_bridge import install_deployment_worker
+        except ImportError:
+            from pipeline_bridge import install_deployment_worker
+        install_deployment_worker(Path(__file__).resolve().parents[2])
         from netorder_14 import deploy_completed
         # Plan fields use expectedArtifact; preserve the catalog's artifact contract.
         pipeline = dict(plan, artifactName=plan.get("expectedArtifact"))

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import tempfile
 
 MARKER = "# AutoDev versioned TFS pipeline bridge"
 BRIDGE = MARKER + '''
@@ -33,6 +34,7 @@ def install_pipeline_bridge(project_root: Path, skill_root: Path | None = None) 
     runner = project_root / "app/services/tfs_pipeline_runner.py"
     if not script.is_file() or not runner.is_file():
         return False
+    install_deployment_worker(project_root, skill)
     original = script.read_bytes()
     pointer = script.with_name("autodev-runner.json")
     expected = json.dumps({"runner": str(runner.resolve())}, ensure_ascii=False, indent=2) + "\n"
@@ -80,3 +82,26 @@ def install_pipeline_bridge(project_root: Path, skill_root: Path | None = None) 
             temporary.write_text(json.dumps(catalog, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             temporary.replace(catalog_path)
     return True
+
+
+def install_deployment_worker(project_root: Path, skill_root: Path | None = None) -> None:
+    skill = skill_root or Path.home() / ".codex/skills/tfs-run-pipeline"
+    source = project_root / "app/services/netorder_14_remote.py"
+    target = skill / "scripts/netorder_14_remote.py"
+    if not source.is_file() or not target.is_file():
+        return
+    expected, original = source.read_bytes(), target.read_bytes()
+    if original == expected:
+        return
+    backup = target.with_name("netorder_14_remote.before-autodev-" + hashlib.sha256(original).hexdigest()[:12] + ".py")
+    if backup.exists() and backup.read_bytes() != original:
+        raise RuntimeError("部署运行程序备份不一致，未覆盖技能部署程序")
+    if not backup.exists():
+        backup.write_bytes(original)
+    with tempfile.NamedTemporaryFile(dir=target.parent, prefix=target.stem + "-", suffix=".pending", delete=False) as stream:
+        stream.write(expected)
+    temporary = Path(stream.name)
+    try:
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)

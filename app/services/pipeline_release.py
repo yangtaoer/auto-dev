@@ -147,17 +147,27 @@ class TfsPipelineReleaseService:
         if completed.returncode:
             result = self._delivery_result(payload) if payload else {}
             diagnostics = (completed.stderr or "").strip()
-            if result and not self._is_transient_failure(diagnostics):
+            deployment = result.get("deployment14") or {}
+            deployment_failure = deployment.get("eligible") and deployment.get("status") not in {"deployed", "already-current"}
+            if result.get("result") != "succeeded" and not deployment_failure and not self._is_transient_failure(diagnostics):
                 diagnostics = "\n".join(
                     item for item in (diagnostics, self._build_failure_diagnostics(result)) if item
                 )
-            reason = self._diagnostic_summary(
-                diagnostics or completed.stdout or "未知错误"
-            )
+            if deployment_failure:
+                details = ["部署失败（" + str(deployment.get("status") or "unknown") + "）",
+                           str(deployment.get("reason") or "未返回部署原因")]
+                if deployment.get("rollbackError"):
+                    details.append("回滚失败：" + str(deployment["rollbackError"]))
+                reason = "；".join(details)
+                diagnostics = "\n".join(item for item in (diagnostics, reason) if item)
+            else:
+                reason = self._diagnostic_summary(
+                    diagnostics or completed.stdout or "未知错误"
+                )
             build_label = f"Build #{result['buildId']}" if result.get("buildId") else "流水线"
             raise TfsPipelineReleaseError(
                 f"自动发版失败：{build_label}；{reason}",
-                transient=self._is_transient_failure(diagnostics),
+                transient=not deployment_failure and self._is_transient_failure(diagnostics),
                 result=result,
                 diagnostics=diagnostics,
             )
