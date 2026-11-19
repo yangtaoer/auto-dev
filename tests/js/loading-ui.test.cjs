@@ -81,12 +81,14 @@ function deferred() {let resolve, reject; const promise = new Promise((a,b) => {
 function detailHarness() {
   const requests = [], rendered = [], cancelled = [], loaders = [];
   const state = {selectedRequest:'first'};
+  const content={scrollTop:0,querySelector:()=>null};
+  const drawer={querySelector:key=>key==='#detail-content'?content:null,querySelectorAll:()=>[]};
   const context = vm.createContext({state, console, LoadingUI:{
     begin() {const loader={fail(error){loader.error=error.message;}};loaders.push(loader);return loader;}, cancel: value=>cancelled.push(value),
-  },document:{querySelector:()=>({scrollTop:0,querySelectorAll:()=>[]}),activeElement:null},api:()=>{const request=deferred();requests.push(request);return request.promise;},renderDetail:d=>rendered.push(d.id),requestAnimationFrame:fn=>fn(),openDetail:()=>{}});
+  },document:{querySelector:key=>key==='#detail-drawer'?drawer:null,activeElement:null},api:()=>{const request=deferred();requests.push(request);return request.promise;},renderDetail:d=>rendered.push(d.id),requestAnimationFrame:fn=>fn(),openDetail:()=>{}});
   const source = read('app.js');
   vm.runInContext('let detailGeneration=0,detailPending=false;'+source.slice(source.indexOf('async function refreshDetail('),source.indexOf('function renderAnalysisPanel('))+';globalThis.refreshDetail=refreshDetail;',context);
-  return {context,state,requests,rendered,cancelled,loaders};
+  return {context,state,requests,rendered,cancelled,loaders,content};
 }
 
 test('task detail polling does not compete with an in-flight initial read', async () => {
@@ -124,12 +126,14 @@ test('task polling keeps typed supplementary answers and restores their text sel
   const ui=detailHarness(); let focused=false;
   const original={dataset:{id:'choice-2'},value:'保留这段尚未提交的说明',selectionStart:3,selectionEnd:7,scrollTop:18,matches:selector=>selector==='.supplement-answer'};
   const replacement={value:'server value',focus(){focused=true;},setSelectionRange(start,end){this.range=[start,end];}};
-  const drawer={scrollTop:72,querySelectorAll:()=>[original],querySelector:()=>replacement};
+  ui.content.scrollTop=72;
+  ui.context.renderDetail=()=>{ui.content.scrollTop=0;};
+  const drawer={querySelectorAll:()=>[original],querySelector:key=>key==='#detail-content'?ui.content:replacement};
   ui.context.CSS={escape:value=>value};
   ui.context.document={activeElement:original,querySelector:selector=>selector==='#detail-drawer'?drawer:null};
   const silent=ui.context.refreshDetail('first',true);ui.requests[0].resolve({request:{id:'first'}});await silent;
   assert.equal(replacement.value,original.value);assert.equal(replacement.scrollTop,18);
-  assert.deepEqual(replacement.range,[3,7]);assert.equal(focused,true);assert.equal(drawer.scrollTop,72);
+  assert.deepEqual(replacement.range,[3,7]);assert.equal(focused,true);assert.equal(ui.content.scrollTop,72);
 });
 
 test('refreshing filter choices does not discard unapplied project and date drafts', () => {
@@ -145,7 +149,8 @@ test('task background refresh restores follow-up composer focus and selection', 
   const ui=detailHarness();let focused=false;
   const original={id:'followup-question',value:'仍在输入',selectionStart:1,selectionEnd:3,scrollTop:9};
   const replacement={value:'仍在输入',focus(){focused=true;},setSelectionRange(start,end){this.range=[start,end];}};
-  const drawer={scrollTop:0,querySelectorAll:()=>[],querySelector:key=>key==='#followup-question'?replacement:null};
+  const controls={'#detail-content':ui.content,'#followup-question':replacement};
+  const drawer={querySelectorAll:()=>[],querySelector:key=>controls[key]||null};
   ui.context.document={activeElement:original,querySelector:key=>key==='#detail-drawer'?drawer:null};
   const refresh=ui.context.refreshDetail('first',true);ui.requests[0].resolve({request:{id:'first'}});await refresh;
   assert.equal(focused,true);assert.deepEqual(replacement.range,[1,3]);assert.equal(replacement.scrollTop,9);

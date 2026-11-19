@@ -1,5 +1,7 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
 const workflow = require('../../app/static/task-workflow.js');
 
 const review = {status:'waiting_merge', current_step:'submit', delivery_mode:'product_manual_review',
@@ -43,4 +45,21 @@ test('analysis omits the code delivery stages, and routing only exposes intake',
     ['intake','requirement','development','delivery','acceptance']);
   const intake = {record_type:'intake',status:'waiting_runner',runner_online:false};
   assert.deepEqual(workflow.stages(intake).map(node=>[node.id,node.state]),[['intake','waiting']]);
+});
+
+test('rollback is a header action for eligible tasks and keeps the existing permission and busy checks', () => {
+  const context = {window:{}, escapeHtml:String, isAnalysisTask:detail=>detail.task_type==='analysis'};
+  vm.runInNewContext(fs.readFileSync('app/static/task-actions.js','utf8'),context);
+  const actions = context.window.TaskActions;
+  const delivered = {id:'task', status:'delivered', repository_states:[{changed_files:['a.js'],commit_hash:'123456'}]};
+  assert.match(actions.render(delivered).rollback,/data-task-action="rollback"/);
+  assert.equal(actions.render(delivered).menu,'');
+  assert.equal(actions.render({...delivered,can_manage_request:false}).rollback,'');
+  assert.equal(actions.render({...delivered,task_type:'analysis'}).rollback,'');
+  assert.equal(actions.render({...delivered,repository_states:[]}).rollback,'');
+  const running = actions.render({...delivered,status:'developing'});
+  assert.equal(running.rollback,'');
+  assert.match(running.menu,/data-task-action="cancel".*data-task-action="restart"/);
+  assert.match(actions.render({...delivered,controls:[{action:'restart',status:'pending'}]}).rollback,/disabled/);
+  assert.equal(actions.render({...delivered,controls:[{action:'rollback',status:'completed'}]}).rollback,'');
 });

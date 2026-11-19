@@ -570,12 +570,14 @@ async function refreshDetail(id,silent=false){
   if(silent&&detailPending)return;
   const generation=++detailGeneration;detailPending=true;
   const loader=silent?null:LoadingUI.begin('#detail-content',{kind:'detail',label:'正在打开任务详情'});
-  const drawer=document.querySelector('#detail-drawer'),eventList=document.querySelector('#detail-content .event-list');
-  const drawerScroll=silent?drawer.scrollTop:0,eventScroll=silent&&eventList?eventList.scrollTop:0;
+  const drawer=document.querySelector('#detail-drawer'),content=drawer.querySelector('#detail-content');
+  const eventList=content.querySelector('.event-list');
+  const contentScroll=silent?content.scrollTop:0,eventScroll=silent&&eventList?eventList.scrollTop:0;
   try{
     const d=(await api(`/api/requests/${id}`)).request;if(state.selectedRequest!==id||generation!==detailGeneration)return;
     const active=document.activeElement,continuationFocused=silent&&active?.id==='continuation-prompt';
     const focusedTab=silent&&active?.dataset?.taskTab;
+    const focusedAction=silent&&active?.dataset?.taskAction;
     const focusedDisclosure=silent&&active?.matches?.('details[data-task-disclosure] > summary')&&active.parentElement.dataset.taskDisclosure;
     const learningFocused=silent&&active?.closest?.('.request-learning-panel');
     const supplementFocused=silent&&active?.matches?.('.supplement-answer');
@@ -583,15 +585,17 @@ async function refreshDetail(id,silent=false){
     const supplementDrafts=silent?[...drawer.querySelectorAll('#supplement-form .supplement-answer')].map(input=>({id:input.dataset.id,value:input.value})):[];
     const selectionStart=continuationFocused||learningFocused||supplementFocused||followupFocused?active.selectionStart:null,selectionEnd=continuationFocused||learningFocused||supplementFocused||followupFocused?active.selectionEnd:null,textareaScroll=continuationFocused||learningFocused||supplementFocused||followupFocused?active.scrollTop:0;
     renderDetail(d);
+    if(!silent)content.scrollTop=0;
     supplementDrafts.forEach(draft=>{const input=drawer.querySelector(`.supplement-answer[data-id="${CSS.escape(draft.id)}"]`);if(input)input.value=draft.value;});
     LoadingUI.cancel('#detail-content');
     if(silent)requestAnimationFrame(()=>{
       if(generation!==detailGeneration||state.selectedRequest!==id)return;
-      drawer.scrollTop=drawerScroll;
+      content.scrollTop=contentScroll;
       const refreshedEvents=document.querySelector('#detail-content .event-list');if(refreshedEvents)refreshedEvents.scrollTop=eventScroll;
       const prompt=continuationFocused?document.querySelector('#continuation-prompt'):followupFocused?drawer.querySelector('#followup-question'):supplementFocused?drawer.querySelector(`.supplement-answer[data-id="${CSS.escape(active.dataset.id)}"]`):learningFocused&&active.isConnected?active:null;
       if(prompt){prompt.focus({preventScroll:true});if(selectionStart!==null&&typeof prompt.setSelectionRange==='function')prompt.setSelectionRange(selectionStart,selectionEnd);prompt.scrollTop=textareaScroll;}
       else if(focusedTab)document.querySelector(`[data-task-tab="${focusedTab}"]`)?.focus({preventScroll:true});
+      else if(focusedAction)drawer.querySelector(`[data-task-action="${CSS.escape(focusedAction)}"]`)?.focus({preventScroll:true});
       else if(focusedDisclosure)drawer.querySelector(`[data-task-disclosure="${CSS.escape(focusedDisclosure)}"] > summary`)?.focus({preventScroll:true});
     });
   }catch(e){if(!silent&&generation===detailGeneration&&state.selectedRequest===id)loader.fail(e,()=>openDetail(id));}
@@ -680,6 +684,47 @@ function renderCompletionItems(detail) {
   }).join('')}</ol>`;
 }
 
+const TASK_BRIEF_LIMIT = 120;
+
+function renderTaskBrief(detail, note, {analysis, isDelivered, isJoint, current, artifactCount, services}) {
+  const status = detail.display_status || detail.status;
+  const attention = ['failed','rejected','waiting_approval','waiting_input'].includes(status);
+  const title = isDelivered
+    ? (analysis ? '分析结论' : isJoint ? '当前项目交付摘要' : '交付摘要')
+    : attention ? '当前待处理' : '任务进展';
+  const fact = (label, value, phase, expand = '') => `<button type="button" class="workflow-brief-fact"
+    data-task-switch="${phase}" ${expand?`data-task-expand="${expand}"`:''}>
+    <span><small>${escapeHtml(label)}</small><b>${escapeHtml(value)}</b></span>${editorialIcon('arrow-right')}
+  </button>`;
+  const changes = TaskWorkflow.counts(detail);
+  const verified = services.filter(service=>service.readiness_status==='verified').length;
+  const deploymentLabel = verified&&verified===services.length
+    ?`${verified} 个已验证`
+    :`${services.length} 个入口${verified?` · ${verified} 个已验证`:''}`;
+  const acceptance = detail.acceptance_progress || {};
+  const verdict = TaskWorkflow.ACCEPTANCE[acceptance.status] || '待验收';
+  const acceptanceCount = acceptance.summary || {};
+  const completedChecks = acceptanceCount.passed ? ` · ${acceptanceCount.passed}/${acceptanceCount.total} 项` : '';
+  const facts = [
+    !isDelivered&&current?fact('当前节点',current.label,current.id):'',
+    changes.files?fact('实际改动',`${changes.repos} 个仓库 · ${changes.files} 个文件`,'development','changed-files'):'',
+    artifactCount?fact(analysis?'分析报告':'交付产物',`${artifactCount} 项可查看`,'delivery'):'',
+    services.length?fact('部署入口',deploymentLabel,'deploy'):'',
+    isDelivered?fact('人工验收',verdict+completedChecks,'acceptance'):'',
+  ].join('');
+  return `<section class="workflow-brief" data-tone="${isDelivered?'delivered':attention?'attention':'progress'}" aria-labelledby="task-brief-title">
+    <div class="workflow-brief-main">
+      ${isDelivered?TaskWorkflow.asset('delivery-parcel',42):''}
+      <div class="workflow-brief-copy">
+        <h3 id="task-brief-title">${title}</h3>
+        ${note?`<p>${escapeHtml(TaskWorkflow.concise(note,TASK_BRIEF_LIMIT))}</p>`:''}
+        ${note.length>TASK_BRIEF_LIMIT?`<button class="text-button" type="button" data-task-switch="overview" data-task-expand="full-summary">查看完整总结 →</button>`:''}
+      </div>
+    </div>
+    ${facts?`<div class="workflow-brief-facts">${facts}</div>`:''}
+  </section>`;
+}
+
 let displayedDetail = null;
 function loadTaskStage(stage) {
   const detail = displayedDetail;
@@ -702,9 +747,10 @@ function renderDetail(d){
   const phases=TaskWorkflow.stages(d), selected=TaskWorkflow.currentStage(d);
   const events=d.task_trace?.milestones||{}, release=d.task_trace?.release||{};
   const repositories=Array.isArray(d.repository_states)?d.repository_states:[];
-  const changes=TaskWorkflow.counts(d), verdict=TaskWorkflow.ACCEPTANCE[d.acceptance_progress?.status]||'待验收';
   const deliveryArtifacts=visibleArtifacts(d.artifacts,d.delivery_mode,d.delivery_options);
-  const deploymentServices=window.AutoDevDeploymentLinks?.section(d.deployment_services)||'';
+  const services=(Array.isArray(d.deployment_services)?d.deployment_services:[])
+    .filter(service=>window.AutoDevDeploymentLinks?.safeUrl(service?.url));
+  const deploymentServices=window.AutoDevDeploymentLinks?.section(services)||'';
   const reportSync=analysis&&d.current_step==='deliver'&&deliveryArtifacts.some(isAnalysisReport)&&['failed','waiting_analysis_sync'].includes(d.status);
   const retry=d.can_manage_request!==false&&!isJoint&&(d.status==='failed'||reportSync)?`<button type="button" class="btn btn-secondary" id="retry-run">${reportSync?'重试报告同步':'重新发起'}</button>`:'';
   const continuation=USER.role==='admin'&&(d.status==='waiting_approval'||d.can_continue_in_place)?renderContinuationPanel(d):'';
@@ -714,7 +760,9 @@ function renderDetail(d){
   const actions=TaskActions.render(d);
   const live=d.status==='developing'?'<button type="button" class="btn btn-secondary" id="open-devcore-stream">打开实时会话 ↗</button>':'';
   const simulate=USER.role==='admin'&&d.status==='waiting_merge'&&d.policy_snapshot?.simulation_mode?'<button type="button" class="btn btn-secondary" id="simulate-merge">模拟 PR 已合并</button>':'';
-  const latest=TaskWorkflow.summary(d);
+  const actionNeeded=d.status==='waiting_approval'?d.blocker_summary?.reason||d.error_message:
+    ['failed','rejected','waiting_input'].includes(d.status)?d.error_message:'';
+  const latest=engineText(actionNeeded||TaskWorkflow.summary(d)||d.current_activity||events['delivery.completed']?.message||'').trim();
   const completion=renderCompletionItems(d);
   const techEvents=(d.events||[]).filter(event=>!['devcore.reply','devcore.summary','workspace.plan_recorded'].includes(event.event_type));
   const historyMarkup=techEvents.map(e=>`<article class="event"><b>${escapeHtml(engineText(e.event_type))} · ${fmt(e.created_at)}</b><p>${escapeHtml(engineText(e.message))}</p></article>`).join('');
@@ -735,21 +783,21 @@ function renderDetail(d){
   const joint=isJoint?`<section class="workflow-panel joint-delivery-panel"><header><h3>联合${analysis?'分析':'交付'} · ${jointChildren.length} 个项目</h3>
     <span class="status-dot" data-status="${escapeHtml(jointStatus)}">${escapeHtml((analysis?ANALYSIS_STATUS:STATUS)[jointStatus]||'处理中')}</span></header>
     <div class="workflow-projects">${jointChildren.map(child=>`<button type="button" class="btn btn-secondary" aria-pressed="${child.id===d.id}" data-joint-child-id="${escapeHtml(child.id)}">${escapeHtml(child.project_name)} · ${escapeHtml(child.status_label)}</button>`).join('')}</div></section>`:'';
-  const head=`<div class="detail-head workflow-detail-head"><div class="detail-caption">任务详情 ${actions?`<details class="workflow-actions" data-task-disclosure="actions"><summary>更多操作</summary><div>${actions}</div></details>`:''}</div>
-    <h2>${tfsLink(d,`#${d.work_item_id}`)} <span>${escapeHtml(d.title||'读取需求中')}</span><i class="status-dot" data-status="${escapeHtml(d.status)}">${escapeHtml(d.status_label)}</i>${isDelivered?`<em class="workflow-verdict">${escapeHtml(verdict)}</em>`:''}</h2>
-    <div class="detail-meta"><span>${editorialIcon('cube')}${escapeHtml(d.project_name)}</span><span>${escapeHtml(taskTypeLabel(d))} · ${escapeHtml(taskModeLabel(d))}</span><span>${fmt(d.completed_at||d.created_at)} · ${fmtDuration(requestDuration(d))}</span></div></div>`;
-
-  const shortcut=(phase,label,expand='')=>`<button type="button" class="workflow-shortcut" data-task-switch="${phase}" ${expand?`data-task-expand="${expand}"`:''}>${escapeHtml(label)} ${editorialIcon('arrow-right')}</button>`;
-  const shortcuts=[
-    changes.files?shortcut('development',`实际改动 ${changes.repos} 仓库 · ${changes.files} 文件`,'changed-files'):'',
-    deploymentServices?shortcut('deploy',`查看 ${d.deployment_services.length} 个部署入口`):'',
-    deliveryArtifacts.length?shortcut('delivery',`查看 ${deliveryArtifacts.length} 项交付产物`):'',
-    isDelivered?shortcut('acceptance','查看验收反馈'):'',
-  ].join('');
-  const overview=`<section class="workflow-panel workflow-result"><header><h3>${isDelivered?'需求完成记录':'任务进展'}</h3>${isDelivered?TaskWorkflow.asset('delivery-parcel',54):''}</header>
-    ${latest?`<p class="workflow-result-note">${escapeHtml(engineText(latest))}</p>`:''}
-    ${shortcuts?`<div class="workflow-shortcut-list">${shortcuts}</div>`:''}
-    ${completion}</section>${joint}`;
+  const head=`<header class="detail-head workflow-detail-head">
+    <div class="detail-caption"><span>任务详情</span>
+      ${actions.rollback||actions.menu?`<div class="workflow-header-actions">${actions.rollback}
+        ${actions.menu?`<details class="workflow-actions" data-task-disclosure="actions"><summary>更多操作</summary><div>${actions.menu}</div></details>`:''}
+      </div>`:''}
+    </div>
+    <h2>${tfsLink(d,`#${d.work_item_id}`)} <span>${escapeHtml(d.title||'读取需求中')}</span><i class="status-dot" data-status="${escapeHtml(d.display_status||d.status)}">${escapeHtml(d.status_label)}</i></h2>
+    <div class="detail-meta"><span>${editorialIcon('cube')}${escapeHtml(d.project_name)}</span><span>${escapeHtml(taskTypeLabel(d))} · ${escapeHtml(taskModeLabel(d))}</span><span>${d.completed_at?'完成于':'创建于'} ${fmt(d.completed_at||d.created_at)} · ${fmtDuration(requestDuration(d))}</span></div>
+  </header>`;
+  const brief=renderTaskBrief(d,latest,{
+    analysis,isDelivered,isJoint,services,artifactCount:deliveryArtifacts.length,current:phases.find(node=>node.id===selected),
+  });
+  const fullSummary=latest.length>TASK_BRIEF_LIMIT
+    ?taskDisclosure('完整总结',`<p class="workflow-result-note">${escapeHtml(latest)}</p>`,'full-summary'):'';
+  const overview=fullSummary+(completion?`<section class="workflow-panel"><h3>逐项完成与验证</h3>${completion}</section>`:'')+joint;
 
   const intake=taskReceipt(events['tfs.validated'])+taskReceipt(events['tfs.attachments_partial']||events['tfs.attachments_prepared'])+
     taskDisclosure('项目归类依据',routingEvidence?`<ul>${routingEvidence}</ul>`:'','routing-evidence')+
@@ -778,9 +826,10 @@ function renderDetail(d){
     const context=current?`${blocker}${failure}${supplement}${continuation}${retry}`:'';
     return [node.id,node.label,`<div class="workflow-content"><div class="workflow-stage-head"><h3>${escapeHtml(node.label)}</h3><span data-phase="${node.state}">${TaskWorkflow.STATES[node.state]}${node.note?` · ${escapeHtml(node.note)}`:''}</span></div>${context}${maps[node.id]||''}</div>`];
   });
-  const panels=[['overview','完成轨迹',overview],...responsive];
+  const panels=overview?[['overview','完成轨迹',`<div class="workflow-content">${overview}</div>`],...responsive]:responsive;
   if(d.can_followup||isDelivered)panels.push(['followup','需求追问','<div id="task-followup-mount"></div>']);
-  document.querySelector('#detail-content').innerHTML=TaskDialog.render(d.id,head,panels,phases,isDelivered?'overview':selected);
+  const initialPanel=isDelivered?(overview?'overview':'delivery'):selected;
+  document.querySelector('#detail-content').innerHTML=TaskDialog.render(d.id,head,panels,phases,initialPanel,brief);
   TaskDialog.bind();
   TaskActions.bind(d);
   document.querySelectorAll('[data-task-switch]').forEach(button=>button.onclick=()=>{

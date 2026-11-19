@@ -9,21 +9,22 @@ window.TaskActions = (() => {
     const rolled=controls.some(c=>c.action==='rollback');
     const canRollback=d.status==='delivered'&&!isAnalysisTask(d)&&!rolled&&(d.repository_states||[]).some(s=>s.changed_files?.length&&(s.merge_commit||s.commit_hash));
     const button=(action,label)=>`<button type="button" class="btn ${action==='rollback'?'btn-ghost rollback-action':'btn-secondary'}" data-task-action="${action}" ${busy||pending.has(d.id)?'disabled':''}>${label||names[action]}</button>`;
-    const actions=manager?`${running?button('cancel',d.joint_group_id?'取消联合任务':'取消任务'):''}${running||d.status==='cancelled'?button('restart',d.joint_group_id?'重新开始当前项目':'重新开始'):''}${canRollback?button('rollback'):''}`:'';
+    const actions=manager?`${running?button('cancel',d.joint_group_id?'取消联合任务':'取消任务'):''}${running||d.status==='cancelled'?button('restart',d.joint_group_id?'重新开始当前项目':'重新开始'):''}`:'';
     const records=controls.slice(0,4).map(c=>{
       const result=c.result||{};
       return `<article class="task-control-record" data-control-status="${escapeHtml(c.status)}"><header><b>${names[c.action]||'任务操作'}</b><span>${status[c.status]||c.status}</span></header><p>${escapeHtml(c.message||'')}</p>${result.new_request_id?`<button class="text-button" data-restarted-request="${escapeHtml(result.new_request_id)}">打开新任务 ↗</button>`:''}${(result.repositories||[]).map(r=>`<div class="rollback-repo"><b>${escapeHtml(r.name||'仓库')}</b><code>${escapeHtml((r.revert_commit||'').slice(0,12))}</code><span>${escapeHtml(r.status==='completed'?'目标分支已回退':r.status==='waiting_merge'?'等待合并':'已准备')}</span>${r.pr_url&&/^https?:\/\//i.test(r.pr_url)?`<a href="${escapeHtml(r.pr_url)}" target="_blank" rel="noopener">查看回退 PR ↗</a>`:''}</div>`).join('')}</article>`;
     }).join('');
-    return actions||records?`<section class="task-controls">${actions?`<div class="detail-actions">${actions}</div>`:''}${records}</section>`:'';
+    return {
+      rollback: manager&&canRollback?button('rollback'):'',
+      menu: actions||records?`<section class="task-controls">${actions?`<div class="detail-actions">${actions}</div>`:''}${records}</section>`:'',
+    };
   }
   function bind(d) {
     document.querySelectorAll('[data-restarted-request]').forEach(b=>b.onclick=()=>openDetail(b.dataset.restartedRequest));
     document.querySelectorAll('[data-task-action]').forEach(button=>button.onclick=()=>{
       const menu=button.closest('.workflow-actions');
-      if(menu){
-        menu.open=false;
-        menu.querySelector('summary').focus({preventScroll:true});
-      }
+      if(menu)menu.open=false;
+      (menu?.querySelector('summary')||button).focus({preventScroll:true});
       confirmAction(d,button.dataset.taskAction);
     });
   }

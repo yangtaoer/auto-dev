@@ -2,8 +2,9 @@
 body.task-dialog-open { overflow: hidden; }
 #detail-backdrop { background: rgba(23,24,19,.58); backdrop-filter: blur(3px); }
 #detail-drawer {
-  inset: 3vh 3vw; width: auto; max-width: 1600px; margin: auto;
-  height: 94vh; height: 94dvh; padding: 0; overflow: hidden;
+  --task-gutter: clamp(16px, 2vw, 30px);
+  inset: clamp(8px, 1.5dvh, 16px) clamp(10px, 1.25vw, 24px);
+  width: auto; max-width: none; height: auto; margin: 0; padding: 0; overflow: hidden;
   border: 2px solid #171813; border-top: 5px solid #ee5025;
   background: #f8f4ea; box-shadow: 10px 10px 0 rgba(23,24,19,.6);
   transform: translateY(12px); opacity: 0; visibility: hidden;
@@ -138,7 +139,7 @@ body.task-dialog-open { overflow: hidden; }
   .task-reply { padding-left: 10px; }
 }
 @media(max-width:700px) {
-  #detail-drawer { inset: 0; height: 100vh; height: 100dvh; border: 0; border-top: 4px solid #ee5025; box-shadow: none; }
+  #detail-drawer { --task-gutter: 12px; inset: 0; border: 0; border-top: 4px solid #ee5025; border-radius: 0; box-shadow: none; }
   #detail-drawer .detail-head { padding: 18px 52px 16px 18px; }
   #detail-drawer .modal-close { top: 10px; right: 10px; }
   .task-tabs { padding: 0 8px; }

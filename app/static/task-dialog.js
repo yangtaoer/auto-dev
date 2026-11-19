@@ -54,7 +54,7 @@ window.TaskDialog = (() => {
     });
     document.dispatchEvent(new CustomEvent('autodev:task-stage', {detail:{requestId, stage:id}}));
   }
-  function render(id, head, panels, nodes = [], defaultPanel = 'overview') {
+  function render(id, head, panels, nodes = [], defaultPanel = 'overview', brief = '') {
     rememberScroll();
     rememberSections();
     requestId = id;
@@ -75,7 +75,7 @@ window.TaskDialog = (() => {
       <div class="workflow-nav-head"><h3>任务流程</h3><div class="workflow-shortcuts">${shortcuts}</div></div>
       <div class="workflow-rail" style="--phase-count:${Math.max(1,nodes.length)}">${route}</div>
     </nav>`;
-    return `${head}${nav}<div class="task-tab-body">${panels.map(([key, , content]) => `<section class="task-tab-panel" id="task-panel-${key}" role="tabpanel" data-panel="${key}" aria-labelledby="task-tab-${key}" tabindex="0" ${key === selected ? '' : 'hidden'}>${content}</section>`).join('')}</div>`;
+    return `${head}${brief}${nav}<div class="task-tab-body">${panels.map(([key, , content]) => `<section class="task-tab-panel" id="task-panel-${key}" role="tabpanel" data-panel="${key}" aria-labelledby="task-tab-${key}" tabindex="0" ${key === selected ? '' : 'hidden'}>${content}</section>`).join('')}</div>`;
   }
   function bind() {
     dialog().querySelectorAll('[data-task-disclosure]').forEach(details => {
