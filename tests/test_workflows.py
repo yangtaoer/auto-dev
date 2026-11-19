@@ -1296,7 +1296,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(any(item["kind"] == "release_artifact" for item in completed["artifacts"]))
         self.assertNotIn("pull_request", {item["kind"] for item in completed["artifacts"]})
 
-    def test_sichuan_review_falls_back_to_product_review_when_pr_stays_active(self) -> None:
+    def test_sichuan_review_keeps_monitoring_an_active_pr_without_manual_fallback(self) -> None:
         detail = {
             "id": "sichuan-fallback-request",
             "status": "waiting_merge",
@@ -1351,32 +1351,29 @@ class WorkflowTests(unittest.TestCase):
                 return 1
 
         store = RecordingStore()
-        fallback_worker = Worker(store=store)
+        review_worker = Worker(store=store)
         pr_results = {
             301: {"id": 301, "status": "active", "merge_commit": ""},
             302: {"id": 302, "status": "completed", "merge_commit": "merged302"},
         }
         with patch("app.orchestrator.TfsClient") as tfs_client, patch.object(
-            fallback_worker, "_send_status_email"
+            review_worker, "_send_status_email"
         ) as send_email:
             tfs_client.return_value.get_pull_request.side_effect = (
                 lambda _repo_path, pr_id: pr_results[pr_id]
             )
-            fallback_worker.poll_merge(detail["id"])
-            fallback_worker.poll_merge(detail["id"])
+            review_worker.poll_merge(detail["id"])
+            review_worker.poll_merge(detail["id"])
 
-        send_email.assert_called_once_with(detail["id"], action_required=True)
+        send_email.assert_not_called()
         pending_state, completed_state = store.value["repository_states"]
-        self.assertEqual(pending_state["review_strategy"], "product_manual_review")
-        self.assertTrue(pending_state["manual_review_fallback_at"])
+        self.assertEqual(pending_state["status"], "waiting_merge")
+        self.assertNotIn("review_strategy", pending_state)
         self.assertEqual(completed_state["status"], "completed")
         self.assertEqual(completed_state["merge_commit"], "merged302")
         self.assertFalse(completed_state.get("manual_review_fallback_at"))
-        self.assertEqual(
-            len([event for event in store.events if event[0] == "pr.auto_complete_fallback"]),
-            1,
-        )
-        self.assertIn("已转产品审核", store.steps[0][2])
+        self.assertFalse(any(event[0] == "mail.action_required" for event in store.events))
+        self.assertIn("自动完成", store.steps[0][2])
 
     def test_sichuan_review_keeps_waiting_when_auto_complete_is_blocked_by_scan(self) -> None:
         detail = {

@@ -42,6 +42,7 @@ from .services.delivery import (
     run_command,
 )
 from .services.tfs import TfsClient, TfsConnectionError
+from .services import pr_validation_recovery
 from .services.analysis_sync import report_ready
 from .services.command_logs import bounded_log
 from .services.pipeline_release import TfsPipelineReleaseService
@@ -151,7 +152,10 @@ class Worker:
         waiting = self.store.next_waiting()
         if waiting:
             logger.info("检查 PR 合并状态 request_id=%s", waiting)
-            self._set_active(waiting, True)
+            with self._active_lock:
+                if waiting in self._active_request_ids:
+                    return True
+                self._active_request_ids.add(waiting)
             try:
                 self.poll_merge(waiting)
             finally:
@@ -919,17 +923,22 @@ class Worker:
                     }
                 ]
             tfs = TfsClient(project["tfs_collection_url"])
+            automatic_review = detail.get("delivery_mode") in SICHUAN_APPROVAL_DELIVERY_MODES
             completed: list[tuple[dict, dict]] = []
             pending: list[int] = []
-            pending_without_auto_complete: list[int] = []
             auto_complete_waiting: list[int] = []
+            validation_notes: list[str] = []
             for state in repository_states:
                 pr = tfs.get_pull_request(state["repository_path"], int(state["pr_id"]))
                 if pr["status"] == "abandoned":
                     raise RuntimeError(f"{state['name']} 的 PR #{state['pr_id']} 已被放弃，无法完成交付")
-                if pr["status"] == "completed":
+                if automatic_review:
+                    pr_validation_recovery.reconcile_pushed_repair(
+                        self, detail, repository_states, state, pr.get("source_commit"),
+                    )
+                if pr["status"] == "completed" and pr.get("merge_commit"):
                     state["status"] = "completed"
-                    state["merge_commit"] = pr.get("merge_commit") or ""
+                    state["merge_commit"] = pr["merge_commit"]
                     completed.append((state, pr))
                 else:
                     state["status"] = "waiting_merge"
@@ -938,25 +947,23 @@ class Worker:
                     state["auto_complete_enabled"] = auto_complete_enabled
                     state["merge_status"] = pr.get("merge_status") or ""
                     pending.append(pr_id)
-                    if auto_complete_enabled:
+                    if pr["status"] == "completed":
+                        validation_notes.append(f"PR #{pr_id} 已完成，正在等待 TFS 返回合并提交")
+                    elif automatic_review:
+                        note = pr_validation_recovery.maintain(self, detail, repository_states, state, pr, tfs)
+                        if note:
+                            validation_notes.append(note)
+                        elif not auto_complete_enabled:
+                            validation_notes.append(f"PR #{pr_id} 正在等待自动审核和自动完成")
+                        else:
+                            auto_complete_waiting.append(pr_id)
+                    elif auto_complete_enabled:
                         auto_complete_waiting.append(pr_id)
-                    else:
-                        pending_without_auto_complete.append(pr_id)
             if pending:
                 self.store.update_request(request_id, repository_states=repository_states)
-                if pending_without_auto_complete:
-                    self._fallback_auto_review_to_product_review(
-                        request_id,
-                        detail,
-                        repository_states,
-                        pending_without_auto_complete,
-                    )
                 if auto_complete_waiting:
                     waiting_numbers = "、".join(f"#{pr_id}" for pr_id in auto_complete_waiting)
-                    self.store.update_step(
-                        request_id,
-                        "deliver",
-                        "running",
+                    validation_notes.append(
                         f"PR {waiting_numbers} 已启用自动完成，正在等待代码扫描与合并策略通过",
                     )
                     if any(
@@ -972,9 +979,11 @@ class Worker:
                         self.store.add_event(
                             request_id,
                             "pr.auto_complete_waiting",
-                            f"PR {waiting_numbers} 已设置自动完成；代码扫描通过后将自动合并，不转入产品审核",
+                            f"PR {waiting_numbers} 已设置自动完成，通过所需检查后自动合并",
                             metadata={"pending_pr_ids": auto_complete_waiting},
                         )
+                if validation_notes:
+                    self.store.update_step(request_id, "deliver", "running", "。".join(validation_notes))
                 self.store.add_event(
                     request_id,
                     "pr.polled",
@@ -989,54 +998,6 @@ class Worker:
             else:
                 self.store.add_event(request_id, "pr.poll_failed", str(exc), level="warning")
                 self._schedule_next_poll(request_id, backoff=True)
-
-    def _fallback_auto_review_to_product_review(
-        self,
-        request_id: str,
-        detail: dict,
-        repository_states: list[dict],
-        pending_pr_ids: list[int],
-    ) -> bool:
-        """Notify project managers once when an approved PR did not auto-complete."""
-        if detail.get("delivery_mode") not in SICHUAN_APPROVAL_DELIVERY_MODES:
-            return False
-        pending_ids = {int(pr_id) for pr_id in pending_pr_ids}
-        pending_states = [
-            state
-            for state in repository_states
-            if state.get("pr_id") and int(state["pr_id"]) in pending_ids
-        ]
-        if not pending_states or any(state.get("manual_review_fallback_at") for state in pending_states):
-            return False
-
-        # The first merge poll is the explicit confirmation point. Auto-complete normally
-        # finishes before this poll; remaining active PRs now follow the product-review path.
-        self._send_status_email(request_id, action_required=True)
-        fallback_at = utc_now()
-        for state in pending_states:
-            state["manual_review_fallback_at"] = fallback_at
-            state["review_strategy"] = DeliveryMode.PRODUCT_MANUAL_REVIEW.value
-        self.store.update_request(request_id, repository_states=repository_states)
-        pr_numbers = "、".join(f"#{pr_id}" for pr_id in pending_pr_ids)
-        self.store.update_step(
-            request_id,
-            "deliver",
-            "running",
-            f"四川审核已通过，但 PR {pr_numbers} 未自动完成；已转产品审核并持续监控",
-        )
-        self.store.add_event(
-            request_id,
-            "pr.auto_complete_fallback",
-            f"四川审核后 PR {pr_numbers} 仍未自动合并，已按产品审核交付通知项目经理",
-            level="warning",
-            metadata={"pending_pr_ids": pending_pr_ids, "fallback_at": fallback_at},
-        )
-        self.store.add_event(
-            request_id,
-            "mail.action_required",
-            "已邮件通知项目经理安排产品部审核并合并未完成的 PR",
-        )
-        return True
 
     def _validate(self, detail: dict, project: dict) -> dict:
         if not project.get("enabled"):

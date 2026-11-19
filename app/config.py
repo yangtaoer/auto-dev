@@ -63,7 +63,7 @@ class Settings:
     ).resolve()
     runner_token: str = env_secret("AUTODEV_RUNNER_TOKEN")
     cloud_url: str = os.getenv("AUTODEV_CLOUD_URL", "").rstrip("/")
-    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "1.0-Beta.27").strip() or "1.0-Beta.27"
+    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "1.0-Beta.28").strip() or "1.0-Beta.28"
     runner_monitor_host: str = os.getenv("AUTODEV_RUNNER_MONITOR_HOST", "127.0.0.1").strip()
     runner_monitor_port: int = int(os.getenv("AUTODEV_RUNNER_MONITOR_PORT", "28766"))
     # Exclusive single-file limit; MB uses 1024**2 bytes (1 GB = 1024 MB here).
@@ -85,6 +85,7 @@ class Settings:
     tfs_reviewer_pat: str = env_secret("TFS_REVIEWER_PAT")
     tfs_reviewer_id: str = os.getenv("TFS_REVIEWER_ID", "")
     tfs_reviewer_name: str = os.getenv("TFS_REVIEWER_NAME", "四川审核人").strip()
+    tfs_sonar_url: str = os.getenv("TFS_SONAR_URL", "http://192.168.14.131:9000").strip().rstrip("/")
     tfs_user_alias: str = os.getenv("TFS_USER_ALIAS", "autodev")
     tfs_license_project: str = os.getenv("TFS_LICENSE_PROJECT", "泰豪软件产品发布中心").strip()
     tfs_license_assignee: str = os.getenv("TFS_LICENSE_ASSIGNEE", r"TELLHOW\zhoudanping").strip()

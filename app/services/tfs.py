@@ -665,8 +665,8 @@ class TfsClient:
             raise TfsError("TFS 未确认启用 PR 自动完成")
         return updated
 
-    def approve_pull_request(self, repo_path: str, pr_id: int) -> bool:
-        """Record a vote before enabling auto-complete. Return False for a PR already merged."""
+    def approve_pull_request(self, repo_path: str, pr_id: int, *, expected_source: str | None = None) -> bool:
+        """Ensure approval before auto-complete. Return False for a PR already merged."""
         repo = self.repository_info(repo_path)
         url = f"{self.base_url}/{quote(repo.project, safe='')}/_apis/git/repositories/{repo.id}/pullRequests/{pr_id}"
         pr_url = f"{url}?api-version=2.0"
@@ -676,22 +676,34 @@ class TfsClient:
             return False
         if status != "active":
             raise TfsError(f"PR #{pr_id} 状态为 {status or '未知'}，无法自动审核")
+        if expected_source and (pr.get("lastMergeSourceCommit") or {}).get("commitId") != expected_source:
+            raise TfsError(f"PR #{pr_id} 的源提交已变化，无法自动审核")
         if not settings.tfs_reviewer_pat or not settings.tfs_reviewer_id:
             raise TfsError("四川自动审核需要配置 TFS_REVIEWER_PAT 和 TFS_REVIEWER_ID")
-        try:
-            reviewer = self._request(
-                "PUT",
-                f"{url}/reviewers/{settings.tfs_reviewer_id}?api-version=2.0",
-                pat=settings.tfs_reviewer_pat,
-                json={"vote": 10},
-            )
-        except TfsPullRequestNotEditableError as exc:
-            self._completed_pull_request_after_edit_error(pr_url, exc)
-            return False
-        if reviewer.get("vote") != 10:
-            raise TfsError(f"TFS 未确认 PR #{pr_id} 的批准票")
-        self._enable_auto_complete(pr_url, pr)
+        if not self._reviewer_approved(pr):
+            try:
+                reviewer = self._request(
+                    "PUT",
+                    f"{url}/reviewers/{settings.tfs_reviewer_id}?api-version=2.0",
+                    pat=settings.tfs_reviewer_pat,
+                    json={"vote": 10},
+                )
+            except TfsPullRequestNotEditableError as exc:
+                self._completed_pull_request_after_edit_error(pr_url, exc)
+                return False
+            if reviewer.get("vote") != 10:
+                raise TfsError(f"TFS 未确认 PR #{pr_id} 的批准票")
+        if not pr.get("autoCompleteSetBy"):
+            self._enable_auto_complete(pr_url, pr)
         return True
+
+    @staticmethod
+    def _reviewer_approved(pr: dict) -> bool:
+        reviewer_id = settings.tfs_reviewer_id.casefold()
+        return bool(reviewer_id) and any(
+            str(reviewer.get("id") or "").casefold() == reviewer_id and reviewer.get("vote") == 10
+            for reviewer in pr.get("reviewers") or []
+        )
 
     def get_pull_request(self, repo_path: str, pr_id: int) -> dict:
         repo = self.repository_info(repo_path)
@@ -707,7 +719,11 @@ class TfsClient:
             "creation_date": data.get("creationDate"),
             "closed_date": data.get("closedDate"),
             "merge_commit": (data.get("lastMergeCommit") or {}).get("commitId"),
+            "source_commit": (data.get("lastMergeSourceCommit") or {}).get("commitId"),
             "merge_status": data.get("mergeStatus") or "",
+            "project": repo.project,
+            "project_id": (data.get("repository", {}).get("project") or {}).get("id") or getattr(repo, "project_id", ""),
+            "reviewer_approved": self._reviewer_approved(data),
             "auto_complete_enabled": bool(
                 auto_complete_set_by.get("id")
                 or auto_complete_set_by.get("uniqueName")
@@ -716,6 +732,49 @@ class TfsClient:
             "source_branch": data.get("sourceRefName", "").removeprefix("refs/heads/"),
             "target_branch": data.get("targetRefName", "").removeprefix("refs/heads/"),
         }
+
+    def pull_request_policies(self, pr: dict) -> list[dict]:
+        project = quote(pr["project"], safe="")
+        artifact_id = f"vstfs:///CodeReview/CodeReviewId/{pr['project_id']}/{int(pr['id'])}"
+        response = self._request(
+            "GET",
+            f"{self.base_url}/{project}/_apis/policy/evaluations",
+            params={"api-version": "2.0-preview.1", "artifactId": artifact_id},
+        )
+        return response.get("value", [])
+
+    def requeue_pull_request_policy(self, pr: dict, evaluation_id: str) -> None:
+        project = quote(pr["project"], safe="")
+        evaluation = uuid.UUID(evaluation_id)
+        self._request(
+            "PATCH",
+            f"{self.base_url}/{project}/_apis/policy/evaluations/{evaluation}?api-version=2.0-preview.1",
+            json={"status": "queued"},
+        )
+
+    def failed_pull_request_build_log(self, pr: dict, build_id: int, definition_id: int) -> list[str] | None:
+        project = quote(pr["project"], safe="")
+        url = f"{self.base_url}/{project}/_apis/build/builds/{int(build_id)}"
+        build = self._request("GET", f"{url}?api-version=2.0")
+        if (
+            build.get("status") != "completed" or build.get("result") != "failed"
+            or build.get("sourceBranch") != f"refs/pull/{int(pr['id'])}/merge"
+            or build.get("sourceVersion") != pr.get("merge_commit")
+            or (build.get("definition") or {}).get("id") != definition_id
+        ):
+            return None
+        timeline = self._request("GET", f"{url}/timeline?api-version=2.0")
+        logs = {}
+        for record in timeline.get("records") or []:
+            log_id = (record.get("log") or {}).get("id")
+            if record.get("type") == "Task" and record.get("result") == "failed" and log_id:
+                logs[int(log_id)] = record.get("name") or "构建步骤"
+        lines = []
+        for log_id, name in list(logs.items())[-4:]:
+            result = self._request("GET", f"{url}/logs/{log_id}?api-version=2.0")
+            lines.append(f"构建步骤 {name}")
+            lines.extend(str(line) for line in result.get("value", []))
+        return lines
 
     def active_pull_requests_for_branch(self, repo_path: str, branch: str, target: str) -> list[int]:
         repo = self.repository_info(repo_path)

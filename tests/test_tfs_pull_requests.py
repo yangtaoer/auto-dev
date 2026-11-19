@@ -79,6 +79,37 @@ class TfsPullRequestTests(unittest.TestCase):
         self.assertFalse(self.tfs.approve_pull_request("repo", 123))
         self.assert_requests(("GET", self.pr_path))
 
+    def test_existing_vote_restores_auto_complete_without_recasting(self) -> None:
+        source = "a" * 40
+        approved = {**self.active, "reviewers": [{"id": "reviewer-id", "vote": 10}],
+                    "lastMergeSourceCommit": {"commitId": source}}
+        enabled = {**approved, "autoCompleteSetBy": {"id": "creator-id"}}
+        self.respond((200, approved), (200, enabled))
+        self.assertTrue(self.tfs.approve_pull_request("repo", 123, expected_source=source))
+        self.assert_requests(("GET", self.pr_path), ("PATCH", self.pr_path))
+
+    def test_approval_stops_if_the_reviewed_source_has_changed(self) -> None:
+        self.respond((200, {**self.active, "lastMergeSourceCommit": {"commitId": "b" * 40}}))
+        with self.assertRaisesRegex(self.tfs_module.TfsError, "源提交已变化"):
+            self.tfs.approve_pull_request("repo", 123, expected_source="a" * 40)
+        self.assert_requests(("GET", self.pr_path))
+
+    def test_validation_diagnostics_require_the_exact_pr_merge_preview(self) -> None:
+        build = {"status": "completed", "result": "failed", "sourceBranch": "refs/pull/123/merge",
+                 "sourceVersion": "b" * 40, "definition": {"id": 17}}
+        pr = {"project": "DCS", "id": 123, "merge_commit": "a" * 40}
+        self.respond((200, build))
+        self.assertIsNone(self.tfs.failed_pull_request_build_log(pr, 21, 17))
+        self.assertEqual(len(self.requests), 1)
+
+        build["sourceVersion"] = pr["merge_commit"]
+        timeline = {"records": [{"type": "Job", "result": "failed", "log": {"id": 8}},
+                                {"type": "Task", "result": "failed", "name": "Maven", "log": {"id": 9}}]}
+        self.respond((200, build), (200, timeline), (200, {"value": ["[ERROR] COMPILATION ERROR"]}))
+        self.assertEqual(self.tfs.failed_pull_request_build_log(pr, 21, 17),
+                         ["构建步骤 Maven", "[ERROR] COMPILATION ERROR"])
+        self.assertTrue(self.requests[2].url.path.endswith("/builds/21/logs/9"))
+
     def test_vote_conflict_only_recovers_a_confirmed_merge(self) -> None:
         for status in ("completed", "abandoned", "active"):
             with self.subTest(status=status):
