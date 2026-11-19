@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.25",
+    version="1.0-Beta.26",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -372,6 +372,7 @@ def runner_record_online(runner: dict | None, *, now: datetime | None = None) ->
 class ModelSettingsInput(BaseModel):
     model: str = Field(min_length=1, max_length=120)
     effort: str = Field(min_length=1, max_length=20)
+    service_tier: str | None = Field(default=None, max_length=20)
 
 
 @app.get("/api/admin/model-settings")
@@ -382,7 +383,7 @@ def get_model_settings(user: Annotated[dict, Depends(admin_user)]) -> dict:
 @app.put("/api/admin/model-settings")
 def set_model_settings(payload: ModelSettingsInput, user: Annotated[dict, Depends(admin_user)]) -> dict:
     try:
-        return {"settings": model_settings.save(payload.model, payload.effort, user["id"])}
+        return {"settings": model_settings.save(payload.model, payload.effort, user["id"], service_tier=payload.service_tier)}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -1680,6 +1681,12 @@ def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -
     detail = public_request_payload(add_runner_display_state(
         can_access_request(user, request_id, allow_acceptance_owner=True)
     ))
+    replies = rows("""SELECT id,event_type,message,created_at FROM delivery_events
+                      WHERE request_id=? AND event_type IN ('devcore.reply','devcore.summary','workspace.plan_recorded')
+                      ORDER BY id""", (request_id,))
+    detail["assistant_replies"] = [
+        {**reply, "message": public_engine_text(reply["message"])} for reply in replies
+    ]
     detail.update(acceptance_permissions(detail, user))
     detail["can_followup"] = detail["status"] == RunStatus.DELIVERED.value
     display_status = detail.get("display_status") or detail["status"]
@@ -2543,6 +2550,7 @@ RUNNER_MUTABLE_FIELDS = {
     "work_item_revision", "title", "requirement_summary", "status", "current_step", "progress",
     "branch_name", "base_commit", "commit_hash", "pr_id", "pr_url", "merge_commit", "codex_thread_id",
     "result_summary", "error_message", "repository_states", "started_at", "completed_at", "next_poll_at", "email_sent_at",
+    "repository_plan",
     "supplement_requests", "supplement_answers", "supplement_requested_at", "supplemented_at",
     "analysis_result", "history_context", "acceptance_ledger", "quality_gate_result",
     "project_retrospective", "lesson_usage", "project_lesson_context",

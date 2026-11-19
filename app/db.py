@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
     pr_url TEXT,
     merge_commit TEXT,
     repository_states TEXT NOT NULL DEFAULT '[]',
+    repository_plan TEXT NOT NULL DEFAULT '{}',
     codex_thread_id TEXT,
     result_summary TEXT NOT NULL DEFAULT '',
     supplement_requests TEXT NOT NULL DEFAULT '[]',
@@ -230,6 +231,7 @@ CREATE TABLE IF NOT EXISTS delivery_events (
     metadata TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS ix_delivery_events_request_type ON delivery_events(request_id,event_type,id);
 CREATE TABLE IF NOT EXISTS delivery_artifacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id TEXT NOT NULL REFERENCES delivery_requests(id) ON DELETE CASCADE,
@@ -455,6 +457,8 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN notification_emails TEXT NOT NULL DEFAULT '[]'")
     if "repository_states" not in request_columns:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN repository_states TEXT NOT NULL DEFAULT '[]'")
+    if "repository_plan" not in request_columns:
+        conn.execute("ALTER TABLE delivery_requests ADD COLUMN repository_plan TEXT NOT NULL DEFAULT '{}'")
     if "supplement_requests" not in request_columns:
         conn.execute("ALTER TABLE delivery_requests ADD COLUMN supplement_requests TEXT NOT NULL DEFAULT '[]'")
     if "supplement_answers" not in request_columns:
@@ -865,7 +869,7 @@ def update_request(request_id: str, **fields: Any) -> None:
     if not fields:
         return
     for json_field in (
-        "policy_snapshot", "repository_states", "supplement_requests", "supplement_answers", "analysis_result",
+        "policy_snapshot", "repository_states", "repository_plan", "supplement_requests", "supplement_answers", "analysis_result",
         "history_context", "acceptance_ledger", "quality_gate_result",
         "failed_item_ids", "protected_item_ids", "repair_context", "project_retrospective",
         "lesson_usage", "project_lesson_context",
@@ -979,6 +983,7 @@ def request_detail(request_id: str) -> dict[str, Any] | None:
     )
     request["policy_snapshot"] = json_value(request["policy_snapshot"], {})
     request["repository_states"] = json_value(request.get("repository_states"), [])
+    request["repository_plan"] = json_value(request.get("repository_plan"), {})
     request["controls"] = rows("SELECT * FROM request_controls WHERE request_id=? ORDER BY created_at DESC", (request_id,))
     for control in request["controls"]:
         control['result'] = json_value(control['result'], {})

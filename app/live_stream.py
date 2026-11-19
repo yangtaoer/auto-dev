@@ -12,8 +12,8 @@ from typing import Any
 class LiveCodexHub:
     """Process-local, watcher-gated Codex output bus.
 
-    Events only exist while at least one viewer is actively polling. This keeps the
-    detailed Codex session out of the database and out of delivery records.
+    The live feed only exists while at least one viewer is actively polling.
+    User-facing replies are recorded separately as delivery events.
     """
 
     def __init__(self, *, watcher_ttl: float = 15.0, max_events: int = 800) -> None:
@@ -52,6 +52,7 @@ class LiveCodexHub:
                 "content": str(event.get("content") or "")[:12000],
                 "group": str(event.get("group") or "")[:160],
                 "delta": bool(event.get("delta")),
+                "final": bool(event.get("final")),
                 "format": "markdown" if event.get("format") == "markdown" else "plain",
             }
             events = self._events.setdefault(request_id, deque(maxlen=self.max_events))

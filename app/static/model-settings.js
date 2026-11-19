@@ -5,12 +5,22 @@
   const choice = form.querySelector('#model-choice');
   const message = form.querySelector('#model-settings-message');
   const submit = form.querySelector('[type="submit"]');
+  const current = document.querySelector('#model-settings-current');
   const labels = {none:'不额外思考',minimal:'最少',low:'轻量',medium:'标准',high:'深入',xhigh:'更深入',max:'最大',ultra:'极深'};
-  function efforts(preferred) {
+  function showSaved() {
+    const model = models.find(item => item.model === saved.model);
+    current.textContent = ['当前配置', model?.name || saved.model, saved.effort === 'max' ? 'Max' : (labels[saved.effort] || saved.effort),
+      saved.service_tier === 'priority' ? 'Fast' : '标准速度'].join(' / ');
+  }
+  function modelOptions(preferred, preferredTier) {
     const model = models.find(item => item.model === choice.querySelector('input').value);
     const options = model?.efforts || [];
     const value = options.includes(preferred) ? preferred : model?.default_effort;
     form.querySelector('.effort-options').innerHTML = options.map(effort => `<label class="effort-choice"><input type="radio" name="effort" value="${escapeHtml(effort)}" ${value===effort?'checked':''}><span>${escapeHtml(labels[effort]||effort)}<small>${escapeHtml(effort)}</small></span></label>`).join('');
+    const supportsFast = (model?.service_tiers || []).includes('priority');
+    const speeds = supportsFast ? [['default', '标准'], ['priority', 'Fast']] : [['default', '标准']];
+    const selectedTier = supportsFast && preferredTier === 'priority' ? 'priority' : 'default';
+    form.querySelector('.speed-options').innerHTML = speeds.map(([tier, label]) => `<label class="effort-choice"><input type="radio" name="service_tier" value="${tier}" ${selectedTier === tier ? 'checked' : ''}><span>${label}</span></label>`).join('');
     submit.disabled = !options.length;
   }
   choice.addEventListener('keydown', event => {
@@ -39,11 +49,12 @@
       choice.querySelectorAll('[role="option"]').forEach(option => {
         if (option.dataset.modelBound) return;
         option.dataset.modelBound='1';
-        option.addEventListener('click',()=>efforts(form.querySelector('input[name="effort"]:checked')?.value || saved.effort));
+        option.addEventListener('click',()=>modelOptions(form.elements.effort?.value || saved.effort,
+          form.elements.service_tier?.value || saved.service_tier));
       });
       if (!models.some(item=>item.model===saved.model)) choice.querySelector('b').textContent=saved.model;
-      efforts(saved.effort);
-      document.querySelector('#model-settings-current').textContent = `当前配置：${saved.model} / ${labels[saved.effort]||saved.effort}`;
+      modelOptions(saved.effort, saved.service_tier);
+      showSaved();
       message.textContent = models.length ? '仅保存后生效；不会改变运行中任务。' : '执行器尚未上报模型列表，请等待上线后刷新。当前配置保持不变。';
       loaded = true;
       loader.finish();
@@ -56,7 +67,7 @@
       const payload = Object.fromEntries(new FormData(form));
       const data = await api('/api/admin/model-settings',{method:'PUT',body:JSON.stringify(payload)});
       saved=data.settings;
-      document.querySelector('#model-settings-current').textContent=`当前配置：${saved.model} / ${labels[saved.effort]||saved.effort}`;
+      showSaved();
       message.textContent='已保存。下一次开工使用此配置，当前任务不受影响。';
       toast('全局研发配置已保存');
     } catch(error) {message.textContent=error.message;}

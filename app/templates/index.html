@@ -156,7 +156,8 @@
             <label id="model-choice-label">研发模型</label>
             <div id="model-choice" class="ledger-select"><input type="hidden" name="model"><button type="button" aria-labelledby="model-choice-label model-choice-name" aria-haspopup="listbox" aria-expanded="false"><b id="model-choice-name">请选择模型</b><i></i></button><div class="ledger-select-menu" role="listbox" aria-labelledby="model-choice-label" hidden></div></div>
             <fieldset id="model-efforts"><legend>默认思考深度</legend><div class="effort-options"></div></fieldset>
-            <p class="muted">模型与深度来自本机执行器实时支持列表。较深的思考通常耗时更长。</p>
+            <fieldset id="model-speed"><legend>默认速度</legend><div class="speed-options effort-options"></div></fieldset>
+            <p class="muted">可用模型、深度和速度由本机执行器上报。</p>
             <div class="model-settings-actions"><button class="btn btn-primary" type="submit" disabled>保存全局设置 ↗</button><button class="text-button" type="button" id="reload-models">刷新可用模型</button></div>
             <p id="model-settings-message" role="status"></p>
           </div>
@@ -226,8 +227,11 @@
   <section class="detail-drawer" id="detail-drawer" role="dialog" aria-modal="true" aria-label="任务详情" aria-hidden="true" inert><button class="modal-close" id="close-detail" aria-label="关闭任务详情">×</button><div id="detail-content"></div></section>
   <aside class="devcore-stream-panel" id="devcore-stream-panel" aria-hidden="true">
     <header><div><p class="eyebrow" id="devcore-stream-eyebrow">实时研发会话 / LIVE DEVCORE SESSION</p><h2 id="devcore-stream-title">研发过程</h2></div><button class="modal-close" id="close-devcore-stream">×</button></header>
-    <div class="stream-notice"><i></i><span>仅传输打开后的输出；关闭即停止采集且不保存</span></div>
-    <div class="devcore-chat" id="devcore-chat"></div>
+    <div class="stream-notice"><i></i><span>实时会话显示打开后的输出。AI 回复和总结会保留在任务详情。</span></div>
+    <div class="devcore-chat" id="devcore-chat">
+      <div id="devcore-replies"></div>
+      <details class="task-live-execution" id="devcore-execution" hidden><summary>执行记录</summary><div id="devcore-operations"></div></details>
+    </div>
   </aside>
 
   {% if user.role == 'admin' %}

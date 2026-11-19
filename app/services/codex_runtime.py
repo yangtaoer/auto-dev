@@ -14,6 +14,8 @@ from ..config import ROOT, settings
 MIN_ASTRA_VERSION = (0, 153, 4)
 # Platform-tested CLI baseline: model/list confirms GPT-6.1 Sol and xhigh on 0.161.0.
 MIN_SOL_VERSION = (0, 161, 0)
+# Model discovery works on the 0.169 desktop build and the pinned 0.170 release.
+MIN_GPT_62_VERSION = (0, 169, 0)
 
 
 def managed_binary(runtime_dir: Path) -> Path | None:
@@ -52,8 +54,11 @@ def resolve_codex_runtime(*, model: str | None = None) -> dict[str, str]:
     if result.returncode or not match:
         raise RuntimeError("无法确认 Codex CLI 版本；请检查 CODEX_BIN 或重新安装平台运行器。")
     requested_model = model or settings.codex_model
-    if requested_model == "gpt-6-astra" and tuple(map(int, match.groups())) < MIN_ASTRA_VERSION:
+    version = tuple(map(int, match.groups()))
+    if requested_model in {"gpt-6.2-sol", "gpt-6.2-astra"} and version < MIN_GPT_62_VERSION:
+        raise RuntimeError(f"Codex 运行器 {match.group()} 过旧。平台已验证 GPT-6.2 支持 Max 和 Fast 的版本为 0.170.0，请运行 local-runner/install.ps1 后重试。")
+    if requested_model == "gpt-6-astra" and version < MIN_ASTRA_VERSION:
         raise RuntimeError(f"Codex 运行器 {match.group()} 过旧；GPT-6 Astra 需使用平台已验证的 0.153.4 或更新版本，请运行 local-runner/install.ps1 后重试。")
-    if requested_model == "gpt-6.1-sol" and tuple(map(int, match.groups())) < MIN_SOL_VERSION:
+    if requested_model == "gpt-6.1-sol" and version < MIN_SOL_VERSION:
         raise RuntimeError(f"Codex 运行器 {match.group()} 过旧；GPT-6.1 Sol 需使用平台已验证的 0.161.0 或更新版本，请运行 local-runner/install.ps1 后重试；不会自动替换模型。")
     return {"path": str(binary), "version": match.group()}

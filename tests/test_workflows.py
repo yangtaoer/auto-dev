@@ -89,6 +89,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_existing_database_is_migrated_before_joint_index_creation(self) -> None:
         legacy_request_definitions = (
+            "    repository_plan TEXT NOT NULL DEFAULT '{}',\n",
             "    joint_group_id TEXT,\n",
             "    joint_project_index INTEGER NOT NULL DEFAULT 0,\n",
             "    joint_project_count INTEGER NOT NULL DEFAULT 1,\n",
@@ -138,7 +139,7 @@ class WorkflowTests(unittest.TestCase):
                     conn.close()
                 self.assertTrue({
                     "joint_group_id", "joint_project_index", "joint_project_count", "task_type", "analysis_result",
-                    "history_context", "acceptance_ledger", "quality_gate_result",
+                    "history_context", "acceptance_ledger", "quality_gate_result", "repository_plan",
                 } <= request_columns)
                 self.assertTrue({"result_request_ids", "matched_project_keys", "classification_summary", "task_type"} <= intake_columns)
                 self.assertTrue({"repository_tfs_paths", "quality_profile", "artifact_policy"} <= project_columns)
@@ -2082,6 +2083,33 @@ else:
         self.assertNotIn("codex_thread_id", detail)
         self.assertIn("DevCore", rendered)
         self.assertNotIn("Codex", self.client.get("/").text)
+        update_request(request_id, status="cancelled")
+
+    def test_task_detail_retains_repository_plan_and_replies_beyond_recent_operations(self) -> None:
+        from app.db import transaction, utc_now
+
+        project_id = self.create_project("task-conversation", "local_package")
+        request_id = self.client.post("/api/requests", json={"project_id": project_id, "work_item_id": 910026}).json()["id"]
+        headers = {"Authorization": "Bearer test-runner-token"}
+        plan = {"status": "planned", "summary": "只修改前端仓库。",
+                "repositories": [{"name": "test-ui", "summary": "补全列表信息"}], "revision": 2}
+        updated = self.client.patch(f"/api/runner/requests/{request_id}", headers=headers, json={"fields": {
+            "repository_plan": plan, "repository_states": [{"name": "test-ui", "changed_files": ["src/Task.vue"]}],
+        }})
+        self.assertEqual(updated.status_code, 200, updated.text)
+        with transaction() as conn:
+            now = utc_now()
+            events = [("workspace.plan_recorded", plan['summary']), ("devcore.reply", "已定位到列表。")]
+            events.extend(("devcore.event", f"执行记录 {i}") for i in range(105))
+            events.append(("devcore.summary", "更新完毕，验证通过。"))
+            conn.executemany("INSERT INTO delivery_events(request_id,level,event_type,message,created_at) VALUES (?,'info',?,?,?)",
+                             [(request_id, kind, message, now) for kind, message in events])
+        detail = self.client.get(f"/api/requests/{request_id}").json()["request"]
+        self.assertEqual(detail["repository_plan"], plan)
+        self.assertEqual(detail["repository_states"][0]["changed_files"], ["src/Task.vue"])
+        self.assertEqual([reply["event_type"] for reply in detail["assistant_replies"]],
+                         ["workspace.plan_recorded", "devcore.reply", "devcore.summary"])
+        self.assertEqual(len(detail["events"]), 100)
         update_request(request_id, status="cancelled")
 
     def test_new_intake_is_immediately_visible_and_home_shows_version(self) -> None:

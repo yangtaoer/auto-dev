@@ -70,6 +70,7 @@ class WorkshopImagegen:
             caps=codex._client.request('modelProvider/capabilities/read',{},response_model=ModelProviderCapabilitiesReadResponse)
             if not caps.image_generation:raise RuntimeError('当前执行器的原生 imagegen 不可用；未切换其他图片服务，请管理员检查账户/运行器。')
             thread=codex.thread_start(cwd=str(cwd),model=execution['model'],sandbox=Sandbox.workspace_write,
+                service_tier=execution.get('service_tier'),
                 approval_mode=ApprovalMode.deny_all,service_name='autodev-creative-workshop',
                 developer_instructions='仅调用原生图像生成工具设计此作品。不得使用shell、apply_patch、数据库、网络CLI、凭证、API图片服务或任何代码提交/发布工具。至少成功生成所要求的图片后才可宣告完成。')
             thread_id=thread.id;state['thread_id']=thread_id;progress('设计对话已启动；正在调用原生 imagegen',thread_id)
@@ -77,7 +78,8 @@ class WorkshopImagegen:
             codex_home=Path(os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))
             skill=codex_home/'skills/.system/imagegen/SKILL.md'
             if skill.is_file():inputs.insert(0,SkillInput(name='imagegen',path=str(skill)))
-            handle=thread.turn(inputs,model=execution['model'],effort=execution['effort'],output_schema=schema)
+            handle=thread.turn(inputs,model=execution['model'],effort=execution['effort'],
+                               service_tier=execution.get('service_tier'),output_schema=schema)
             with interrupt_on_cancel(handle,cancelled):
                 for notification in handle.stream():
                     method=notification.method;params=CodexRunner._dump(notification.payload)

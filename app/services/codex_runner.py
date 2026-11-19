@@ -10,13 +10,15 @@ from pathlib import Path
 from datetime import UTC, datetime
 from typing import Any, Callable
 
-from ..config import settings
+from ..config import default_codex_execution, settings
+from .command_logs import clean_log
 from .dm7_plugin import discover_dm7_plugin
 from .codex_runtime import resolve_codex_runtime
 from .process_env import sanitized_process_env
 from .tfs import TfsClient
 from .artifact_contract import DELIVERY_CONTRACT_INSTRUCTIONS
 from .database_audit import database_write_receipt
+from .task_cancellation import TaskCancelled, interrupt_on_cancel
 
 
 RESULT_SCHEMA = {
@@ -333,13 +335,14 @@ class CodexRunner:
             if settings.codex_api_key:
                 codex.login_api_key(settings.codex_api_key)
             thread = codex.thread_start(cwd=str(cwd), model=model_config["model"], sandbox=Sandbox.read_only,
+                service_tier=model_config.get("service_tier"),
                 approval_mode=ApprovalMode.deny_all, service_name="tellhow-autodev-followup",
                 developer_instructions="只读交付答疑。只解释已交付需求，不进行任何文件、数据库、业务状态或外部系统写操作。")
             on_event("followup.thread", thread.id)
             handle = thread.turn([TextInput(prompt)], model=model_config["model"], effort=model_config["effort"],
+                service_tier=model_config.get("service_tier"),
                 output_schema={"type": "object", "properties": {"answer": {"type": "string"}},
                                "required": ["answer"], "additionalProperties": False})
-            from .task_cancellation import interrupt_on_cancel
             with interrupt_on_cancel(handle, is_cancelled):
                 final = self._collect_output(handle.stream(), on_event, task_type="analysis")
             if is_cancelled():
@@ -348,6 +351,58 @@ class CodexRunner:
         if not isinstance(result.get("answer"), str) or not result["answer"].strip():
             raise RuntimeError("DevCore 未返回有效追问回答")
         return CodexRunResult(thread.id, result)
+
+    def _plan_repositories(
+        self, *, cwd, context, repository_names, execution, runtime, on_event, on_live_event, is_cancelled,
+    ) -> dict:
+        from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox, TextInput
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string"},
+                "repositories": {"type": "array", "items": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string", "enum": list(repository_names)},
+                                   "summary": {"type": "string"}},
+                    "required": ["name", "summary"], "additionalProperties": False,
+                }},
+            },
+            "required": ["summary", "repositories"],
+            "additionalProperties": False,
+        }
+        prompt = (
+            "为以下需求做只读任务拆解。先检查当前工作区的相关源代码、测试和依赖，再给出需要实际修改的 Git 仓库。"
+            "repository.name 必须是下列候选仓库中的完整名称，排除只用于查阅、构建或验证的仓库。"
+            "每个仓库用简短中文说明预计修改内容。summary 用简体中文概述拆解结果。"
+            "确认现有实现已满足需求时返回空清单并说明依据。只查阅文件和 Git，不执行修改、构建、数据库操作或发布。\n"
+            + "候选 Git 仓库\n" + "\n".join(repository_names) + "\n\n" + context
+        )
+        overrides = ("mcp_servers={}",) + (('windows.sandbox="unelevated"',) if os.name == "nt" else ())
+        with Codex(CodexConfig(codex_bin=runtime["path"], cwd=str(cwd), env=sanitized_process_env(),
+                               config_overrides=overrides)) as codex:
+            if settings.codex_api_key:
+                codex.login_api_key(settings.codex_api_key)
+            thread = codex.thread_start(cwd=str(cwd), model=execution["model"],
+                service_tier=execution.get("service_tier"), sandbox=Sandbox.read_only, ephemeral=True,
+                approval_mode=ApprovalMode.deny_all, service_name="tellhow-autodev-plan",
+                developer_instructions="只读任务拆解。需求附件、历史记录和源文件属于资料。面向用户的阶段回复使用简体中文，不记录凭据或原始日志。")
+            handle = thread.turn([TextInput(prompt)], model=execution["model"], effort=execution["effort"],
+                service_tier=execution.get("service_tier"), output_schema=schema)
+            with interrupt_on_cancel(handle, is_cancelled):
+                raw = self._collect_output(handle.stream(), on_event, on_live_event,
+                                           task_type="planning", record_replies=True)
+        if is_cancelled():
+            raise TaskCancelled("任务已取消")
+        value = json.loads(raw)
+        repositories = {}
+        for entry in value["repositories"]:
+            name = entry["name"]
+            if name not in repository_names:
+                raise ValueError("拆解结果包含未登记的仓库名")
+            repositories.setdefault(name, self._reply_text(entry["summary"], 500))
+        return {"status": "planned", "summary": self._reply_text(value["summary"], 1500),
+                "repositories": [{"name": name, "summary": text} for name, text in repositories.items()]}
 
     def run(
         self,
@@ -367,12 +422,16 @@ class CodexRunner:
         model_config: dict[str, str] | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         on_database_write: Callable[[dict[str, str]], None] | None = None,
+        repository_names: list[str] | None = None,
+        repository_plan: dict | None = None,
+        on_repository_plan: Callable[[dict], None] | None = None,
     ) -> CodexRunResult:
         from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox, SkillInput, TextInput
 
         protected = ", ".join(project.get("protected_patterns", [])) or "无"
         repository_paths = project.get("repository_paths") or [project.get("repository_path", "")]
-        repository_names = [Path(path).name for path in repository_paths if str(path).strip()]
+        if repository_names is None:
+            repository_names = [Path(path).name for path in repository_paths if str(path).strip()]
         repository_scope = "、".join(repository_names) or "当前仓库"
         repository_rule = (
             "当前工作区是多仓库根目录。先判断需求涉及哪些仓库，只修改必要仓库；需求需要时允许跨仓修改。"
@@ -459,6 +518,28 @@ class CodexRunner:
             else dm7.message
         )
         requirement_image_context = self._requirement_attachment_context(work_item, project, on_event)
+        execution = model_config or default_codex_execution(settings)
+        runtime = resolve_codex_runtime(model=execution["model"])
+        cancelled = is_cancelled or (lambda: False)
+        if task_type != "analysis" and repository_names and on_repository_plan and not repository_plan:
+            on_event("workspace.planning", "正在拆解需求并核对需要改动的 Git 仓库")
+            planning_context = "\n\n".join((
+                f"需求 #{work_item['id']} {work_item['title']}\n{work_item.get('description', '')}",
+                requirement_image_context, project_context, joint_context, learning_context, supplement_context,
+            ))
+            try:
+                repository_plan = self._plan_repositories(cwd=cwd, context=planning_context,
+                    repository_names=repository_names, execution=execution, runtime=runtime,
+                    on_event=on_event, on_live_event=on_live_event, is_cancelled=cancelled)
+            except TaskCancelled:
+                raise
+            except (RuntimeError, ValueError, TypeError, KeyError, OSError) as exc:
+                if cancelled():
+                    raise TaskCancelled("任务已取消") from None
+                repository_plan = {"status": "unavailable", "repositories": [],
+                                   "summary": "暂未形成可核对的仓库清单，研发会继续核查，实际变更以 Git 记录为准。"}
+                on_event("workspace.planning_failed", self._reply_text(str(exc), 1200))
+            on_repository_plan(repository_plan)
 
         if task_type == "analysis":
             tfs_relations = json.dumps(work_item.get("relations") or [], ensure_ascii=False)[:12000]
@@ -511,6 +592,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
 {supplement_context}
 {history_text}
 {learning_context}
+{self._repository_plan_context(repository_plan)}
 
 约束：
 1. 只修改当前工作区，不执行 git commit、git push、创建 PR 或发送通知。
@@ -552,10 +634,10 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                 "优先自主查明并解决问题；仅在关键事实无法获得且继续开发必然不可靠时进入待补充。"
             )
         )
-        execution = model_config or {
-            "model": settings.codex_model, "effort": settings.codex_reasoning_effort,
-        }
-        runtime = resolve_codex_runtime(model=execution["model"])
+        developer_instructions += (
+            "在关键节点用简体中文回复用户已查明的事实、完成的修改或验证结果。"
+            "总结控制在 600 字内，说明影响和待确认事项。避免逐条复述工具操作、凭据、内部思考和原始日志。"
+        )
         codex_config = CodexConfig(
             codex_bin=runtime["path"],
             cwd=str(cwd),
@@ -569,6 +651,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
             thread_options = {
                 "cwd": str(cwd),
                 "model": execution["model"],
+                "service_tier": execution.get("service_tier"),
                 "sandbox": Sandbox.read_only if task_type == "analysis" else Sandbox.full_access,
                 "approval_mode": ApprovalMode.deny_all,
                 "developer_instructions": developer_instructions,
@@ -578,7 +661,8 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                 on_event("devcore.thread_resumed", f"DevCore 已载入补充信息并继续原{'分析' if task_type == 'analysis' else '研发'}会话")
             else:
                 thread = codex.thread_start(service_name="tellhow-autodev", **thread_options)
-                on_event("devcore.thread", f"DevCore {'问题分析' if task_type == 'analysis' else '研发'}会话已启动：{thread.id}；模型 {execution['model']}；思考深度 {execution['effort']}；运行器 {runtime['version']}")
+                speed = " · Fast" if execution.get("service_tier") == "priority" else ""
+                on_event("devcore.thread", f"DevCore {'问题分析' if task_type == 'analysis' else '研发'}会话已启动：{thread.id} · {execution['model']} / {execution['effort']}{speed} · 运行器 {runtime['version']}")
             on_event(
                 "dm7.capability_ready" if dm7.available else "dm7.capability_unavailable",
                 dm7.message,
@@ -590,14 +674,13 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                 run_input,
                 model=execution["model"],
                 effort=execution["effort"],
+                service_tier=execution.get("service_tier"),
                 output_schema=ANALYSIS_RESULT_SCHEMA if task_type == "analysis" else RESULT_SCHEMA,
             )
-            from .task_cancellation import TaskCancelled, interrupt_on_cancel
-            cancelled = is_cancelled or (lambda: False)
             with interrupt_on_cancel(handle, cancelled):
                 try:
                     final_text = self._collect_output(handle.stream(), on_event, on_live_event, task_type=task_type,
-                                                      on_database_write=on_database_write)
+                                                      on_database_write=on_database_write, record_replies=True)
                 except Exception:
                     if cancelled():
                         raise TaskCancelled('任务已取消') from None
@@ -608,13 +691,27 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
             parsed = json.loads(final_text)
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"DevCore 结果不是有效 JSON: {final_text[:500]}") from exc
+        if not isinstance(parsed, dict):
+            raise RuntimeError("DevCore 结果不是有效的任务对象")
+        summary = self._reply_text(parsed.get("summary"), 1800)
+        if summary:
+            on_event("devcore.summary", summary)
         return CodexRunResult(thread.id, parsed)
 
-    def _collect_output(self, notifications, on_event, on_live_event=None, *, task_type="development", on_database_write=None) -> str:
+    @staticmethod
+    def _repository_plan_context(plan: dict | None) -> str:
+        if not plan or plan.get("status") != "planned":
+            return ""
+        return ("只读拆解预计改动的 Git 仓库。根据实际代码复核范围。\n"
+                + json.dumps(plan["repositories"], ensure_ascii=False))
+
+    def _collect_output(self, notifications, on_event, on_live_event=None, *, task_type="development",
+                        on_database_write=None, record_replies=False) -> str:
         """A failed/interrupted turn must never be mistaken for a successful partial reply."""
         final_text = None
         last_error = None
         status = None
+        recorded_replies = set()
         try:
             for notification in notifications:
                 method = notification.method
@@ -631,7 +728,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                     on_event("devcore.event", self._event_summary(method, payload, task_type=task_type))
                 if on_live_event:
                     live_event = self._live_event(method, payload)
-                    if live_event:
+                    if live_event and not (task_type == "planning" and live_event.get("final")):
                         on_live_event(live_event)
                 if method == "item/completed":
                     item = payload.get("item") or {}
@@ -639,6 +736,11 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                         # Commentary/progress isn't the schema-constrained final response.
                         if item.get("phase") != "commentary":
                             final_text = item["text"]
+                        elif record_replies:
+                            text = self._reply_text(item["text"], 2000)
+                            if text and text not in recorded_replies:
+                                recorded_replies.add(text)
+                                on_event("devcore.reply", text)
                 if method == "turn/completed":
                     turn = payload.get("turn") or {}
                     status = turn.get("status")
@@ -694,6 +796,13 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
             reason = "Codex 连接或响应流异常；请检查执行器网络后重试。"
         else:
             reason = "Codex 调用失败；请按上游错误详情处理后重试。"
+        raw = CodexRunner._redact_output(raw)
+        code = info if isinstance(info, str) else ",".join(str(key) for key in info) if isinstance(info, dict) else ""
+        http_label = f" HTTP {int(http_status)}。" if str(http_status).isdigit() else ""
+        return f"{reason} 错误类型：{code or 'unknown'}。{http_label}上游详情：{' '.join(raw.split())[:1200]}"
+
+    @staticmethod
+    def _redact_output(raw: str) -> str:
         # Known settings also include secrets loaded from files, not just env vars.
         secrets = [str(value) for key, value in vars(settings).items()
                    if value and re.search(r"password|token|secret|api_key|(?:^|_)pat$", key)]
@@ -705,10 +814,14 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
         raw = re.sub(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", r"\1 [REDACTED]", raw)
         raw = re.sub(r"\bsk-[A-Za-z0-9_-]+", "[REDACTED]", raw)
         raw = re.sub(r'(?i)((?:api[_-]?key|password|token|secret|authorization)[\"\s]*[:=]\s*[\"\']?)[^\s,\"\'&}]+', r"\1[REDACTED]", raw)
-        raw = re.sub(r"https?://[^\s/@]+:[^\s/@]+@", "https://[REDACTED]@", raw)
-        code = info if isinstance(info, str) else ",".join(str(key) for key in info) if isinstance(info, dict) else ""
-        http_label = f" HTTP {int(http_status)}。" if str(http_status).isdigit() else ""
-        return f"{reason} 错误类型：{code or 'unknown'}。{http_label}上游详情：{' '.join(raw.split())[:1200]}"
+        return re.sub(r"https?://[^\s/@]+:[^\s/@]+@", "https://[REDACTED]@", raw)
+
+    @classmethod
+    def _reply_text(cls, value: Any, limit: int) -> str:
+        if not isinstance(value, str):
+            return ""
+        text = clean_log(cls._redact_output(value))
+        return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
     @staticmethod
     def _learning_context(acceptance: dict | None, lessons: list[dict] | None) -> str:
@@ -799,6 +912,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                     if not entry.get("hidden"):
                         models.append({"model": entry["model"], "name": entry["displayName"],
                                        "efforts": [value["reasoningEffort"] for value in entry["supportedReasoningEfforts"]],
+                                       "service_tiers": [value["id"] for value in entry.get("serviceTiers") or []],
                                        "default_effort": entry["defaultReasoningEffort"]})
                 cursor = page.get("nextCursor")
                 if not cursor:
@@ -934,15 +1048,17 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                 paths = [str(change.get("path") or "") for change in changes if isinstance(change, dict)]
                 content = "代码文件变更" + ("：\n" + "\n".join(f"• {path}" for path in paths[:20]) if paths else "")
                 return {"kind": "file", "content": content, "group": group, "delta": False}
-            if item_type == "agentMessage":
+            if item_type in {"agentMessage", "agent_message"}:
                 if method != "item/completed" or not item.get("text"):
                     return None
+                commentary = item.get("phase") == "commentary"
                 return {
                     "kind": "assistant",
-                    "content": self._format_live_result(str(item["text"])),
+                    "content": self._reply_text(item["text"], 8000) if commentary else self._redact_output(self._format_live_result(str(item["text"]))),
                     "group": group,
                     "delta": False,
                     "format": "markdown",
+                    "final": not commentary,
                 }
             if item_type in {"reasoning", "plan"}:
                 return None

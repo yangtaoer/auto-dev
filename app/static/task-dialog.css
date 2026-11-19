@@ -67,6 +67,76 @@ body.task-dialog-open { overflow: hidden; }
 .acceptance-history { margin-top: 28px; border-top: 1px solid #c7bdad; padding-top: 15px; }
 .acceptance-history > summary { cursor: pointer; font-size: 13px; color: #645e53; }
 .task-tab-panel .acceptance-repair-action { padding: 16px 0 0; background: none; border: 0; }
+
+.task-development-content { max-width: 1020px; margin-inline: auto; }
+.task-data-panel, .task-execution-records {
+  min-width: 0;
+  margin-bottom: 18px;
+  padding: 18px 20px;
+  border: 1px solid var(--skin-line, #c9d8d2);
+  border-radius: var(--skin-card-radius, 8px);
+  background: var(--skin-surface, #fffdf7);
+  color: var(--skin-ink, #082c30);
+}
+.task-data-panel h3, .task-data-panel > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.task-data-panel h3 { margin: 0; font-size: 16px; }
+.task-data-panel > header { justify-content: space-between; flex-wrap: wrap; }
+.task-data-panel > header > span, .task-execution-records > summary > span {
+  color: var(--skin-muted, #597276);
+  font-size: 12px;
+}
+.task-plan-summary { margin: 9px 0 0; color: var(--skin-muted, #597276); line-height: 1.7; }
+.task-plan-repositories, .task-file-repositories ul { list-style: none; margin: 12px 0 0; padding: 0; }
+.task-plan-repositories li, .task-file-repositories article {
+  padding: 11px 13px;
+  border: 1px solid var(--skin-line, #c9d8d2);
+  border-radius: var(--skin-field-radius, 5px);
+  background: var(--skin-surface-alt, #eff5ef);
+}
+.task-plan-repositories li + li, .task-file-repositories article + article { margin-top: 8px; }
+.task-plan-repositories code, .task-file-repositories h4 code { font-size: 13px; font-weight: 700; }
+.task-plan-repositories p { margin: 5px 0 0; color: var(--skin-muted, #597276); font-size: 13px; line-height: 1.65; }
+.task-file-repositories { margin-top: 13px; }
+.task-file-repositories h4 { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin: 0; }
+.task-file-repositories h4 span { font-size: 12px; color: var(--skin-muted, #597276); }
+.task-file-repositories ul { margin-top: 7px; }
+.task-file-repositories li { padding: 5px 0; border-top: 1px solid var(--skin-line, #c9d8d2); font-size: 12px; }
+.task-file-repositories code, .task-plan-repositories code { overflow-wrap: anywhere; }
+
+.task-replies { display: grid; gap: 18px; margin-top: 16px; }
+.task-reply { min-width: 0; border-left: 2px solid var(--skin-line, #c9d8d2); padding: 0 0 2px 14px; }
+.task-reply[data-kind="devcore.summary"] { border-color: var(--skin-accent, #e9572b); }
+.task-reply header { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
+.task-reply header b { font-size: 13px; }
+.task-reply header time { color: var(--skin-muted, #597276); font-size: 11px; }
+.task-reply-body { margin-top: 6px; font-size: 14px; line-height: 1.8; overflow-wrap: anywhere; }
+.task-reply-body :is(p, ul, ol, pre, blockquote) { margin: 0 0 7px; }
+.task-reply-body :last-child { margin-bottom: 0; }
+.task-reply-body :is(ul, ol) { padding-inline-start: 1.4em; }
+.task-reply-body pre { white-space: pre-wrap; padding: 8px 10px; background: var(--skin-surface-alt, #eff5ef); }
+.task-execution-records { padding: 0; }
+.task-execution-records > summary { cursor: pointer; padding: 14px 18px; }
+.task-execution-records > summary > b { margin-right: 10px; }
+.task-execution-records:not([open]) > .development-layout,
+.task-live-execution:not([open]) > div { display: none; }
+.task-execution-records[open] > .development-layout { padding: 0 16px 16px; }
+.task-execution-records .task-event-console { min-width: 0; }
+.task-execution-records .task-event-console .event-list {
+  max-height: min(54vh, 520px);
+  overflow: auto;
+}
+.task-live-execution { margin-bottom: 16px; }
+.task-live-execution > summary { cursor: pointer; padding: 9px 0; font-weight: 700; }
+.task-live-execution > div { max-height: 38vh; overflow: auto; }
+@media (max-width: 700px) {
+  .task-data-panel { padding: 14px; }
+  .task-execution-records .development-layout { grid-template-columns: minmax(0, 1fr); }
+  .task-reply { padding-left: 10px; }
+}
 @media(max-width:700px) {
   #detail-drawer { inset: 0; height: 100vh; height: 100dvh; border: 0; border-top: 4px solid #ee5025; box-shadow: none; }
   #detail-drawer .detail-head { padding: 18px 52px 16px 18px; }

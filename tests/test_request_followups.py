@@ -65,7 +65,8 @@ class FollowupTests(unittest.TestCase):
         before = self.db.request_detail(self.request)
         item = self.queue()
         self.assertNotIn('claim_token', item)
-        self.assertEqual(item['model'], {'model': self.settings.codex_model, 'effort': self.settings.codex_reasoning_effort})
+        from app.config import default_codex_execution
+        self.assertEqual(item['model'], default_codex_execution(self.settings))
         claimed = self.claim()
         self.assertEqual(claimed['history'], [])
         with self.db.transaction() as conn:

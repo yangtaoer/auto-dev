@@ -86,18 +86,17 @@ class CodexErrorTests(unittest.TestCase):
         self.assertIn("[REDACTED]", text)
 
     def test_default_model_and_runtime_dependency_are_pinned(self):
-        from app.config import ROOT, settings
-        self.assertEqual(settings.codex_model, "gpt-6.1-sol")
-        self.assertEqual(settings.codex_reasoning_effort, "xhigh")
+        from app.config import ROOT, default_codex_execution, settings
+        self.assertEqual(default_codex_execution(settings), {"model": "gpt-6.2-sol", "effort": "max", "service_tier": "priority"})
         spec = json.loads((ROOT / "local-runner/codex-runtime/package.json").read_text())
-        self.assertEqual(spec["dependencies"]["@openai/codex"], "0.161.0")
+        self.assertEqual(spec["dependencies"]["@openai/codex"], "0.170.0")
         self.assertIn("openai-codex==0.147.0", (ROOT / "requirements-runner.txt").read_text())
 
     def test_runner_uses_requested_default_or_frozen_model_without_silent_substitution(self):
         from app.services.codex_runner import CodexRunner
-        defaults = SimpleNamespace(codex_model="gpt-6.1-sol", codex_reasoning_effort="xhigh", codex_api_key="")
+        defaults = SimpleNamespace(codex_model="gpt-6.2-sol", codex_reasoning_effort="max", codex_service_tier="priority", codex_api_key="")
         for frozen in (None, {"model":"gpt-6-astra", "effort":"high"}):
-            execution = frozen or {"model":defaults.codex_model, "effort":defaults.codex_reasoning_effort}
+            execution = frozen or {"model":defaults.codex_model, "effort":defaults.codex_reasoning_effort, "service_tier":"priority"}
             with self.subTest(frozen=frozen), tempfile.TemporaryDirectory() as directory:
                 client = MagicMock()
                 thread = MagicMock(id="model-test-thread")
@@ -109,7 +108,7 @@ class CodexErrorTests(unittest.TestCase):
                 ])
                 with patch("openai_codex.Codex") as codex, \
                         patch("app.services.codex_runner.settings", defaults), \
-                        patch("app.services.codex_runner.resolve_codex_runtime", return_value={"path":"codex.exe","version":"0.161.0"}) as runtime, \
+                        patch("app.services.codex_runner.resolve_codex_runtime", return_value={"path":"codex.exe","version":"0.170.0"}) as runtime, \
                         patch("app.services.codex_runner.discover_dm7_plugin", return_value=SimpleNamespace(
                             available=False, message="test", config_overrides={})):
                     codex.return_value.__enter__.return_value = client
@@ -119,8 +118,56 @@ class CodexErrorTests(unittest.TestCase):
                     runtime.assert_called_once_with(model=execution["model"])
                     start = client.thread_resume if frozen else client.thread_start
                     self.assertEqual(start.call_args.kwargs['model'], execution['model'])
+                    self.assertEqual(start.call_args.kwargs['service_tier'], execution.get('service_tier'))
                     self.assertEqual(thread.turn.call_args.kwargs['model'], execution['model'])
                     self.assertEqual(thread.turn.call_args.kwargs['effort'], execution['effort'])
+                    self.assertEqual(thread.turn.call_args.kwargs['service_tier'], execution.get('service_tier'))
+
+    def test_run_persists_user_facing_replies_and_plan_before_development_starts(self):
+        from openai_codex import Sandbox
+        from app.services.codex_runner import CodexRunner
+
+        events, plans = [], []
+        planner = MagicMock(id="planner")
+        builder = MagicMock(id="developer")
+        planner.turn.return_value.stream.return_value = iter([
+            event("item/completed", item={"type":"agentMessage", "phase":"final_answer", "text":json.dumps({
+                "summary":"只需修改界面仓库。", "repositories":[{"name":"project-ui", "summary":"调整列表展示"}],
+            })}),
+            event("turn/completed", turn={"status":"completed"}),
+        ])
+        builder.turn.return_value.stream.return_value = iter([
+            event("item/completed", item={"type":"reasoning", "summary":["内部摘要不入会话"]}),
+            event("item/completed", item={"type":"agentMessage", "phase":"commentary", "text":"已找到列表组件。"}),
+            event("item/completed", item={"type":"commandExecution", "command":"git diff"}),
+            event("item/completed", item={"type":"agentMessage", "phase":"final_answer", "text":json.dumps({"summary":"列表已更新。"})}),
+            event("turn/completed", turn={"status":"completed"}),
+        ])
+
+        def start(**options):
+            if options['service_name'] == 'tellhow-autodev-plan':
+                self.assertEqual(options['sandbox'], Sandbox.read_only)
+                return planner
+            self.assertEqual(plans[0]['repositories'], [{"name":"project-ui", "summary":"调整列表展示"}])
+            return builder
+
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("openai_codex.Codex") as factory, \
+                patch("app.services.codex_runner.resolve_codex_runtime", return_value={"path":"codex.exe","version":"0.170.0"}), \
+                patch("app.services.codex_runner.discover_dm7_plugin", return_value=SimpleNamespace(
+                    available=False, message="test", config_overrides=())), \
+                patch("app.services.codex_runner.settings", SimpleNamespace(codex_api_key="")):
+            factory.return_value.__enter__.return_value.thread_start.side_effect = start
+            result = CodexRunner().run(cwd=Path(directory), work_item={"id":1,"title":"改进列表"}, project={},
+                repository_names=["project-ui","project-service"], on_repository_plan=plans.append,
+                on_event=lambda kind, text: events.append((kind, text)),
+                model_config={"model":"gpt-6.2-sol","effort":"max","service_tier":"priority"})
+
+        self.assertEqual(result.thread_id, 'developer')
+        self.assertIn('project-ui', builder.turn.call_args.args[0][0].text)
+        self.assertEqual(planner.turn.call_args.kwargs['service_tier'], 'priority')
+        self.assertEqual([item for item in events if item[0] in {"devcore.reply", "devcore.summary"}],
+                         [("devcore.reply", "已找到列表组件。"), ("devcore.summary", "列表已更新。")])
 
     def test_failure_email_shows_upstream_reason(self):
         from app.services.codex_runner import CodexRunner

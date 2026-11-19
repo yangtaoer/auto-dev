@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CODEX_MODEL = "gpt-6.2-sol"
 
 
 def _load_dotenv() -> None:
@@ -62,7 +63,7 @@ class Settings:
     ).resolve()
     runner_token: str = env_secret("AUTODEV_RUNNER_TOKEN")
     cloud_url: str = os.getenv("AUTODEV_CLOUD_URL", "").rstrip("/")
-    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "1.0-Beta.25").strip() or "1.0-Beta.25"
+    runner_version: str = os.getenv("AUTODEV_RUNNER_VERSION", "1.0-Beta.26").strip() or "1.0-Beta.26"
     runner_monitor_host: str = os.getenv("AUTODEV_RUNNER_MONITOR_HOST", "127.0.0.1").strip()
     runner_monitor_port: int = int(os.getenv("AUTODEV_RUNNER_MONITOR_PORT", "28766"))
     # Exclusive single-file limit; MB uses 1024**2 bytes (1 GB = 1024 MB here).
@@ -107,8 +108,9 @@ class Settings:
     smtp_from_name: str = os.getenv("SMTP_FROM_NAME", "AutoDev · 自主研发交付").strip()
     task_admin_email: str = os.getenv("AUTODEV_TASK_ADMIN_EMAIL", "yangtao2@tellhow.com").strip()
     smtp_starttls: bool = env_bool("SMTP_STARTTLS", True)
-    codex_model: str = os.getenv("CODEX_MODEL", "").strip() or "gpt-6.1-sol"
-    codex_reasoning_effort: str = os.getenv("CODEX_REASONING_EFFORT", "").strip() or "xhigh"
+    codex_model: str = os.getenv("CODEX_MODEL", "").strip() or DEFAULT_CODEX_MODEL
+    codex_reasoning_effort: str = os.getenv("CODEX_REASONING_EFFORT", "").strip() or "max"
+    codex_service_tier: str = os.getenv("CODEX_SERVICE_TIER", "").strip().lower()
     codex_api_key: str = env_secret("CODEX_API_KEY")
 
     @property
@@ -138,3 +140,11 @@ class Settings:
 
 
 settings = Settings()
+
+
+def default_codex_execution(config: Settings) -> dict[str, str]:
+    value = {"model": config.codex_model, "effort": config.codex_reasoning_effort}
+    tier = config.codex_service_tier or ("priority" if config.codex_model == DEFAULT_CODEX_MODEL else "")
+    if tier:
+        value["service_tier"] = "priority" if tier == "fast" else tier
+    return value

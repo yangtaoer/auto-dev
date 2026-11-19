@@ -184,9 +184,9 @@ class ExecutionPolicyTests(unittest.TestCase):
 
     def test_requested_sol_default_and_upgrade_preserve_existing_task_snapshot(self):
         from app.services import model_settings
-        requested = {'model':'gpt-6.1-sol', 'effort':'xhigh'}
+        requested = {'model':'gpt-6.2-sol', 'effort':'max', 'service_tier':'priority'}
         with patch.object(model_settings, 'settings', SimpleNamespace(
-                codex_model=requested['model'], codex_reasoning_effort=requested['effort'])):
+                codex_model=requested['model'], codex_reasoning_effort=requested['effort'], codex_service_tier='')):
             self.assertEqual(model_settings.current(), requested)
         old = {'model':'gpt-6-astra', 'effort':'high'}
         with self.db.transaction() as conn:
@@ -194,7 +194,10 @@ class ExecutionPolicyTests(unittest.TestCase):
                          (json.dumps(old), self.db.utc_now()))
         first = self.request()
         self.assertEqual(model_settings.for_request(first), old)
-        models = [dict(requested, name='GPT-6.1 Sol', efforts=['low','medium','high','xhigh','max'])]
+        models = [dict(model=requested['model'], name='GPT-6.2 Sol', efforts=['low','max'], service_tiers=['priority'])]
+        with patch.object(model_settings, 'catalog', return_value=[{**models[0], 'service_tiers': []}]):
+            with self.assertRaisesRegex(ValueError, '支持 Fast'):
+                model_settings.save(**requested, actor_id=self.admin['id'])
         with patch.object(model_settings, 'catalog', return_value=models):
             self.assertEqual(model_settings.save(**requested, actor_id=self.admin['id']), requested)
         self.assertEqual(model_settings.for_request(first), old)

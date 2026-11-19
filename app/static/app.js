@@ -1,5 +1,5 @@
 const USER = window.__USER__;
-const state = { projects: [], projectGuideSignature:'', users: [], notificationUsers:[], analytics:null, dashboard: {active:[],recent:[],counts:{},runners:[],stats:{},capacity:{limit:5,active:0,queued:0,available:5}}, recentFilters:{keyword:'',project_key:'',status:''}, records:{items:[],page:1,pageSize:10,total:0,totalPages:1,filters:{keyword:'',task_type:'',project_key:'',status:'',requester_id:'',date_from:'',date_to:''}}, selectedRequest:null, selectedTerminal:false, selectedIntake:null, routingGeneration:0, continuationDrafts:new Map(), orbExperience:{initialized:false,runs:new Map(),pending:[],detailSteps:new Map(),activitySignature:'',activityIndex:0,activityTimer:null}, live:{requestId:null,taskType:'development',watcherId:null,cursor:0,generation:0,timer:null,lastGroup:'',lastKind:'',lastBubble:null} };
+const state = { projects: [], projectGuideSignature:'', users: [], notificationUsers:[], analytics:null, dashboard: {active:[],recent:[],counts:{},runners:[],stats:{},capacity:{limit:5,active:0,queued:0,available:5}}, recentFilters:{keyword:'',project_key:'',status:''}, records:{items:[],page:1,pageSize:10,total:0,totalPages:1,filters:{keyword:'',task_type:'',project_key:'',status:'',requester_id:'',date_from:'',date_to:''}}, selectedRequest:null, selectedTerminal:false, selectedIntake:null, routingGeneration:0, continuationDrafts:new Map(), orbExperience:{initialized:false,runs:new Map(),pending:[],detailSteps:new Map(),activitySignature:'',activityIndex:0,activityTimer:null}, live:{requestId:null,watcherId:null,cursor:0,generation:0,timer:null} };
 const MODE = {
   routing:['自动识别中','正在读取 TFS 需求并识别项目与交付策略。'],
   local_package:['本地打包交付','提交到最新目标分支后构建，交付业务系统包；SQL 和必要配置有变更时自动随附。'],
@@ -462,6 +462,7 @@ async function refreshDetail(id,silent=false){
     const d=(await api(`/api/requests/${id}`)).request;if(state.selectedRequest!==id||generation!==detailGeneration)return;
     const active=document.activeElement,continuationFocused=silent&&active?.id==='continuation-prompt';
     const focusedTab=silent&&active?.dataset?.taskTab;
+    const focusedDisclosure=silent&&active?.matches?.('details[data-task-disclosure] > summary')&&active.parentElement.dataset.taskDisclosure;
     const learningFocused=silent&&active?.closest?.('.request-learning-panel');
     const supplementFocused=silent&&active?.matches?.('.supplement-answer');
     const followupFocused=silent&&active?.id==='followup-question';
@@ -477,6 +478,7 @@ async function refreshDetail(id,silent=false){
       const prompt=continuationFocused?document.querySelector('#continuation-prompt'):followupFocused?drawer.querySelector('#followup-question'):supplementFocused?drawer.querySelector(`.supplement-answer[data-id="${CSS.escape(active.dataset.id)}"]`):learningFocused&&active.isConnected?active:null;
       if(prompt){prompt.focus({preventScroll:true});if(selectionStart!==null&&typeof prompt.setSelectionRange==='function')prompt.setSelectionRange(selectionStart,selectionEnd);prompt.scrollTop=textareaScroll;}
       else if(focusedTab)document.querySelector(`[data-task-tab="${focusedTab}"]`)?.focus({preventScroll:true});
+      else if(focusedDisclosure)drawer.querySelector(`[data-task-disclosure="${CSS.escape(focusedDisclosure)}"] > summary`)?.focus({preventScroll:true});
     });
   }catch(e){if(!silent&&generation===detailGeneration&&state.selectedRequest===id)loader.fail(e,()=>openDetail(id));}
   finally{if(generation===detailGeneration)detailPending=false;}
@@ -511,14 +513,15 @@ function renderDetail(d){
   const fileSection=d.status==='waiting_input'?'':(files.length||!screenshots.length?`<p class="eyebrow">${isAnalysisTask(d)?'分析报告 / ANALYSIS REPORT':'交付产物 / DELIVERABLES'}</p><div class="artifact-list">${artifacts}</div>`:'');
   const runningStepIndex=d.steps.findIndex(step=>step.status==='running');
   const steps=d.steps.map((s,index)=>`<div class="timeline-item ${s.status} ${index===runningStepIndex-1?'feeds-next':''}" data-step-code="${escapeHtml(s.step_code||'')}"><div class="timeline-mark"></div><div class="timeline-copy"><b>${escapeHtml(engineText(s.name))}</b><span>${escapeHtml(engineText(s.message||({pending:'等待执行',running:'正在执行',completed:'已完成',failed:'执行失败',skipped:'已跳过'}[s.status]||s.status)))}</span>${stepTiming(s)}</div></div>`).join('');
-  const events=d.events.slice(0,20).map(e=>`<div class="event"><b>${escapeHtml(engineText(e.event_type))} · ${fmt(e.created_at)}</b><p>${escapeHtml(engineText(e.message))}</p></div>`).join('');
+  const operations=d.events.filter(e=>!['devcore.reply','devcore.summary','workspace.plan_recorded'].includes(e.event_type));
+  const events=operations.map(e=>`<div class="event"><b>${escapeHtml(engineText(e.event_type))} · ${fmt(e.created_at)}</b><p>${escapeHtml(engineText(e.message))}</p></div>`).join('');
   const simulate=USER.role==='admin'&&d.status==='waiting_merge'&&d.policy_snapshot.simulation_mode?`<button class="btn btn-secondary" id="simulate-merge">模拟 PR 已合并</button>`:'';
   const cancel=TaskActions.render(d);
   const reportSync=isAnalysisTask(d)&&d.current_step==='deliver'&&Object.keys(d.analysis_result||{}).length>0&&files.some(isAnalysisReport)&&['failed','waiting_analysis_sync'].includes(d.status);
   const retry=d.can_manage_request!==false&&!isJoint&&(d.status==='failed'||reportSync)?`<button class="btn btn-secondary retry-run" id="retry-run">${reportSync?'重试报告同步':'重新发起'} ↻</button>`:'';
   const continuation=USER.role==='admin'&&(d.status==='waiting_approval'||d.can_continue_in_place)?renderContinuationPanel(d):'';
   const blockerBrief=d.status==='waiting_approval'?renderBlockerSummary(d):'';
-  const live=d.status==='developing'?`<button class="btn btn-live" id="open-devcore-stream"><i></i>查看${isAnalysisTask(d)?'分析':'研发'}过程</button>`:'';
+  const live=d.status==='developing'?`<button class="btn btn-secondary" id="open-devcore-stream">打开实时会话 ↗</button>`:'';
   const prSources=isJoint?jointChildren.flatMap(child=>requestPullRequests(child).map(item=>({...item,project:child.project_name}))):requestPullRequests(d).map(item=>({...item,project:''}));
   const prButtons=prSources.map(item=>`<a class="btn btn-primary" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">打开 ${escapeHtml(item.project?`${item.project} / ${item.repository}`:item.repository)} · PR #${escapeHtml(item.id)} ↗</a>`).join('');
   const supplement=d.can_manage_request!==false&&d.status==='waiting_input'?renderSupplementPanel(d):'';
@@ -532,13 +535,15 @@ function renderDetail(d){
   const deploymentServices=window.AutoDevDeploymentLinks?.section(d.deployment_services)||'';
   const failure=d.error_message&&d.status!=='waiting_approval'?`<section class="task-failure-summary"><h3>${reportSync?'报告已生成，外部同步待重试':'任务未完成'}</h3><p>${escapeHtml(engineText(d.error_message).slice(0,180))}${d.error_message.length>180?'…':''}</p><details><summary>展开技术详情</summary><pre>${escapeHtml(engineText(d.error_message))}</pre></details></section>`:'';
   const codeSummary=d.branch_name||d.commit_hash?`<section class="task-code-summary"><h3>代码信息</h3><div><span>来源分支 <code>${escapeHtml(d.branch_name||'未登记')}</code></span><span>最终提交 <code>${escapeHtml(d.commit_hash||'未登记')}</code></span></div></section>`:'';
-  const overview=`${files.length||screenshots.length?deliveryFiles:''}${deploymentServices}${blockerBrief}${failure}${['waiting_input','waiting_approval'].includes(d.status)?'':summary}${codeSummary}${jointPanel}${supplement}${continuation}${retry?`<div class="detail-actions">${retry}</div>`:''}${cancel}${!files.length&&!screenshots.length&&!['waiting_input','waiting_approval'].includes(d.status)?deliveryFiles:''}`;
-  const requirements=`<div class="requirement-layout"><section class="requirement-primary"><h3>按需求描述验收</h3><p class="muted">保留需求原有分点；没有分点时按整体范围验证。</p><div id="requirement-points"></div><details class="task-context"><summary>查看需求描述</summary><div class="task-requirement-copy">${escapeHtml(d.requirement_summary||d.title||'需求描述读取中')}</div></details></section><aside class="requirement-context"><section><h3>${editorialIcon('layers')}验收范围</h3><p>以本次需求描述为准，不使用 TFS 验收条件字段作为拆解依据。</p><p>已完善的功能和其他项目代码不应受到本次修改影响。</p></section><section><h3>${editorialIcon('clipboard')}相关项目经验</h3><div id="task-experience-context"></div></section></aside></div>`;
-  const development=isAnalysisTask(d)&&analysisPanel?`<div class="analysis-workspace">${analysisPanel}<details class="analysis-process-details"><summary>分析流水线与执行记录</summary><div class="development-layout"><aside class="development-steps"><div class="timeline">${steps}</div></aside><section class="task-event-console"><div class="detail-actions">${live}</div><div class="event-list">${events||'暂无执行记录'}</div></section></div></details>${governancePanel}</div>`:`<div class="development-layout"><aside class="development-steps"><h3>${isAnalysisTask(d)?'分析':'研发'}流水线</h3><div class="timeline">${steps}</div></aside><div class="development-workspace"><h3>当前${isAnalysisTask(d)?'分析':'研发'}进展</h3><div class="development-current">${summary}<div class="detail-actions">${live}</div></div><section class="task-event-console"><h3>最新执行记录</h3><div class="event-list">${events||'<p class="muted">暂无执行记录，新的输出将在这里展示。</p>'}</div></section>${governancePanel}</div></div>`;
   const repositories=Array.isArray(d.repository_states)?d.repository_states:[];
+  const changedFiles=!isAnalysisTask(d)?TaskDialog.changedFiles(repositories):'';
+  const overview=`${files.length||screenshots.length?deliveryFiles:''}${deploymentServices}${blockerBrief}${failure}${['waiting_input','waiting_approval'].includes(d.status)?'':summary}${codeSummary}${changedFiles}${jointPanel}${supplement}${continuation}${retry?`<div class="detail-actions">${retry}</div>`:''}${cancel}${!files.length&&!screenshots.length&&!['waiting_input','waiting_approval'].includes(d.status)?deliveryFiles:''}`;
+  const requirements=`${isAnalysisTask(d)?'':TaskDialog.repositoryPlan(d)}<div class="requirement-layout"><section class="requirement-primary"><h3>按需求描述验收</h3><p class="muted">保留需求原有分点；没有分点时按整体范围验证。</p><div id="requirement-points"></div><details class="task-context"><summary>查看需求描述</summary><div class="task-requirement-copy">${escapeHtml(d.requirement_summary||d.title||'需求描述读取中')}</div></details></section><aside class="requirement-context"><section><h3>${editorialIcon('layers')}验收范围</h3><p>以本次需求描述为准，不使用 TFS 验收条件字段作为拆解依据。</p><p>已完善的功能和其他项目代码不应受到本次修改影响。</p></section><section><h3>${editorialIcon('clipboard')}相关项目经验</h3><div id="task-experience-context"></div></section></aside></div>`;
+  const executionRecords=`<details class="task-execution-records" data-task-disclosure="execution"><summary><b>执行记录</b><span>${operations.length} 条近期记录</span></summary><div class="development-layout"><aside class="development-steps"><h3>流水线</h3><div class="timeline">${steps}</div></aside><section class="task-event-console"><div class="event-list">${events||'<p class="muted">暂无执行记录。</p>'}</div></section></div></details>`;
+  const development=`<div class="task-development-content">${TaskDialog.conversation(d,live)}${analysisPanel}${executionRecords}${governancePanel}</div>`;
   const repositoryDelivery=repositories.length?`<section class="delivery-repositories"><h3>${editorialIcon('code')}代码提交与合并</h3><div class="delivery-repository-scroll"><table><thead><tr><th>代码仓库</th><th>目标分支</th><th>提交记录</th><th>合并记录</th><th>PR</th></tr></thead><tbody>${repositories.map(repo=>`<tr><td>${escapeHtml(repo.repository_short_name||repo.name||'代码仓库')}</td><td><code>${escapeHtml(repo.base_branch||'未登记')}</code></td><td><code title="${escapeHtml(repo.commit_hash||'')}">${escapeHtml((repo.commit_hash||'').slice(0,12)||'未登记')}</code></td><td><span class="${repo.merge_commit?'merge-recorded':'muted'}">${repo.merge_commit?'已登记合并提交':'尚无合并记录'}</span>${repo.merge_commit?`<code title="${escapeHtml(repo.merge_commit)}">${escapeHtml(repo.merge_commit.slice(0,12))}</code>`:''}</td><td>${repo.pr_url&&/^https?:\/\//i.test(repo.pr_url)?`<a href="${escapeHtml(repo.pr_url)}" target="_blank" rel="noopener">PR #${escapeHtml(repo.pr_id||'—')} ↗</a>`:'—'}</td></tr>`).join('')}</tbody></table></div></section>`:'';
   const syncStatus=reportSync?`<section class="report-sync-state"><div><h3>${editorialIcon('check')}分析报告已生成</h3><p>分析结论和已有报告保留，可在首页下载。</p><button type="button" class="btn btn-secondary" data-task-switch="overview">查看分析报告 →</button></div><div><h3>${editorialIcon('refresh')}外部同步待重试</h3><p>仅重试 TFS 状态同步与通知，不重新执行分析。</p>${retry.replace('id="retry-run"','id="retry-delivery"')}</div></section>${failure}`:'';
-  const delivery=`${syncStatus}${deliverySummary}${deploymentServices}<h3 class="delivery-process-title">${isAnalysisTask(d)?'报告交付流程':'提交与交付流程'}</h3><div id="delivery-step-list" class="timeline"></div>${repositoryDelivery}<div class="detail-actions">${prButtons}${simulate}</div><div class="delivery-notice"><span>通知至 ${(d.notification_emails||[]).map(escapeHtml).join('、')||'—'}</span><button type="button" class="text-button" data-task-switch="overview">查看交付产物 →</button></div>`;
+  const delivery=`${syncStatus}${deliverySummary}${deploymentServices}<h3 class="delivery-process-title">${isAnalysisTask(d)?'报告交付流程':'提交与交付流程'}</h3><div id="delivery-step-list" class="timeline"></div>${repositoryDelivery}${changedFiles}<div class="detail-actions">${prButtons}${simulate}</div><div class="delivery-notice"><span>通知至 ${(d.notification_emails||[]).map(escapeHtml).join('、')||'—'}</span><button type="button" class="text-button" data-task-switch="overview">查看交付产物 →</button></div>`;
   document.querySelector('#detail-content').innerHTML=TaskDialog.render(d.id,head,[
     ['overview','交付概览',overview],['requirement','需求拆解',requirements],
     ['development',isAnalysisTask(d)?'分析过程':'研发过程',development],
@@ -567,12 +572,111 @@ function renderDetail(d){
 function renderBlockerSummary(d){const summary=d.blocker_summary||{},reason=summary.reason||d.error_message||'研发遇到尚未解决的问题。',decision=summary.decision_required||'';return `<section class="blocker-brief" role="alert"><header><span>${decision?'BLOCKED / DECISION REQUIRED':'RECOVERY / AUTO POLICY'}</span><b>${decision?'任务已暂停，等待你的判断':'普通技术问题无需人工审批'}</b></header><div class="blocker-brief-grid" ${decision?'':'style="grid-template-columns:1fr"'}><article class="blocker-reason"><span>01 / 当前情况</span><p>${escapeHtml(engineText(reason))}</p></article>${decision?`<article class="blocker-decision"><span>02 / 需要你判断</span><p>${escapeHtml(engineText(decision))}</p></article>`:''}</div></section>`}
 function renderContinuationPanel(d){const draft=state.continuationDrafts.get(d.id)||'';return `<section class="continuation-panel"><div class="continuation-marker"><span>ADMIN RECOVERY</span><b>继续尝试解决当前阻塞</b><p>不会新建任务。系统将采用最新项目门禁，复用当前隔离工作区与 DevCore 会话继续研发。</p></div><form id="continuation-form" class="continuation-form"><label for="continuation-prompt"><b>给 DevCore 的判断依据与补充提示</b><small>可选；可补充业务边界和排查线索，普通技术问题由 DevCore 自主判断。输入内容会在任务自动刷新期间保留，提交后再清除。</small></label><textarea id="continuation-prompt" name="prompt" maxlength="6000" placeholder="例如：请复用当前工作区继续排查，并以构建、测试、路由断言和部署检查作为验收证据。">${escapeHtml(draft)}</textarea><p class="form-error continuation-error" hidden></p><button type="submit" class="btn btn-primary">继续执行并保留现场 ↗</button></form></section>`}
 function renderSupplementPanel(d){const analysis=isAnalysisTask(d),existing=new Map((d.supplement_answers||[]).map(item=>[String(item.id||''),String(item.answer||'')]));const requests=(d.supplement_requests||[]).filter(item=>item&&item.id&&item.question);const fields=requests.map((item,index)=>`<label class="supplement-item"><span class="supplement-index">${String(index+1).padStart(2,'0')}</span><span class="supplement-copy"><b>${escapeHtml(engineText(item.question))}${item.required===false?'<em>可选</em>':'<em>必填</em>'}</b>${item.reason?`<small>为什么需要：${escapeHtml(engineText(item.reason))}</small>`:''}${item.suggested_answer?`<i>填写提示：${escapeHtml(engineText(item.suggested_answer))}</i>`:''}<textarea class="supplement-answer" data-id="${escapeHtml(item.id)}" placeholder="请在这里填写明确的业务口径、数据来源或规则…" ${item.required===false?'':'required'}>${escapeHtml(existing.get(String(item.id))||'')}</textarea></span></label>`).join('');return `<section class="supplement-panel"><div class="supplement-signal"><span>INPUT REQUIRED</span><b>需要补充信息后继续${analysis?'分析':'研发'}</b><p>任务已暂停且不占用执行器并发槽位。提交后会继续原隔离工作区和 DevCore 会话。</p></div><div class="supplement-conclusion"><span>当前${analysis?'分析':'研发'}结论</span><p>${escapeHtml(engineText(d.result_summary||'DevCore 已完成当前分析，请根据下列问题补充信息。'))}</p></div><form id="supplement-form" class="supplement-form">${fields||'<p class="muted">待补充问题正在生成，请稍后刷新。</p>'}<p class="form-error supplement-error" hidden></p><button type="submit" class="btn btn-primary" ${fields?'':'disabled'}>提交补充并继续${analysis?'分析':'研发'} ↗</button></form></section>`}
-async function openDevCoreStream(requestId,workItemId,record={}){closeDevCoreStream();const live=state.live,generation=++live.generation,analysis=isAnalysisTask(record);live.requestId=requestId;live.taskType=analysis?'analysis':'development';live.cursor=0;live.lastGroup='';live.lastKind='';live.lastBubble=null;const panel=document.querySelector('#devcore-stream-panel'),chat=document.querySelector('#devcore-chat');panel.classList.add('open');panel.setAttribute('aria-hidden','false');document.querySelector('#devcore-stream-eyebrow').textContent=analysis?'实时问题分析 / LIVE DEVCORE ANALYSIS':'实时研发会话 / LIVE DEVCORE SESSION';document.querySelector('#devcore-stream-title').innerHTML=`${tfsLink(record,`TFS #${workItemId}`)} · ${analysis?'分析':'研发'}过程`;chat.innerHTML='<div class="chat-system"><i></i><span>正在连接本机 DevCore 会话…</span></div>';try{const result=await api(`/api/requests/${requestId}/devcore-watch/start`,{method:'POST'});if(generation!==live.generation)return;live.watcherId=result.watcher_id;live.cursor=result.cursor||0;chat.innerHTML='<div class="chat-system active"><i></i><span>实时通道已打开，等待新的 DevCore 输出</span></div>';pollDevCoreStream(generation)}catch(err){if(generation!==live.generation)return;chat.innerHTML=`<div class="chat-system error"><i></i><span>${escapeHtml(engineText(err.message))}</span></div>`}}
-async function pollDevCoreStream(generation){const live=state.live;if(generation!==live.generation||!live.watcherId)return;try{const result=await api(`/api/requests/${live.requestId}/devcore-watch/${live.watcherId}?after=${live.cursor}`);if(generation!==live.generation)return;live.cursor=result.cursor||live.cursor;(result.events||[]).forEach(appendDevCoreEvent);live.timer=setTimeout(()=>pollDevCoreStream(generation),650)}catch(err){if(generation!==live.generation)return;appendDevCoreSystem(engineText(err.message),'error');live.watcherId=null}}
-function renderDevCoreMarkdown(target,value){target.className='chat-rendered';let list=null;engineText(value).split(/\r?\n/).forEach(line=>{if(!line.trim()){list=null;return}if(line.startsWith('### ')){const heading=document.createElement('h3');heading.textContent=line.slice(4);target.appendChild(heading);list=null;return}if(line.startsWith('- ')){if(!list){list=document.createElement('ul');target.appendChild(list)}const item=document.createElement('li');item.textContent=line.slice(2);list.appendChild(item);return}const paragraph=document.createElement('p');paragraph.textContent=line;target.appendChild(paragraph);list=null})}
-function appendDevCoreEvent(event){const live=state.live,chat=document.querySelector('#devcore-chat'),kind=event.kind||'status',analysis=live.taskType==='analysis';if(kind==='status')return;const group=event.group||`seq-${event.seq}`;let bubble=live.lastBubble;if(!event.delta||group!==live.lastGroup||kind!==live.lastKind||!bubble){bubble=document.createElement('article');bubble.className=`chat-message ${kind}`;const labels={assistant:analysis?'DEVCORE 问题分析结论':'DEVCORE 研发结论',reasoning:'分析摘要',command:'终端执行',file:'文件变更',plan:analysis?'分析计划':'研发计划'};const label=document.createElement('div');label.className='chat-label';const name=document.createElement('span');name.textContent=labels[kind]||(analysis?'分析过程':'研发过程');const time=document.createElement('time');time.textContent=new Date(event.at).toLocaleTimeString('zh-CN',{hour12:false});label.append(name,time);bubble.appendChild(label);const content=document.createElement(event.format==='markdown'?'div':'pre');bubble.appendChild(content);chat.appendChild(bubble);live.lastBubble=bubble}const content=bubble.lastElementChild;if(event.format==='markdown'&&!event.delta){renderDevCoreMarkdown(content,event.content)}else{content.textContent+=engineText(event.content||'')}live.lastGroup=group;live.lastKind=kind;while(chat.children.length>140)chat.removeChild(chat.firstElementChild);chat.scrollTop=chat.scrollHeight}
-function appendDevCoreSystem(message,type='status'){const chat=document.querySelector('#devcore-chat'),el=document.createElement('div');el.className=`chat-system ${type}`;el.innerHTML=`<i></i><span>${escapeHtml(engineText(message))}</span>`;chat.appendChild(el);chat.scrollTop=chat.scrollHeight}
-function closeDevCoreStream(){const live=state.live,requestId=live.requestId,watcherId=live.watcherId;live.generation+=1;if(live.timer)clearTimeout(live.timer);live.timer=null;live.watcherId=null;live.requestId=null;live.cursor=0;live.lastBubble=null;const panel=document.querySelector('#devcore-stream-panel');panel.classList.remove('open');panel.setAttribute('aria-hidden','true');document.querySelector('#devcore-chat').innerHTML='';if(requestId&&watcherId)fetch(`/api/requests/${requestId}/devcore-watch/${watcherId}/stop`,{method:'POST',headers:{'Content-Type':'application/json'},keepalive:true}).catch(()=>{})}
+async function openDevCoreStream(requestId, workItemId, record = {}) {
+  closeDevCoreStream();
+  const live = state.live, generation = ++live.generation, analysis = isAnalysisTask(record);
+  live.requestId = requestId;
+
+  const panel = document.querySelector('#devcore-stream-panel');
+  panel.classList.add('open');
+  panel.setAttribute('aria-hidden', 'false');
+  document.querySelector('#devcore-stream-eyebrow').textContent = analysis ? '实时问题分析' : '实时研发会话';
+  document.querySelector('#devcore-stream-title').innerHTML = `${tfsLink(record, `TFS #${workItemId}`)} · ${analysis?'分析':'研发'}过程`;
+  const replies = document.querySelector('#devcore-replies');
+  appendDevCoreSystem('正在连接本机 DevCore 会话…');
+  try {
+    const result = await api(`/api/requests/${requestId}/devcore-watch/start`, {method:'POST'});
+    if (generation !== live.generation) return;
+    live.watcherId = result.watcher_id;
+    live.cursor = result.cursor || 0;
+    replies.replaceChildren();
+    appendDevCoreSystem('等待新的 AI 回复', 'active');
+    pollDevCoreStream(generation);
+  } catch (error) {
+    if (generation !== live.generation) return;
+    replies.replaceChildren();
+    appendDevCoreSystem(error.message, 'error');
+  }
+}
+
+async function pollDevCoreStream(generation) {
+  const live = state.live;
+  if (generation !== live.generation || !live.watcherId) return;
+  try {
+    const result = await api(`/api/requests/${live.requestId}/devcore-watch/${live.watcherId}?after=${live.cursor}`);
+    if (generation !== live.generation) return;
+    live.cursor = result.cursor || live.cursor;
+    (result.events || []).forEach(appendDevCoreEvent);
+    live.timer = setTimeout(() => pollDevCoreStream(generation), 650);
+  } catch (error) {
+    if (generation !== live.generation) return;
+    appendDevCoreSystem(error.message, 'error');
+    live.watcherId = null;
+  }
+}
+
+function appendDevCoreEvent(event) {
+  const kind = event.kind || 'status';
+  if (kind === 'status') return;
+  const assistant = kind === 'assistant';
+  const box = document.querySelector(assistant ? '#devcore-replies' : '#devcore-operations');
+  const execution = document.querySelector('#devcore-execution');
+  if (!assistant) execution.hidden = false;
+  else box.querySelector('.chat-system.active')?.remove();
+  const group = event.group || `seq-${event.seq}`;
+  let bubble = box.lastElementChild;
+  if (!event.delta || bubble?.dataset.group !== group || bubble?.dataset.kind !== kind) {
+    bubble = document.createElement('article');
+    bubble.className = `chat-message ${kind}`;
+    bubble.dataset.group = group;
+    bubble.dataset.kind = kind;
+    const labels = {assistant:event.final?'本轮总结':'AI 回复', reasoning:'分析摘要', command:'终端执行', file:'文件变更', plan:'计划'};
+    const label = document.createElement('div');
+    label.className = 'chat-label';
+    const name = document.createElement('span');
+    name.textContent = labels[kind] || '执行过程';
+    const time = document.createElement('time');
+    time.textContent = new Date(event.at).toLocaleTimeString('zh-CN', {hour12:false});
+    label.append(name, time);
+    bubble.append(label, document.createElement(event.format === 'markdown' ? 'div' : 'pre'));
+    box.appendChild(bubble);
+    if (box.children.length > 140) box.firstElementChild.remove();
+  }
+  const content = bubble.lastElementChild;
+  if (event.format === 'markdown' && !event.delta) {
+    content.className = 'chat-rendered';
+    content.innerHTML = TaskDialog.replyMarkup(engineText(event.content));
+  } else {
+    content.textContent += engineText(event.content || '');
+  }
+  const scroll = assistant ? document.querySelector('#devcore-chat') : box;
+  if (assistant || execution.open) scroll.scrollTop = scroll.scrollHeight;
+}
+
+function appendDevCoreSystem(message, type = 'status') {
+  const replies = document.querySelector('#devcore-replies'), element = document.createElement('div');
+  element.className = `chat-system ${type}`;
+  element.innerHTML = `<i></i><span>${escapeHtml(engineText(message))}</span>`;
+  replies.appendChild(element);
+}
+
+function closeDevCoreStream() {
+  const live = state.live, requestId = live.requestId, watcherId = live.watcherId;
+  live.generation += 1;
+  if (live.timer) clearTimeout(live.timer);
+  Object.assign(live, {timer:null, watcherId:null, requestId:null, cursor:0});
+  const panel = document.querySelector('#devcore-stream-panel');
+  panel.classList.remove('open');
+  panel.setAttribute('aria-hidden', 'true');
+  document.querySelector('#devcore-replies').replaceChildren();
+  document.querySelector('#devcore-operations').replaceChildren();
+  const execution = document.querySelector('#devcore-execution');
+  execution.hidden = true;
+  execution.open = false;
+  if (requestId && watcherId) fetch(`/api/requests/${requestId}/devcore-watch/${watcherId}/stop`,
+    {method:'POST', headers:{'Content-Type':'application/json'}, keepalive:true}).catch(()=>{});
+}
+
 function closeDetail(){window.RequestFollowups?.stop();state.routingGeneration+=1;detailGeneration+=1;detailPending=false;LoadingUI.cancel('#detail-content');state.selectedIntake=null;state.selectedRequest=null;state.selectedTerminal=false;closeDevCoreStream();document.querySelector('#detail-backdrop').hidden=true;document.querySelector('#detail-drawer').classList.remove('open');document.querySelector('#detail-drawer').setAttribute('aria-hidden','true');TaskDialog.close()}
 
 function addEmailRow(value=''){const editor=document.querySelector('#user-email-editor'),row=document.createElement('div');row.className='email-row';row.innerHTML=`<span class="email-order">${String(editor.children.length+1).padStart(2,'0')}</span><input type="email" class="user-email-input" value="${escapeHtml(value)}" placeholder="name@example.com" required><button type="button" title="移除邮箱">×</button>`;row.querySelector('button').onclick=()=>{if(editor.children.length===1){row.querySelector('input').value='';return}row.remove();[...editor.children].forEach((item,index)=>item.querySelector('.email-order').textContent=String(index+1).padStart(2,'0'))};editor.appendChild(row)}

@@ -406,7 +406,7 @@ class Worker:
                 request_id,
                 "develop",
                 "running",
-                "DevCore 正在结合代码、TFS 与开发库定位问题" if analysis_task else "DevCore 正在分析需求并修改代码",
+                "DevCore 正在结合代码、TFS 与开发库定位问题" if analysis_task else "正在拆解需求并核对 Git 仓库",
             )
             paths: list[str] = []
             if project.get("simulation_mode"):
@@ -435,6 +435,7 @@ class Worker:
                         supplement_answers=detail.get("supplement_answers") or [],
                         task_type=task_type,
                         model_config=self.store.model_config(request_id),
+                        repository_plan=detail.get("repository_plan") if not detail.get("supplement_answers") else None,
                     )
                 finally:
                     live_publisher.close()
@@ -801,6 +802,22 @@ class Worker:
                 str(kwargs["project"].get("development_instructions") or "")
                 + "\n本任务先前数据库写入记录（仅 ID/用途/状态/指纹，请核对是否已保存业务 SQL，勿重复执行）：\n"
                 + json.dumps(list(audit.entries.values()), ensure_ascii=False)}
+        if kwargs.get("task_type") == TaskType.DEVELOPMENT.value and repository_states:
+            def save_plan(plan: dict) -> None:
+                self._check_cancelled(request_id)
+                saved = {**plan, "revision": revision}
+                self.store.update_request(request_id, repository_plan=saved)
+                kwargs["repository_plan"] = saved
+                self.store.add_event(request_id, "workspace.plan_recorded", plan["summary"],
+                                     metadata={"repositories": [entry["name"] for entry in plan["repositories"]]})
+                self.store.update_step(request_id, "develop", "running", "DevCore 正在实现需求并验证变更")
+
+            revision = kwargs["work_item"].get("revision")
+            previous = kwargs.get("repository_plan") or {}
+            if previous.get("status") != "planned" or previous.get("revision") != revision:
+                kwargs["repository_plan"] = None
+            kwargs["repository_names"] = [state["name"] for state in repository_states]
+            kwargs["on_repository_plan"] = save_plan
         for attempt in range(3):
             self._check_cancelled(request_id)
             run = CodexRunner().run(**kwargs, is_cancelled=lambda: self.store.get_status(request_id) == 'cancelled',
