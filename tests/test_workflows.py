@@ -3102,7 +3102,7 @@ else:
     def test_local_project_catalog_contains_new_network_command_projects(self) -> None:
         projects = {item["project_key"]: item for item in load_project_presets()}
         expected = {
-            "sichuan-dispatch-network-command": ("四川省调网络发令", "sichuan_auto_review", 10),
+            "sichuan-dispatch-network-command": ("四川省调网络发令", "sichuan_auto_review", 12),
             "chongqing-dispatch-network-command": ("重庆市调网络发令", "sichuan_auto_review", 10),
             "aba-network-command": ("阿坝网络发令", "sichuan_auto_review", 9),
             "guangan-network-command": ("广安网络发令", "sichuan_auto_review", 9),
@@ -3119,6 +3119,16 @@ else:
                 self.assertEqual(project["base_branch"], "dev")
                 self.assertEqual(len(project["repository_paths"]), repository_count)
                 self.assertTrue(project["build_command"])
+        sichuan = projects["sichuan-dispatch-network-command"]
+        sichuan_repositories = {Path(value).name for value in sichuan["repository_paths"]}
+        for repository in ("dcsd-km-srv-sichuan", "dcsd-km-ui-sichuan"):
+            with self.subTest(repository=repository):
+                self.assertIn(repository, sichuan_repositories)
+                self.assertEqual(sichuan["repository_base_branches"][repository], "dev")
+                self.assertEqual(
+                    sichuan["repository_tfs_paths"][repository],
+                    f"http://dev.tellhowsoft.com/DefaultCollection/DCS/_git/{repository}",
+                )
         chongqing = projects["chongqing-dispatch-network-command"]
         self.assertEqual(chongqing["repository_base_branches"], {"dcsd-springboot-starter": "chongqing"})
         luzhou = projects["luzhou-network-command"]

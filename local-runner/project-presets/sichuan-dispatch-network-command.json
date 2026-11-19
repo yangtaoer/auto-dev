@@ -29,6 +29,8 @@
     "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuan\\dcsd-direct-ui-sichuan",
     "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuan\\dcsd-extrawork-ui-sichuan",
     "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuan\\dcsd-homepage-ui-sichuan",
+    "C:\\work\\workSpaceTellHow\\dcsd-km-srv-sichuan",
+    "C:\\work\\workSpaceTellHow\\dcsd-km-ui-sichuan",
     "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuan\\dcsd-notice-srv-sichuan",
     "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuan\\dcsd-notice-ui-sichuan",
     "C:\\work\\workSpaceTellHow\\dcsd-springboot-sichuan\\dcsd-permit-ui-sichuan",
@@ -37,7 +39,15 @@
     "C:\\work\\workSpaceTellHow\\webservice-scczp-sd"
   ],
   "base_branch": "dev",
-  "repository_base_branches": {"webservice-scczp-sd": "dev_sd"},
+  "repository_base_branches": {
+    "dcsd-km-srv-sichuan": "dev",
+    "dcsd-km-ui-sichuan": "dev",
+    "webservice-scczp-sd": "dev_sd"
+  },
+  "repository_tfs_paths": {
+    "dcsd-km-srv-sichuan": "http://dev.tellhowsoft.com/DefaultCollection/DCS/_git/dcsd-km-srv-sichuan",
+    "dcsd-km-ui-sichuan": "http://dev.tellhowsoft.com/DefaultCollection/DCS/_git/dcsd-km-ui-sichuan"
+  },
   "repository_expectations": {"webservice-scczp-sd": "webservice-scczp"},
   "quality_profile": {
     "companion_repositories": [
