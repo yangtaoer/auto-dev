@@ -37,7 +37,7 @@ const artifactFileName = artifact => String(artifact?.name||'').split(/[\\/]/).f
 const artifactFileTag = artifact => `<a class="artifact-link artifact-file-link" href="${escapeHtml(artifactOpenUrl(artifact))}" target="_blank" rel="noopener" title="${escapeHtml(artifact.name)}" aria-label="下载 ${escapeHtml(artifact.name)}" onclick="event.stopPropagation()">${editorialIcon(artifact.kind==='sql'?'code':artifact.kind==='package'?'cube':'clipboard')}<span class="artifact-file-name">${escapeHtml(artifactFileName(artifact))}</span><span class="artifact-file-arrow" aria-hidden="true">↗</span></a>`;
 const artifactLinks = (artifacts,deliveryMode='',deliveryOptions=null) => visibleArtifacts(artifacts,deliveryMode,deliveryOptions).map(a=>isMergeScreenshot(a)?`<span class="artifact-action-pair"><button type="button" class="artifact-link artifact-preview-trigger" data-preview-url="${escapeHtml(artifactPreviewUrl(a))}" data-download-url="${escapeHtml(artifactOpenUrl(a))}" data-preview-title="${escapeHtml(a.name)}" data-preview-repository="${escapeHtml(artifactRepository(a))}">预览 ${escapeHtml(artifactRepository(a))} ↗</button><a class="artifact-link artifact-download-link" href="${escapeHtml(artifactOpenUrl(a))}" target="_blank" rel="noopener" download title="下载 ${escapeHtml(a.name)}" onclick="event.stopPropagation()">下载 ↘</a></span>`:isMenuLink(a)?`<button type="button" class="artifact-link menu-link-copy" data-menu-link="${escapeHtml(a.name)}" title="复制 ${escapeHtml(a.name)}">新增视图 · ${escapeHtml(a.name)}</button>`:isLicenseRequest(a)?`<a class="artifact-link license-link" href="${escapeHtml(artifactOpenUrl(a))}" target="_blank" rel="noopener" title="${escapeHtml(a.name)}" onclick="event.stopPropagation()">License 申请 ↗</a>`:isReleaseArtifact(a)?`<a class="artifact-link release-link" href="${escapeHtml(artifactOpenUrl(a))}" target="_blank" rel="noopener" title="${escapeHtml(a.name)}" onclick="event.stopPropagation()">发版产物 ↗</a>`:isAnalysisReport(a)?`<a class="artifact-link analysis-report-link" href="${escapeHtml(artifactOpenUrl(a))}" target="_blank" rel="noopener" title="${escapeHtml(a.name)}" onclick="event.stopPropagation()">问题分析报告 ↗</a>`:artifactFileTag(a)).join('');
 const requestDuration = record => {if(!record.created_at&&!record.started_at)return Number.isFinite(Number(record.duration_seconds))?Number(record.duration_seconds):null;const start=new Date(record.created_at||record.started_at).getTime(),end=new Date(record.completed_at||Date.now()).getTime();return Number.isFinite(start)&&Number.isFinite(end)?Math.max(0,(end-start)/1000):null};
-const requestPullRequests = record => {const states=Array.isArray(record.repository_states)?record.repository_states:[];const items=states.filter(item=>item.pr_url).map(item=>({repository:item.repository_short_name||item.name||'代码仓库',id:item.pr_id,url:item.pr_url}));if(!items.length&&record.pr_url)items.push({repository:'主仓库',id:record.pr_id,url:record.pr_url});return items};
+const requestPullRequests = record => {const states=Array.isArray(record.repository_states)?record.repository_states:[];const items=states.filter(item=>item.pr_url).map(item=>({repository:item.repository_short_name||item.name||'代码仓库',id:item.pr_id,url:item.pr_url,merged:!!item.merge_commit}));if(!items.length&&record.pr_url)items.push({repository:'主仓库',id:record.pr_id,url:record.pr_url,merged:!!record.merge_commit});return items};
 const pendingPrLinks = record => record.status==='waiting_merge'?requestPullRequests(record).map(item=>`<a class="artifact-link pr-link" href="${escapeHtml(item.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escapeHtml(item.repository)} · PR #${escapeHtml(item.id)} ↗</a>`).join(''):'';
 const deliveryLinks = record => (pendingPrLinks(record)+artifactLinks(record.artifacts,record.delivery_mode,record.delivery_options))||'<span class="muted">—</span>';
 const delay = milliseconds => new Promise(resolve=>setTimeout(resolve,milliseconds));
@@ -82,36 +82,118 @@ function switchView(name){
   document.body.dataset.view=name;
   document.dispatchEvent(new CustomEvent('autodev:view',{detail:name}));
   closeSidebarTasks(false);
-  if(name==='experiences')window.ProjectLearning?.open();
-  if(name==='models')window.ModelSettings?.open();
-  if(name==='workshop')window.CreativeWorkshop?.open();
-  if(workspaceLoaded&&!['workshop','models','experiences'].includes(name))refresh({background:true}).catch(()=>{});
+  openWorkspaceView(name);
 }
 
-let refreshPromise=null, workspaceLoaded=false, recordsGeneration=0, recordsPending=false, detailGeneration=0, detailPending=false, auxiliaryReadAt=0;
-const workspaceLoadingRegions=[['dashboard','dashboard','正在准备任务总览'],['requests','table','正在整理交付记录'],['projects','cards','正在读取自主项目'],['analytics','analytics','正在汇总任务统计'],['users','table','正在读取账号列表']];
+let refreshPromise=null, workspaceLoaded=false, recordsGeneration=0, recordsPending=false, detailGeneration=0, detailPending=false;
+let catalogAt=0, catalogPromise=null, usersPromise=null, recipientsPromise=null;
+const viewReads=new Map();
+const viewLoading={
+  requests:['table','正在读取交付记录'], projects:['cards','正在读取自主项目'],
+  'project-detail':['cards','正在读取项目仓库'], analytics:['analytics','正在读取统计看板'],
+  users:['table','正在读取账号列表'],
+};
+function measureMenu(name, started) {
+  requestAnimationFrame(()=>performance.measure(`autodev:menu:${name}`,{start:started,end:performance.now()}));
+}
+function openWorkspaceView(name) {
+  const started=performance.now();
+  return readWorkspaceView(name).then(()=>measureMenu(name,started)).catch(()=>{});
+}
+function readProjectCatalog(force=false) {
+  if(catalogPromise)return catalogPromise;
+  if(!force&&catalogAt&&Date.now()-catalogAt<60000)return Promise.resolve();
+  catalogPromise=api('/api/projects').then(data=>{
+    state.projects=data.projects||[];
+    catalogAt=Date.now();
+    renderProjectGuide();
+    renderRecordFilterOptions();
+    window.ProjectLearning?.syncProjects();
+  }).finally(()=>{catalogPromise=null;});
+  return catalogPromise;
+}
+function readUsers() {
+  if(USER.role!=='admin')return Promise.resolve();
+  if(!usersPromise){
+    usersPromise=api('/api/users').then(data=>{
+      state.users=data.users||[];
+      renderRecordFilterOptions();
+    }).finally(()=>{usersPromise=null;});
+  }
+  return usersPromise;
+}
+function readRecipients() {
+  if(!recipientsPromise){
+    recipientsPromise=api('/api/notification-recipients').then(data=>{
+      state.notificationUsers=data.users||[];
+      if(!document.querySelector('#request-modal').hidden)renderRequestEmailOptions(false);
+    }).finally(()=>{recipientsPromise=null;});
+  }
+  return recipientsPromise;
+}
+function readWorkspaceView(name,force=false) {
+  if(viewReads.has(name))return viewReads.get(name);
+  if(name==='dashboard'){
+    if(workspaceLoaded){renderDashboard();return Promise.resolve();}
+    return refresh();
+  }
+  const read = async () => {
+    if(name==='experiences'){await readProjectCatalog();return window.ProjectLearning?.open();}
+    if(name==='models')return window.ModelSettings?.open();
+    if(name==='workshop')return window.CreativeWorkshop?.open();
+    if(name==='requests'){
+      const supportingReads=Promise.allSettled([readProjectCatalog(),readUsers()]);
+      await loadDeliveryRecords();
+      await supportingReads;
+    }else if(name==='projects'||name==='project-detail'){
+      await readProjectCatalog(force);
+      if(name==='projects')renderProjects();
+    }else if(name==='analytics'){
+      state.analytics=await api('/api/admin/analytics');
+      renderAnalytics();
+    }else if(name==='users'){
+      await readUsers();
+      renderUsers();
+    }
+  };
+  const spec=viewLoading[name];
+  const loader=spec&&name!=='requests'?LoadingUI.begin(`#view-${name}`,{kind:spec[0],label:spec[1],preserve:workspaceLoaded}):null;
+  const promise=read().then(()=>loader?.finish()).catch(error=>{
+    loader?.fail(error,()=>openWorkspaceView(name));
+    throw error;
+  }).finally(()=>viewReads.delete(name));
+  viewReads.set(name,promise);
+  return promise;
+}
 function refresh({background=false}={}){
   if(refreshPromise)return refreshPromise;
-  const loaders=!workspaceLoaded&&!background?workspaceLoadingRegions.map(([name,kind,label])=>LoadingUI.begin(`#view-${name}`,{kind,label})):[];
-  refreshPromise=refreshWorkspace(background).then(()=>{workspaceLoaded=true;loaders.forEach(loader=>loader.finish());workspaceLoadingRegions.forEach(([name])=>{const host=document.querySelector(`#view-${name}`);if(host?.classList.contains('loading-failed'))LoadingUI.cancel(host);});}).catch(error=>{loaders.forEach(loader=>loader.fail(error,()=>refresh().catch(()=>{})));throw error;}).finally(()=>{refreshPromise=null;});
+  const loader=!workspaceLoaded&&!background?LoadingUI.begin('#view-dashboard',{kind:'dashboard',label:'正在准备任务总览'}):null;
+  refreshPromise=refreshWorkspace(background).then(()=>{
+    workspaceLoaded=true;
+    loader?.finish();
+    if(document.querySelector('#view-dashboard').classList.contains('loading-failed'))LoadingUI.cancel('#view-dashboard');
+  }).catch(error=>{
+    loader?.fail(error,()=>refresh().catch(()=>{}));
+    throw error;
+  }).finally(()=>{refreshPromise=null;});
   return refreshPromise;
 }
 async function refreshWorkspace(background=false){
-  const view=document.body.dataset.view||'dashboard',aux=!workspaceLoaded||!background||Date.now()-auxiliaryReadAt>60000;
-  const userRequest=aux&&USER.role==='admin'?api('/api/users'):Promise.resolve({users:state.users});
-  const analyticsRequest=USER.role==='admin'&&(!background||view==='analytics')?api('/api/admin/analytics'):Promise.resolve(state.analytics);
-  const projectRequest=aux?api('/api/projects'):Promise.resolve({projects:state.projects});
-  const recipientRequest=aux?api('/api/notification-recipients'):Promise.resolve({users:state.notificationUsers});
-  const recordsVersion=recordsGeneration,recordsUrl=deliveryRecordsUrl(),recordsRequest=recordsPending||(background&&workspaceLoaded&&view!=='requests')?Promise.resolve(null):api(recordsUrl);
-  const [dashboard,projects,me,users,analytics,recipients,records]=await Promise.all([api('/api/dashboard'),projectRequest,aux?api('/api/me'):Promise.resolve({user:USER}),userRequest,analyticsRequest,recipientRequest,recordsRequest]);
-  Object.assign(USER,me.user);state.dashboard=dashboard;state.projects=projects.projects;state.users=users.users||[];state.notificationUsers=recipients.users||[];state.analytics=analytics;renderDashboard();
-  if(aux){auxiliaryReadAt=Date.now();renderProjectGuide();renderRequestEmailOptions(false);renderRecordFilterOptions();}
-  if(!background||view==='projects'||view==='project-detail')renderProjects();
-  if(!background||view==='analytics')renderAnalytics();
-  if(!background||view==='users')renderUsers();
-  if(records&&!recordsPending&&recordsVersion===recordsGeneration&&recordsUrl===deliveryRecordsUrl()){applyDeliveryRecords(records);renderAllTable();const table=document.querySelector('.delivery-table');if(table?.classList.contains('loading-failed'))LoadingUI.cancel(table);}
-  window.ProjectLearning?.syncProjects();
-  if(state.selectedRequest&&!state.selectedTerminal&&!detailPending) refreshDetail(state.selectedRequest,true);
+  state.dashboard=await api('/api/dashboard?compact=1');
+  renderDashboard();
+  if(!catalogAt||Date.now()-catalogAt>60000)readProjectCatalog().catch(()=>{});
+  if(!background){
+    const view=document.body.dataset.view;
+    if(view&&view!=='dashboard')await readWorkspaceView(view,true);
+  }else if(document.body.dataset.view==='requests'&&!recordsPending){
+    const recordsVersion=recordsGeneration, recordsUrl=deliveryRecordsUrl();
+    const records=await api(recordsUrl);
+    if(!recordsPending&&recordsVersion===recordsGeneration&&recordsUrl===deliveryRecordsUrl()){
+      applyDeliveryRecords(records);
+      renderAllTable();
+    }
+  }
+  if(state.selectedRequest&&!state.selectedTerminal&&!detailPending)refreshDetail(state.selectedRequest,true);
 }
 const ORB_RUNNING_STATUSES=new Set(['routing','validating','developing','submitting','building','releasing','capturing','delivering']);
 function renderSidebarOrbActivity(activeRuns){
@@ -251,33 +333,65 @@ function renderRecentTasks(){
 function renderDevCoreQuota(){const el=document.querySelector('#devcore-quota');if(!el)return;const runners=state.dashboard.runners||[];const runner=runners.find(r=>r.online&&r.devcore_usage?.available)||runners.find(r=>r.devcore_usage?.available);if(!runner){el.innerHTML='<div><p class="eyebrow">研发容量 / DEVCORE CAPACITY</p><h2>套餐信息暂不可用</h2></div><span class="muted">执行器上线后自动同步</span>';return}const usage=runner.devcore_usage,primary=usage.primary||{},remaining=primary.remaining_percent,used=primary.used_percent??0,credits=usage.credits||{},plan=String(usage.plan_type||'unknown').toUpperCase();const reset=primary.resets_at?new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(primary.resets_at*1000)):'—';const balance=credits.unlimited?'无限':(credits.balance??'0');el.innerHTML=`<div class="quota-copy"><p class="eyebrow">研发容量 / DEVCORE CAPACITY / ${escapeHtml(runner.runner_id)}</p><h2>${escapeHtml(plan)} 套餐</h2><span>周期重置 ${escapeHtml(reset)} · 额外余额 ${escapeHtml(balance)}</span></div><div class="quota-meter"><div class="quota-number"><b>${remaining??'—'}%</b><span>套餐剩余</span></div><div class="quota-track"><i style="width:${Math.max(0,Math.min(100,100-used))}%"></i></div><small>数据更新时间 ${fmt(usage.updated_at)}</small></div>`}
 function activeRunKey(r){return `${r.record_type==='intake'||r.intake_id?'intake':'request'}:${r.intake_id||r.id}`}
 function runVisualStatus(r){return r.display_status||r.status}
-function createRunCard(){
-  const card=document.createElement('article');
-  card.className='run-card clickable-row';card.tabIndex=0;
-  card.innerHTML=`<div class="run-top"><span class="run-project-icon">${editorialIcon('code')}</span><h3 class="project"></h3><span class="work-id"></span>${editorialIcon('chevron-right')}</div><dl class="run-facts"><div><dt>${editorialIcon('clipboard')}需求名称</dt><dd class="run-title"></dd></div><div><dt>${editorialIcon('layers')}当前阶段</dt><dd><span class="status-tag"></span></dd></div><div class="live-activity"><dt>${editorialIcon('message')}最新输出</dt><dd><b></b></dd></div></dl><div class="run-mode"></div>`;
-  card.addEventListener('keydown',event=>{if(event.target===card&&(event.key==='Enter'||event.key===' ')){event.preventDefault();card.click()}});
-  card.addEventListener('pointerenter',()=>window.sidebarCharacter?.lookAt(card,0));
-  card.addEventListener('pointerleave',()=>window.sidebarCharacter?.clearLook());
-  return card;
+function openRun(run) {
+  if (run.record_type==='intake'||run.intake_id) return openRoutingDetail(run.intake_id||run.id,run.work_item_id,'routing',run.task_type);
+  return openDetail(run.id);
 }
-function updateRunCard(card,r){
-  const intake=r.record_type==='intake'||r.intake_id,key=activeRunKey(r),visualStatus=runVisualStatus(r),activity=engineText(r.current_activity||taskStatus(r,visualStatus)||'等待执行器反馈');
-  card.dataset.runKey=key;card.classList.toggle('routing-card',intake);card.classList.toggle('analysis-run-card',isAnalysisTask(r));card.classList.toggle('waiting-runner-card',visualStatus==='waiting_runner');card.classList.toggle('joint-run-card',Number(r.joint_project_count)>1);card.classList.remove('run-leaving');card.dataset.status=visualStatus;
-  delete card.dataset.id;delete card.dataset.intakeId;delete card.dataset.workItemId;
-  if(intake){card.dataset.intakeId=r.intake_id||r.id;card.dataset.workItemId=r.work_item_id}else{card.dataset.id=r.id}
-  card.querySelector('.work-id').innerHTML=tfsLink(r,`#${r.work_item_id}`)+jointBadge(r);
-  const status=card.querySelector('.status-tag'),statusText=taskStatus(r,visualStatus);
-  status.dataset.status=visualStatus;
-  if(status.textContent!==statusText){status.textContent=statusText;status.classList.remove('status-updated');void status.offsetWidth;status.classList.add('status-updated')}
-  const title=card.querySelector('.run-title');title.textContent=r.title||'正在读取需求…';title.title=title.textContent;
-  const project=card.querySelector('.project');project.textContent=r.project_name||'项目识别中';project.title=`${project.textContent} · ${r.requester_name||''}`;
-  const output=card.querySelector('.live-activity b');
-  if(output.textContent!==activity){output.textContent=activity;output.classList.remove('activity-updated');void output.offsetWidth;output.classList.add('activity-updated')}
-  output.title=activity;
-  card.querySelector('.run-mode').textContent=taskModeLabel(r);
-  card.onclick=()=>intake?openRoutingDetail(r.intake_id||r.id,r.work_item_id,visualStatus,r.task_type):openDetail(r.id);
+
+let overviewRunKey = '';
+let overviewRuns = [];
+function renderTaskPeek(run) {
+  const host=document.querySelector('#active-run-preview');
+  if (!host) return;
+  if (!run) {host.replaceChildren();return;}
+  const phases=TaskWorkflow.stages(run), stage=phases.find(node=>node.active)||phases.at(-1);
+  const reply=TaskWorkflow.summary(run)||run.current_activity;
+  const changed=TaskWorkflow.counts(run);
+  host.innerHTML=`<div class="workflow-peek-lead">
+      <div><span>${escapeHtml(stage?[stage.label,TaskWorkflow.STATES[stage.state]].join(' · '):taskStatus(run))}</span><h3>${escapeHtml(run.title||`需求 #${run.work_item_id}`)}</h3></div>${TaskWorkflow.asset('current-stage',62)}
+    </div>
+    <div class="workflow-peek-body"><div class="workflow-peek-meta">${tfsLink(run,`#${run.work_item_id}`)}<span>${changed.files?`${changed.repos} 个仓库 · ${changed.files} 个文件`:escapeHtml(taskModeLabel(run))}</span></div>
+      ${reply?`<div class="workflow-peek-reply"><b>最新进展</b><p>${escapeHtml(TaskWorkflow.concise(engineText(reply),220))}</p></div>`:''}
+      <div class="workflow-peek-foot"><span>${run.updated_at?`更新于 ${fmt(run.updated_at)}`:''}</span><button type="button" class="btn btn-secondary">查看任务详情 ↗</button></div>
+    </div>`;
+  host.querySelector('button').onclick=()=>openRun(run);
 }
-function renderActiveRuns(container,runs){const existing=new Map([...container.children].map(card=>[card.dataset.runKey,card])),desired=new Set();runs.forEach((run,index)=>{const key=activeRunKey(run);desired.add(key);let card=existing.get(key);if(!card){card=createRunCard()}updateRunCard(card,run);const position=container.children[index];if(position!==card)container.insertBefore(card,position||null)});collectOrbTransitions(runs);existing.forEach((card,key)=>{if(desired.has(key))return;card.classList.add('run-leaving');setTimeout(()=>{if(!state.dashboard.active.some(run=>activeRunKey(run)===key))card.remove()},280)})}
+
+function renderActiveRuns(container,runs) {
+  overviewRuns=runs;
+  if (!runs.some(run=>activeRunKey(run)===overviewRunKey)) overviewRunKey=runs.length?activeRunKey(runs[0]):'';
+  const existing = new Map([...container.children].map(card=>[card.dataset.runKey,card]));
+  const desired = new Set();
+  runs.forEach((run,index)=>{
+    const key=activeRunKey(run), status=runVisualStatus(run), active=key===overviewRunKey;
+    desired.add(key);
+    let row=existing.get(key);
+    if(!row){
+      row=document.createElement('button');
+      row.type='button';
+      row.className='workflow-run';
+      row.dataset.runKey=key;
+      row.onclick=()=>{
+        const selected=overviewRuns.find(item=>activeRunKey(item)===key);
+        if(!selected)return;
+        overviewRunKey=key;
+        container.querySelectorAll('[data-run-key]').forEach(button=>button.setAttribute('aria-pressed',String(button===row)));
+        renderTaskPeek(selected);
+      };
+    }
+    row.setAttribute('aria-pressed',String(active));
+    row.dataset.status=status;
+    const label=taskStatus(run,status);
+    row.innerHTML=`<span class="workflow-run-head"><b>${escapeHtml(run.title||'读取需求中')}</b><span class="status-dot" data-status="${escapeHtml(status)}">${escapeHtml(label)}</span></span>
+      <span class="workflow-run-facts"><code>#${escapeHtml(run.work_item_id)}</code><span>${escapeHtml(run.project_name||'正在识别项目')}</span><time>${fmtDuration(requestDuration(run))}</time></span>
+      ${TaskWorkflow.miniRoute(TaskWorkflow.stages(run))}`;
+    const position=container.children[index];
+    if(position!==row)container.insertBefore(row,position||null);
+  });
+  collectOrbTransitions(runs);
+  existing.forEach((row,key)=>{if(!desired.has(key))row.remove();});
+  renderTaskPeek(runs.find(run=>activeRunKey(run)===overviewRunKey));
+}
 function recentRow(r,index=0){
   const intake=r.record_type==='intake'||r.intake_id,visualStatus=runVisualStatus(r),title=r.title||'等待读取',activity=engineText(r.current_activity||'—');
   const number=String(index+1).padStart(2,'0'),url=tfsUrl(r),indexCell=url?`<a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="打开 TFS #${r.work_item_id}" onclick="event.stopPropagation()">${number}</a>`:number;
@@ -290,7 +404,7 @@ function renderAllTable(){
   renderRecordPagination();
 }
 
-function deliveryRecordsUrl(){const query=new URLSearchParams({page:String(state.records.page||1),page_size:String(state.records.pageSize||10)});Object.entries(state.records.filters||{}).forEach(([key,value])=>{if(String(value??'').trim())query.set(key,String(value).trim())});return `/api/delivery-records?${query}`}
+function deliveryRecordsUrl(){const query=new URLSearchParams({compact:'1',page:String(state.records.page||1),page_size:String(state.records.pageSize||10)});Object.entries(state.records.filters||{}).forEach(([key,value])=>{if(String(value??'').trim())query.set(key,String(value).trim())});return `/api/delivery-records?${query}`}
 function applyDeliveryRecords(result){const pagination=result?.pagination||{};state.records.items=result?.items||[];state.records.page=Number(pagination.page)||1;state.records.pageSize=Number(pagination.page_size)||10;state.records.total=Number(pagination.total)||0;state.records.totalPages=Number(pagination.total_pages)||1}
 async function loadDeliveryRecords(page=state.records.page){
   state.records.page=Math.max(1,Number(page)||1);
@@ -429,8 +543,8 @@ function renderRoutingState(intakeId,workItemId,status='routing',message='',task
   const head=`<div class="detail-head routing-head"><p class="detail-caption">任务详情 <small>RUN / ${escapeHtml(intakeId.slice(0,8))}</small></p><h2>${tfsLink(record,`#${workItemId}`)} <span>${offline?'等待执行器上线':`正在识别${analysis?'分析':'研发'}项目`}</span><i class="status-dot" data-status="${offline?'queued':'developing'}">${offline?'已进入安全队列':'识别中'}</i></h2><div class="detail-meta"><span>${editorialIcon('cube')}所属项目 <b>待识别</b></span><span>${analysis?'问题分析':'自主研发'}</span><span>任务已成功发起</span></div></div>`;
   const note=escapeHtml(message||(offline?`任务不会丢失，执行器上线后会自动领取并继续${analysis?'分析':'研发'}。`:`系统会自动识别所属项目与${analysis?'分析范围':'交付策略'}，识别完成后此处直接切换为任务详情。`));
   const overview=`<section class="routing-summary"><div class="routing-summary-icon">${editorialIcon(offline?'clock':'network')}</div><div><h3>${offline?'已进入安全队列':'正在识别项目'}</h3><p>${note}</p><ol class="routing-steps"><li data-state="done"><i>✓</i><b>已提交</b><small>任务已保存</small></li><li data-state="${offline?'active':'done'}"><i>${offline?'2':'✓'}</i><b>等待执行器</b><small>${offline?'上线后自动继续':'执行器已领取'}</small></li><li data-state="${offline?'pending':'active'}"><i>3</i><b>识别项目</b><small>${offline?'等待执行器上线':'读取需求与项目规则'}</small></li></ol></div></section><div class="routing-facts"><section><h3>任务信息</h3><p>TFS #${workItemId}</p><p>${analysis?'问题分析':'自主研发'} · 项目识别完成后显示交付策略</p></section><section><h3>项目识别依据</h3><p>使用需求标题、内容和项目别名确认范围，不会在识别前启动业务代码修改。</p></section></div>`;
-  const pending='<div class="learning-empty"><b>项目识别完成后展示</b><p>当前已保存任务，无需重复提交。</p></div>';
-  document.querySelector('#detail-content').innerHTML=TaskDialog.render(`intake-${intakeId}`,head,[['overview','交付概览',overview],['requirement','需求拆解',pending],['development',analysis?'分析过程':'研发过程',pending],['delivery',analysis?'报告交付':'合并发版',pending],['acceptance','验收反馈',pending]]);
+  const phases=TaskWorkflow.stages({record_type:'intake',status:offline?'waiting_runner':'routing',task_type:taskType});
+  document.querySelector('#detail-content').innerHTML=TaskDialog.render(`intake-${intakeId}`,head,[['intake','识别需求',overview]],phases,'intake');
   TaskDialog.bind();
 }
 async function openRoutingDetail(intakeId,workItemId,initialStatus='routing',taskType='development'){
@@ -502,63 +616,174 @@ function renderGovernancePanel(d){
   const conflictCards=conflicts.map(item=>`<article class="history-conflict"><b>历史结论差异 · ${escapeHtml(item.request_id||'未知任务')}</b><p>${escapeHtml(engineText(item.conflict||'—'))}</p><small>${escapeHtml(engineText(item.resolution||item.evidence||'尚未说明取舍依据'))}</small></article>`).join('');
   return `<section class="governance-panel"><header><div><p class="eyebrow">研发治理 / DELIVERY ASSURANCE</p><h3>经验门禁与可回滚证据</h3></div><span data-status="${escapeHtml(gate.status||'pending')}">${escapeHtml(gate.status==='passed'?'门禁通过':gate.status==='blocked'?'门禁阻断':gate.status==='warning'?'有提醒':'采集中')}</span></header>${environmentCard}${conflictCards?`<div class="governance-block"><h4>历史结论差异 <small>CONTRADICTIONS</small></h4>${conflictCards}</div>`:''}${historyCards?`<div class="governance-block"><h4>同需求历史 <small>HISTORY REUSE</small></h4><div class="governance-history-grid">${historyCards}</div></div>`:''}${ledgerCards?`<div class="governance-block"><h4>验收项账本 <small>ACCEPTANCE LEDGER</small></h4><div class="acceptance-ledger-grid">${ledgerCards}</div></div>`:''}${invariantRows?`<div class="governance-block"><h4>业务数据不变量 <small>DATA INVARIANTS</small></h4>${invariantRows}</div>`:''}${gateRows?`<div class="governance-block"><h4>自动质量门禁 <small>QUALITY GATES</small></h4>${gateRows}</div>`:''}</section>`;
 }
+function taskDisclosure(label, body, id, value = '') {
+  if (!body) return '';
+  return `<details class="workflow-disclosure" data-task-disclosure="${id}">
+    <summary><b>${escapeHtml(label)}</b>${value ? `<span>${escapeHtml(value)}</span>` : ''}</summary>
+    <div class="workflow-fold-body">${body}</div>
+  </details>`;
+}
+
+function taskReceipt(event) {
+  return event?.message ? `<div class="workflow-receipt"><p>${escapeHtml(event.message)}</p><time>${fmt(event.at)}</time></div>` : '';
+}
+
+function mergeScreenshots(artifacts) {
+  const gallery = artifacts.filter(isMergeScreenshot).map(artifact => {
+    const name = escapeHtml(artifact.name);
+    const previewUrl = escapeHtml(artifactPreviewUrl(artifact));
+    const downloadUrl = escapeHtml(artifactOpenUrl(artifact));
+    const repository = escapeHtml(artifactRepository(artifact));
+    return `<article class="merge-screenshot-card">
+      <button type="button" class="merge-screenshot-preview artifact-preview-trigger" data-preview-url="${previewUrl}"
+        data-download-url="${downloadUrl}" data-preview-title="${name}" data-preview-repository="${repository}">
+        <span class="screenshot-frame"><img src="${previewUrl}" alt="${name}" loading="lazy" decoding="async"></span>
+        <span class="screenshot-meta"><b>${repository}</b><small>PR #${escapeHtml(artifactPrNumber(artifact))}</small></span>
+      </button>
+      <a class="merge-screenshot-download" href="${downloadUrl}" target="_blank" rel="noopener" download>下载截图 ↘</a>
+    </article>`;
+  }).join('');
+  return gallery ? `<div class="merge-screenshot-grid">${gallery}</div>` : '';
+}
+
+function taskRepositoryList(repositories, mode) {
+  return repositories.map(repo => {
+    const name = escapeHtml(repo.name || repo.repository_short_name || 'Git 仓库');
+    const hash = mode === 'merge' ? repo.merge_commit : repo.commit_hash;
+    if (!hash) return '';
+    const branches = [repo.branch,repo.base_branch].filter(Boolean).map(escapeHtml).join(' → ');
+    return `<article class="workflow-repo-line"><div><b>${name}</b><code title="${escapeHtml(hash)}">${escapeHtml(hash.slice(0,12))}</code></div>
+      ${branches?`<small>${branches}</small>`:''}</article>`;
+  }).join('');
+}
+
+function renderCompletionItems(detail) {
+  const ledger = Array.isArray(detail.acceptance_ledger) ? detail.acceptance_ledger : [];
+  const human = detail.acceptance_progress?.items || [];
+  const manual = {passed:'人工通过',failed:'人工未通过',unverified:'待人工验证'};
+  const implementation = {completed:'已实现',partial:'部分完成',blocked:'受阻',not_applicable:'不适用'};
+  if (!ledger.length && !human.length) return '';
+  const base = human.length ? human : ledger;
+  const hasChangedFiles = TaskWorkflow.counts(detail).files > 0;
+  return `<ol class="workflow-evidence">${base.map(item => {
+    const checks = [...new Set([...(item.tests || []), ...(item.evidence || [])])].filter(Boolean);
+    const first = checks[0];
+    const more = checks.slice(1).map(check=>`<li>${escapeHtml(check)}</li>`).join('');
+    const receipt = hasChangedFiles && item.files?.length ? `<button type="button" class="text-button" data-task-switch="development" data-task-expand="changed-files">核对改动文件 →</button>` : '';
+    const development = implementation[item.development_status || item.status];
+    const feedback = detail.status === 'delivered' ? (manual[item.human_status] || manual.unverified) : '';
+    return `<li><div class="workflow-evidence-head"><b>${escapeHtml(item.criterion)}</b>
+       <div class="workflow-evidence-status">${development?`<span>${development}</span>`:''}${feedback?`<span data-result="${escapeHtml(item.human_status || '')}">${feedback}</span>`:''}</div></div>
+       ${first ? `<p>${escapeHtml(first)}</p>` : ''}
+       ${taskDisclosure('验证证据', more ? `<ul>${more}</ul>` : '', `evidence-${escapeHtml(item.id)}`)}
+       ${receipt}</li>`;
+  }).join('')}</ol>`;
+}
+
+let displayedDetail = null;
+function loadTaskStage(stage) {
+  const detail = displayedDetail;
+  if (!detail || !state.selectedRequest) return;
+  if (stage === 'acceptance') window.ProjectLearning?.renderRequest(detail);
+  if (stage === 'followup') window.RequestFollowups?.mount(detail);
+}
+document.addEventListener('autodev:task-stage', event => loadTaskStage(event.detail.stage));
+
 function renderDetail(d){
-  const jointChildren=Array.isArray(d.joint_children)?d.joint_children:[],jointStatus=d.joint_status||d.status,isJoint=jointChildren.length>1;
-  if(d.status!=='waiting_approval')state.continuationDrafts.delete(d.id);
-  const controlBusy=(d.controls||[]).some(c=>['pending','running','waiting_merge'].includes(c.status));
+  displayedDetail=d;
+  const jointChildren=Array.isArray(d.joint_children)?d.joint_children:[];
+  const isJoint=jointChildren.length>1, jointStatus=d.joint_status||d.status;
+  const analysis=isAnalysisTask(d);
+  const isDelivered=d.status==='delivered';
+  const controlBusy=(d.controls||[]).some(control=>['pending','running','waiting_merge'].includes(control.status));
   state.selectedTerminal=!controlBusy&&(TERMINAL.has(jointStatus)||jointStatus==='waiting_input');
-  const deliveredArtifacts=visibleArtifacts(d.artifacts,d.delivery_mode,d.delivery_options),screenshots=deliveredArtifacts.filter(isMergeScreenshot),files=deliveredArtifacts.filter(a=>!isMergeScreenshot(a));
-  const screenshotGallery=screenshots.length?`<p class="eyebrow">PR 合并截图 / MERGE SCREENSHOTS</p><div class="merge-screenshot-grid">${screenshots.map(a=>`<article class="merge-screenshot-card"><button type="button" class="merge-screenshot-preview artifact-preview-trigger" data-preview-url="${escapeHtml(artifactPreviewUrl(a))}" data-download-url="${escapeHtml(artifactOpenUrl(a))}" data-preview-title="${escapeHtml(a.name)}" data-preview-repository="${escapeHtml(artifactRepository(a))}"><span class="screenshot-frame"><img src="${escapeHtml(artifactPreviewUrl(a))}" alt="${escapeHtml(a.name)}" loading="lazy"></span><span class="screenshot-meta"><i>${escapeHtml(artifactRepository(a))}</i><b>${artifactPrNumber(a)?`PR #${escapeHtml(artifactPrNumber(a))}`:'已合并 PR'}</b><small>点击画面预览真实浏览器截图 ↗</small></span></button><a class="merge-screenshot-download" href="${escapeHtml(artifactOpenUrl(a))}" target="_blank" rel="noopener" download onclick="event.stopPropagation()"><span>下载截图</span><i>↘</i></a></article>`).join('')}</div>`:'';
-  const artifacts=files.map(a=>isMenuLink(a)?`<button type="button" class="artifact menu-artifact menu-link-copy" data-menu-link="${escapeHtml(a.name)}"><span><b>${escapeHtml(a.name)}</b><small class="muted">新增视图菜单链接</small></span><i>复制 ↗</i></button>`:isLicenseRequest(a)?`<a class="artifact license-artifact" href="${escapeHtml(artifactOpenUrl(a))}" target="_blank" rel="noopener"><span><b>${escapeHtml(a.name)}</b><small class="muted">合并截图已嵌入 TFS License 授权申请</small></span><i>打开申请 ↗</i></a>`:isReleaseArtifact(a)?`<a class="artifact release-artifact" href="${escapeHtml(artifactOpenUrl(a))}" target="_blank" rel="noopener"><span><b>${escapeHtml(a.name)}</b><small class="muted">TFS 流水线发布产物页面</small></span><i>查看产物 ↗</i></a>`:isAnalysisReport(a)?`<a class="artifact analysis-report-artifact" href="${escapeHtml(artifactOpenUrl(a))}" target="_blank" rel="noopener"><span><b>${escapeHtml(a.name)}</b><small class="muted">包含根因、证据链、影响范围与建议动作</small></span><i>下载报告 ↘</i></a>`:isGovernanceReport(a)?`<a class="artifact governance-report-artifact" href="${escapeHtml(artifactOpenUrl(a))}" target="_blank" rel="noopener"><span><b>${escapeHtml(a.name)}</b><small class="muted">${a.kind==='delivery_manifest'?'构建提交、文件哈希与质量门禁':'最新目标分支既有实现复核'}</small></span><i>查看清单 ↘</i></a>`:`<a class="artifact" href="${escapeHtml(artifactOpenUrl(a))}" target="_blank"><span>${escapeHtml(a.name)}<small class="muted"> · ${escapeHtml(a.kind)}</small></span><i>下载 ↘</i></a>`).join('')||(!screenshots.length?`<p class="muted">${isAnalysisTask(d)?'分析报告将在结论形成后出现。':'产物将在对应步骤完成后出现。'}</p>`:'');
-  const fileSection=d.status==='waiting_input'?'':(files.length||!screenshots.length?`<p class="eyebrow">${isAnalysisTask(d)?'分析报告 / ANALYSIS REPORT':'交付产物 / DELIVERABLES'}</p><div class="artifact-list">${artifacts}</div>`:'');
-  const runningStepIndex=d.steps.findIndex(step=>step.status==='running');
-  const steps=d.steps.map((s,index)=>`<div class="timeline-item ${s.status} ${index===runningStepIndex-1?'feeds-next':''}" data-step-code="${escapeHtml(s.step_code||'')}"><div class="timeline-mark"></div><div class="timeline-copy"><b>${escapeHtml(engineText(s.name))}</b><span>${escapeHtml(engineText(s.message||({pending:'等待执行',running:'正在执行',completed:'已完成',failed:'执行失败',skipped:'已跳过'}[s.status]||s.status)))}</span>${stepTiming(s)}</div></div>`).join('');
-  const operations=d.events.filter(e=>!['devcore.reply','devcore.summary','workspace.plan_recorded'].includes(e.event_type));
-  const events=operations.map(e=>`<div class="event"><b>${escapeHtml(engineText(e.event_type))} · ${fmt(e.created_at)}</b><p>${escapeHtml(engineText(e.message))}</p></div>`).join('');
-  const simulate=USER.role==='admin'&&d.status==='waiting_merge'&&d.policy_snapshot.simulation_mode?`<button class="btn btn-secondary" id="simulate-merge">模拟 PR 已合并</button>`:'';
-  const cancel=TaskActions.render(d);
-  const reportSync=isAnalysisTask(d)&&d.current_step==='deliver'&&Object.keys(d.analysis_result||{}).length>0&&files.some(isAnalysisReport)&&['failed','waiting_analysis_sync'].includes(d.status);
-  const retry=d.can_manage_request!==false&&!isJoint&&(d.status==='failed'||reportSync)?`<button class="btn btn-secondary retry-run" id="retry-run">${reportSync?'重试报告同步':'重新发起'} ↻</button>`:'';
-  const continuation=USER.role==='admin'&&(d.status==='waiting_approval'||d.can_continue_in_place)?renderContinuationPanel(d):'';
-  const blockerBrief=d.status==='waiting_approval'?renderBlockerSummary(d):'';
-  const live=d.status==='developing'?`<button class="btn btn-secondary" id="open-devcore-stream">打开实时会话 ↗</button>`:'';
-  const prSources=isJoint?jointChildren.flatMap(child=>requestPullRequests(child).map(item=>({...item,project:child.project_name}))):requestPullRequests(d).map(item=>({...item,project:''}));
-  const prButtons=prSources.map(item=>`<a class="btn btn-primary" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">打开 ${escapeHtml(item.project?`${item.project} / ${item.repository}`:item.repository)} · PR #${escapeHtml(item.id)} ↗</a>`).join('');
-  const supplement=d.can_manage_request!==false&&d.status==='waiting_input'?renderSupplementPanel(d):'';
-  const optionLabels=isAnalysisTask(d)?[]:['业务系统包','SQL / 配置有变更时自动随附',...((d.delivery_options||[]).includes('auto_release')?['自动发版']:[])];
-  const classificationByProject=new Map((d.classification_summary||[]).map(item=>[item.project_key,item]));
-  const jointPanel=isJoint?`<section class="joint-delivery-panel"><header><div><p class="eyebrow">${isAnalysisTask(d)?'联合分析 / JOINT ANALYSIS':'联合研发 / JOINT DELIVERY'}</p><h3>${jointChildren.length} 个项目协同${isAnalysisTask(d)?'分析':'交付'}</h3></div><span class="status-dot" data-status="${escapeHtml(jointStatus)}">${escapeHtml((isAnalysisTask(d)?ANALYSIS_STATUS:STATUS)[jointStatus]||jointStatus)}</span></header><div class="joint-child-grid">${jointChildren.map(child=>{const evidence=classificationByProject.get(child.project_key)||{},terms=(evidence.matched_terms||[]).join('、');return `<button type="button" class="joint-child ${child.id===d.id?'active':''}" data-joint-child-id="${escapeHtml(child.id)}"><span class="joint-child-index">${String(child.joint_project_index||1).padStart(2,'0')}</span><span class="joint-child-copy"><b>${escapeHtml(child.project_name)}</b><small>${escapeHtml(terms?`识别依据：${terms}`:'按需求内容自动归类')}</small><em>${escapeHtml(engineText(child.current_activity||child.status_label))}</em></span><i class="status-dot" data-status="${escapeHtml(child.display_status||child.status)}">${escapeHtml(child.status_label)}</i></button>`}).join('')}</div><p>${isAnalysisTask(d)?'各项目分别执行只读代码与开发库核验；全部完成后统一回填 TFS，并发送一封汇总分析邮件。':'各项目分别执行代码修改、提交、审核与构建；全部完成后统一更新 TFS，并发送一封汇总交付邮件。'}</p></section>`:'';
-  const analysisPanel=renderAnalysisPanel(d),governancePanel=renderGovernancePanel(d),deliverySummary=isAnalysisTask(d)?`<div class="delivery-option-summary analysis-summary"><b>本次任务</b><span>只读代码分析</span><span>DM7 只读核验</span><span>结构化报告</span></div>`:`<div class="delivery-option-summary"><b>本次交付</b>${optionLabels.map(label=>`<span>${escapeHtml(label)}</span>`).join('')||'<span>按项目定义</span>'}</div>`;
-  const head=`<div class="detail-head"><p class="detail-caption">任务详情 <small>RUN / ${d.id.slice(0,8)}${isJoint?' / JOINT':''}</small></p><h2>${tfsLink(d,`#${d.work_item_id}`)} <span>${escapeHtml(d.title||'读取需求中')}</span><i class="status-dot" data-status="${escapeHtml(d.status)}">${escapeHtml(d.status_label)}</i></h2><div class="detail-meta"><span>${editorialIcon('cube')}所属项目 <b>${escapeHtml(d.project_name)}</b></span><span>${editorialIcon('clock')}总耗时 <b>${fmtDuration(requestDuration(d))}</b></span><span>${editorialIcon('clipboard')}${d.completed_at?'完成时间':'创建时间'} <b>${fmt(d.completed_at||d.created_at)}</b></span><span>${escapeHtml(taskTypeLabel(d))} · ${escapeHtml(taskModeLabel(d))}</span></div></div>`;
-  const summary=`<section class="task-summary" data-status="${escapeHtml(d.status)}"><h3>${escapeHtml(engineText(d.current_activity||d.status_label||''))}</h3><p>${escapeHtml(engineText(d.result_summary||'任务正在按流程推进，最新输出可在研发过程查看。'))}</p></section>`;
-  const deliveryFiles=fileSection||screenshotGallery?`<section class="task-deliverables">${fileSection}${screenshotGallery}</section>`:'';
-  const deploymentServices=window.AutoDevDeploymentLinks?.section(d.deployment_services)||'';
-  const failure=d.error_message&&d.status!=='waiting_approval'?`<section class="task-failure-summary"><h3>${reportSync?'报告已生成，外部同步待重试':'任务未完成'}</h3><p>${escapeHtml(engineText(d.error_message).slice(0,180))}${d.error_message.length>180?'…':''}</p><details><summary>展开技术详情</summary><pre>${escapeHtml(engineText(d.error_message))}</pre></details></section>`:'';
-  const codeSummary=d.branch_name||d.commit_hash?`<section class="task-code-summary"><h3>代码信息</h3><div><span>来源分支 <code>${escapeHtml(d.branch_name||'未登记')}</code></span><span>最终提交 <code>${escapeHtml(d.commit_hash||'未登记')}</code></span></div></section>`:'';
+  if(d.status!=='waiting_approval')state.continuationDrafts.delete(d.id);
+
+  const phases=TaskWorkflow.stages(d), selected=TaskWorkflow.currentStage(d);
+  const events=d.task_trace?.milestones||{}, release=d.task_trace?.release||{};
   const repositories=Array.isArray(d.repository_states)?d.repository_states:[];
-  const changedFiles=!isAnalysisTask(d)?TaskDialog.changedFiles(repositories):'';
-  const overview=`${files.length||screenshots.length?deliveryFiles:''}${deploymentServices}${blockerBrief}${failure}${['waiting_input','waiting_approval'].includes(d.status)?'':summary}${codeSummary}${changedFiles}${jointPanel}${supplement}${continuation}${retry?`<div class="detail-actions">${retry}</div>`:''}${cancel}${!files.length&&!screenshots.length&&!['waiting_input','waiting_approval'].includes(d.status)?deliveryFiles:''}`;
-  const requirements=`${isAnalysisTask(d)?'':TaskDialog.repositoryPlan(d)}<div class="requirement-layout"><section class="requirement-primary"><h3>按需求描述验收</h3><p class="muted">保留需求原有分点；没有分点时按整体范围验证。</p><div id="requirement-points"></div><details class="task-context"><summary>查看需求描述</summary><div class="task-requirement-copy">${escapeHtml(d.requirement_summary||d.title||'需求描述读取中')}</div></details></section><aside class="requirement-context"><section><h3>${editorialIcon('layers')}验收范围</h3><p>以本次需求描述为准，不使用 TFS 验收条件字段作为拆解依据。</p><p>已完善的功能和其他项目代码不应受到本次修改影响。</p></section><section><h3>${editorialIcon('clipboard')}相关项目经验</h3><div id="task-experience-context"></div></section></aside></div>`;
-  const executionRecords=`<details class="task-execution-records" data-task-disclosure="execution"><summary><b>执行记录</b><span>${operations.length} 条近期记录</span></summary><div class="development-layout"><aside class="development-steps"><h3>流水线</h3><div class="timeline">${steps}</div></aside><section class="task-event-console"><div class="event-list">${events||'<p class="muted">暂无执行记录。</p>'}</div></section></div></details>`;
-  const development=`<div class="task-development-content">${TaskDialog.conversation(d,live)}${analysisPanel}${executionRecords}${governancePanel}</div>`;
-  const repositoryDelivery=repositories.length?`<section class="delivery-repositories"><h3>${editorialIcon('code')}代码提交与合并</h3><div class="delivery-repository-scroll"><table><thead><tr><th>代码仓库</th><th>目标分支</th><th>提交记录</th><th>合并记录</th><th>PR</th></tr></thead><tbody>${repositories.map(repo=>`<tr><td>${escapeHtml(repo.repository_short_name||repo.name||'代码仓库')}</td><td><code>${escapeHtml(repo.base_branch||'未登记')}</code></td><td><code title="${escapeHtml(repo.commit_hash||'')}">${escapeHtml((repo.commit_hash||'').slice(0,12)||'未登记')}</code></td><td><span class="${repo.merge_commit?'merge-recorded':'muted'}">${repo.merge_commit?'已登记合并提交':'尚无合并记录'}</span>${repo.merge_commit?`<code title="${escapeHtml(repo.merge_commit)}">${escapeHtml(repo.merge_commit.slice(0,12))}</code>`:''}</td><td>${repo.pr_url&&/^https?:\/\//i.test(repo.pr_url)?`<a href="${escapeHtml(repo.pr_url)}" target="_blank" rel="noopener">PR #${escapeHtml(repo.pr_id||'—')} ↗</a>`:'—'}</td></tr>`).join('')}</tbody></table></div></section>`:'';
-  const syncStatus=reportSync?`<section class="report-sync-state"><div><h3>${editorialIcon('check')}分析报告已生成</h3><p>分析结论和已有报告保留，可在首页下载。</p><button type="button" class="btn btn-secondary" data-task-switch="overview">查看分析报告 →</button></div><div><h3>${editorialIcon('refresh')}外部同步待重试</h3><p>仅重试 TFS 状态同步与通知，不重新执行分析。</p>${retry.replace('id="retry-run"','id="retry-delivery"')}</div></section>${failure}`:'';
-  const delivery=`${syncStatus}${deliverySummary}${deploymentServices}<h3 class="delivery-process-title">${isAnalysisTask(d)?'报告交付流程':'提交与交付流程'}</h3><div id="delivery-step-list" class="timeline"></div>${repositoryDelivery}${changedFiles}<div class="detail-actions">${prButtons}${simulate}</div><div class="delivery-notice"><span>通知至 ${(d.notification_emails||[]).map(escapeHtml).join('、')||'—'}</span><button type="button" class="text-button" data-task-switch="overview">查看交付产物 →</button></div>`;
-  document.querySelector('#detail-content').innerHTML=TaskDialog.render(d.id,head,[
-    ['overview','交付概览',overview],['requirement','需求拆解',requirements],
-    ['development',isAnalysisTask(d)?'分析过程':'研发过程',development],
-    ['delivery',isAnalysisTask(d)?'报告交付':'合并发版',delivery],['acceptance','验收反馈','<div id="task-acceptance-mount"></div>'],
-    ...(d.can_followup||d.status==='delivered'?[['followup','需求追问','<div id="task-followup-mount"></div>']]:[])
-  ]);
-  document.querySelectorAll('#task-panel-development [data-step-code]').forEach(step=>{
-    if(['submit','release','deliver'].includes(step.dataset.stepCode))document.querySelector('#delivery-step-list').append(step);
+  const changes=TaskWorkflow.counts(d), verdict=TaskWorkflow.ACCEPTANCE[d.acceptance_progress?.status]||'待验收';
+  const deliveryArtifacts=visibleArtifacts(d.artifacts,d.delivery_mode,d.delivery_options);
+  const deploymentServices=window.AutoDevDeploymentLinks?.section(d.deployment_services)||'';
+  const reportSync=analysis&&d.current_step==='deliver'&&deliveryArtifacts.some(isAnalysisReport)&&['failed','waiting_analysis_sync'].includes(d.status);
+  const retry=d.can_manage_request!==false&&!isJoint&&(d.status==='failed'||reportSync)?`<button type="button" class="btn btn-secondary" id="retry-run">${reportSync?'重试报告同步':'重新发起'}</button>`:'';
+  const continuation=USER.role==='admin'&&(d.status==='waiting_approval'||d.can_continue_in_place)?renderContinuationPanel(d):'';
+  const supplement=d.can_manage_request!==false&&d.status==='waiting_input'?renderSupplementPanel(d):'';
+  const blocker=d.status==='waiting_approval'?renderBlockerSummary(d):'';
+  const failure=d.error_message&&d.status!=='waiting_approval'?`<section class="task-failure-summary"><h3>${reportSync?'报告已生成，外部同步待重试':'当前阶段需要处理'}</h3><p>${escapeHtml(TaskWorkflow.concise(engineText(d.error_message),180))}</p><details data-task-disclosure="failure-detail"><summary>展开技术详情</summary><pre>${escapeHtml(engineText(d.error_message))}</pre></details></section>`:'';
+  const actions=TaskActions.render(d);
+  const live=d.status==='developing'?'<button type="button" class="btn btn-secondary" id="open-devcore-stream">打开实时会话 ↗</button>':'';
+  const simulate=USER.role==='admin'&&d.status==='waiting_merge'&&d.policy_snapshot?.simulation_mode?'<button type="button" class="btn btn-secondary" id="simulate-merge">模拟 PR 已合并</button>':'';
+  const latest=TaskWorkflow.summary(d);
+  const completion=renderCompletionItems(d);
+  const techEvents=(d.events||[]).filter(event=>!['devcore.reply','devcore.summary','workspace.plan_recorded'].includes(event.event_type));
+  const historyMarkup=techEvents.map(e=>`<article class="event"><b>${escapeHtml(engineText(e.event_type))} · ${fmt(e.created_at)}</b><p>${escapeHtml(engineText(e.message))}</p></article>`).join('');
+  const steps=(d.steps||[]).filter(s=>s.started_at||s.message).map(s=>`<article class="timeline-item ${escapeHtml(s.status)}"><div class="timeline-copy"><b>${escapeHtml(engineText(s.name))}</b><span>${escapeHtml(engineText(s.message||''))}</span>${stepTiming(s)}</div></article>`).join('');
+  const operations=taskDisclosure('执行记录',steps+historyMarkup,'execution',techEvents.length?`${techEvents.length} 条近期记录`:'');
+  const routingEvidence=(d.classification_summary||[]).filter(item=>item.matched_terms?.length).map(item=>{
+    const child=jointChildren.find(record=>record.project_key===item.project_key);
+    return child?`<li>${escapeHtml(child.project_name)} · ${escapeHtml(item.matched_terms.join('、'))}</li>`:'';
+  }).join('');
+  const joint=isJoint?`<section class="workflow-panel joint-delivery-panel"><header><h3>联合${analysis?'分析':'交付'} · ${jointChildren.length} 个项目</h3>
+    <span class="status-dot" data-status="${escapeHtml(jointStatus)}">${escapeHtml((analysis?ANALYSIS_STATUS:STATUS)[jointStatus]||'处理中')}</span></header>
+    <div class="workflow-projects">${jointChildren.map(child=>`<button type="button" class="btn btn-secondary" aria-pressed="${child.id===d.id}" data-joint-child-id="${escapeHtml(child.id)}">${escapeHtml(child.project_name)} · ${escapeHtml(child.status_label)}</button>`).join('')}</div></section>`:'';
+  const head=`<div class="detail-head workflow-detail-head"><div class="detail-caption">任务详情 ${actions?`<details class="workflow-actions" data-task-disclosure="actions"><summary>更多操作</summary><div>${actions}</div></details>`:''}</div>
+    <h2>${tfsLink(d,`#${d.work_item_id}`)} <span>${escapeHtml(d.title||'读取需求中')}</span><i class="status-dot" data-status="${escapeHtml(d.status)}">${escapeHtml(d.status_label)}</i>${isDelivered?`<em class="workflow-verdict">${escapeHtml(verdict)}</em>`:''}</h2>
+    <div class="detail-meta"><span>${editorialIcon('cube')}${escapeHtml(d.project_name)}</span><span>${escapeHtml(taskTypeLabel(d))} · ${escapeHtml(taskModeLabel(d))}</span><span>${fmt(d.completed_at||d.created_at)} · ${fmtDuration(requestDuration(d))}</span></div></div>`;
+
+  const shortcut=(phase,label,expand='')=>`<button type="button" class="workflow-shortcut" data-task-switch="${phase}" ${expand?`data-task-expand="${expand}"`:''}>${escapeHtml(label)} ${editorialIcon('arrow-right')}</button>`;
+  const shortcuts=[
+    changes.files?shortcut('development',`实际改动 ${changes.repos} 仓库 · ${changes.files} 文件`,'changed-files'):'',
+    deploymentServices?shortcut('deploy',`查看 ${d.deployment_services.length} 个部署入口`):'',
+    deliveryArtifacts.length?shortcut('delivery',`查看 ${deliveryArtifacts.length} 项交付产物`):'',
+    isDelivered?shortcut('acceptance','查看验收反馈'):'',
+  ].join('');
+  const overview=`<section class="workflow-panel workflow-result"><header><h3>${isDelivered?'需求完成记录':'任务进展'}</h3>${isDelivered?TaskWorkflow.asset('delivery-parcel',54):''}</header>
+    ${latest?`<p class="workflow-result-note">${escapeHtml(engineText(latest))}</p>`:''}
+    ${shortcuts?`<div class="workflow-shortcut-list">${shortcuts}</div>`:''}
+    ${completion}</section>${joint}`;
+
+  const intake=taskReceipt(events['tfs.validated'])+taskReceipt(events['tfs.attachments_partial']||events['tfs.attachments_prepared'])+
+    taskDisclosure('项目归类依据',routingEvidence?`<ul>${routingEvidence}</ul>`:'','routing-evidence')+
+    taskDisclosure('任务资料',`<dl class="workflow-facts"><dt>运行编号</dt><dd><code>${escapeHtml(d.id)}</code></dd><dt>创建时间</dt><dd>${fmt(d.created_at)}</dd>${d.completed_at?`<dt>完成时间</dt><dd>${fmt(d.completed_at)}</dd>`:''}</dl>`,'intake-facts');
+  const criteria=d.acceptance_progress?.items||[];
+  const requirements=`${criteria.length?`<section class="workflow-panel"><h3>验收范围</h3><ol class="task-points">${criteria.map(item=>`<li>${escapeHtml(item.criterion)}</li>`).join('')}</ol></section>`:''}
+    ${taskDisclosure('需求原文',d.requirement_summary?`<div class="task-requirement-copy">${escapeHtml(d.requirement_summary)}</div>`:'','requirement-source')}
+    ${analysis?'':TaskDialog.repositoryPlan(d)}<div id="task-experience-context"></div>`;
+  const development=`${(d.assistant_replies||[]).length||d.result_summary||live?TaskDialog.conversation(d,live):''}
+    ${renderAnalysisPanel(d)}${TaskDialog.changedFiles(repositories)}
+    ${taskDisclosure('验证明细与历史依据',renderGovernancePanel(d),'governance')}${operations}`;
+  const submit=(taskRepositoryList(repositories,'submit')||
+    (d.commit_hash?`<div class="workflow-repo-line"><code>${escapeHtml(d.commit_hash)}</code>${d.branch_name?`<small>${escapeHtml(d.branch_name)}</small>`:''}</div>`:''))+taskReceipt(events['git.pushed']);
+  const prSources=isJoint?jointChildren.flatMap(child=>requestPullRequests(child).map(pr=>({...pr,project:child.project_name}))):requestPullRequests(d);
+  const prLinks=prSources.filter(pr=>window.AutoDevDeploymentLinks?.safeUrl(pr.url)).map(pr=>
+    `<a class="workflow-link" href="${escapeHtml(pr.url)}" target="_blank" rel="noopener">${pr.project?`${escapeHtml(pr.project)} / `:''}${escapeHtml(pr.repository)} · PR #${escapeHtml(pr.id)}${pr.merged?' · 已合并':''} ↗</a>`).join('');
+  const merge=`${prLinks}${taskReceipt(events['pr.merged'])}${d.status==='waiting_merge'?taskReceipt(events['pr.validation_failed']):''}${taskDisclosure('合并记录与目标分支',taskRepositoryList(repositories.filter(repo=>repo.merge_commit),'merge'),'merge-commits')}${taskDisclosure('PR 合并截图',mergeScreenshots(d.artifacts||[]),'merge-screenshots')}${simulate}`;
+  const build=release.build_id?`<div class="workflow-receipt"><b>Build #${escapeHtml(release.build_id)}</b><span>${release.result==='succeeded'?'构建成功':release.result==='failed'?'构建失败':''}</span>${release.results_url?`<a class="workflow-link" href="${escapeHtml(release.results_url)}" target="_blank" rel="noopener">查看构建 ↗</a>`:''}</div>`:taskReceipt(events['build.completed']||events['release.started']);
+  const deployment=deploymentServices;
+  const delivery=`${deliveryArtifacts.length?`<section class="workflow-panel"><h3>${analysis?'分析报告':'交付产物'}</h3><div class="workflow-artifacts">${artifactLinks(deliveryArtifacts,d.delivery_mode,d.delivery_options)}</div></section>`:''}
+    ${taskReceipt(events['tfs.delivery_completed'])}${taskReceipt(events['mail.delivery_sent'])}
+    ${taskDisclosure('通知收件人',(d.notification_emails||[]).length?`<p>${d.notification_emails.map(escapeHtml).join('、')}</p>`:'','notification')}`;
+  const maps={intake,requirement:requirements,development,submit,merge,release:build,deploy:deployment,delivery,acceptance:'<div id="task-acceptance-mount"></div>'};
+  const responsive=phases.map(node=>{
+    const current=node.id===selected;
+    const context=current?`${blocker}${failure}${supplement}${continuation}${retry}`:'';
+    return [node.id,node.label,`<div class="workflow-content"><div class="workflow-stage-head"><h3>${escapeHtml(node.label)}</h3><span data-phase="${node.state}">${TaskWorkflow.STATES[node.state]}${node.note?` · ${escapeHtml(node.note)}`:''}</span></div>${context}${maps[node.id]||''}</div>`];
   });
+  const panels=[['overview','完成轨迹',overview],...responsive];
+  if(d.can_followup||isDelivered)panels.push(['followup','需求追问','<div id="task-followup-mount"></div>']);
+  document.querySelector('#detail-content').innerHTML=TaskDialog.render(d.id,head,panels,phases,isDelivered?'overview':selected);
   TaskDialog.bind();
   TaskActions.bind(d);
-  document.querySelectorAll('[data-task-switch]').forEach(button=>button.onclick=()=>TaskDialog.select(button.dataset.taskSwitch,true));
-  const stepSignature=`${d.status}:${d.current_step||''}:${d.steps.map(step=>step.status).join(',')}`,previousStepSignature=state.orbExperience.detailSteps.get(d.id);state.orbExperience.detailSteps.set(d.id,stepSignature);if(previousStepSignature&&previousStepSignature!==stepSignature){const runningStep=document.querySelector('#detail-content .timeline-item.running');if(runningStep){runningStep.classList.add('step-arrived');setTimeout(()=>runningStep.classList.remove('step-arrived'),1100)}}
-  window.ProjectLearning?.renderRequest(d);
-  window.RequestFollowups?.mount(d);
+  document.querySelectorAll('[data-task-switch]').forEach(button=>button.onclick=()=>{
+    TaskDialog.select(button.dataset.taskSwitch,true);
+    if(button.dataset.taskExpand){
+      const detail=document.querySelector(`[data-task-disclosure="${CSS.escape(button.dataset.taskExpand)}"]`);
+      if(detail){detail.open=true;detail.scrollIntoView({block:'nearest'});}
+    }
+  });
+  window.ProjectLearning?.renderContext(d);
+  loadTaskStage(document.querySelector('[data-task-tab][aria-selected="true"]')?.dataset.taskTab);
   bindArtifactPreviews(document.querySelector('#detail-content'));
   bindMenuLinks(document.querySelector('#detail-content'));
   document.querySelectorAll('[data-joint-child-id]').forEach(button=>button.onclick=()=>openDetail(button.dataset.jointChildId));
@@ -713,7 +938,17 @@ function setRequestTaskType(taskType='development'){
   document.querySelector('#request-submit-button').textContent=analysis?'开始问题分析 ↗':'确认并进入队列 ↗';
   document.querySelector('#request-modal').classList.toggle('analysis-mode',analysis);
 }
-function openRequestModal(taskType='development'){const form=document.querySelector('#request-form');form.reset();setRequestTaskType(taskType);renderRequestEmailOptions(true);document.querySelector('#request-error').hidden=true;document.querySelector('#request-modal').hidden=false;setTimeout(()=>form.querySelector('[name="work_item_id"]').focus(),0)}
+function openRequestModal(taskType='development'){
+  const form=document.querySelector('#request-form');
+  form.reset();
+  setRequestTaskType(taskType);
+  if(!state.notificationUsers.length)state.notificationUsers=[USER];
+  renderRequestEmailOptions(true);
+  document.querySelector('#request-error').hidden=true;
+  document.querySelector('#request-modal').hidden=false;
+  readRecipients().catch(()=>{});
+  setTimeout(()=>form.querySelector('[name="work_item_id"]').focus(),0);
+}
 document.querySelector('#open-request').onclick=()=>openRequestModal('development');
 document.querySelector('#open-analysis').onclick=()=>openRequestModal('analysis');
 document.querySelectorAll('[name="task_type"]').forEach(input=>input.addEventListener('change',()=>setRequestTaskType(input.value)));
@@ -734,7 +969,7 @@ document.querySelector('#user-form')?.addEventListener('submit',async e=>{e.prev
 
 const clockFormat=new Intl.DateTimeFormat('zh-CN',{dateStyle:'medium',timeStyle:'medium',hour12:false});
 setInterval(()=>{if(!document.hidden)document.querySelector('#clock').textContent=clockFormat.format(new Date())},1000);
-refresh().catch(()=>{});
+refresh().then(()=>measureMenu('dashboard',0)).catch(()=>{});
 let workspacePoll=null;
 function scheduleWorkspacePoll(){clearTimeout(workspacePoll);if(document.hidden)return;
   const interval=state.dashboard.active.length||state.selectedRequest&&!state.selectedTerminal?5000:15000;

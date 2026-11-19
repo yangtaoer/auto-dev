@@ -174,13 +174,49 @@ class WorkflowTests(unittest.TestCase):
     def test_acceptance_is_frozen_from_description_not_tfs_acceptance_field(self) -> None:
         from app.services import project_learning
         project_id = self.create_project("description-acceptance", "local_package")
-        item = {"id": 910138, "title": "按需求拆解", "description": "<ol><li>登录保留原角色</li><li>查询当前单位待办</li></ol>",
+        item = {"id": 910138, "title": "按需求拆解", "description": "<ol><li>1. 登录保留原角色</li><li>查询当前单位待办</li></ol>",
                 "acceptance_criteria": "错误的旧验收条件：必须现场截图且等待管理员确认", "revision": 7}
         with patch.object(worker, "_validate", return_value=item):
             detail = self.submit_and_process(project_id, item["id"])
         acceptance = project_learning.get_acceptance(detail["id"])
-        self.assertEqual([row["criterion"] for row in acceptance["items"]], ["登录保留原角色", "查询当前单位待办"])
+        self.assertEqual([row["criterion"] for row in acceptance["items"]], ["1. 登录保留原角色", "查询当前单位待办"])
         self.assertTrue(all(row["source"] == "requirement_description_v2" for row in acceptance["items"]))
+        self.assertEqual(detail["acceptance_progress"]["summary"]["unverified"], 2)
+        self.assertTrue(all(item["human_status"] == "unverified" for item in detail["acceptance_progress"]["items"]))
+        update_request(detail["id"], acceptance_ledger=[{
+            "id": "AC-01", "criterion": "登录保留原角色", "status": "completed",
+            "tests": ["登录回归通过"], "files": ["src/Login.vue"],
+        }])
+        proof = self.client.get(f"/api/requests/{detail['id']}").json()["request"]["acceptance_progress"]["items"][0]
+        self.assertEqual(proof["development_status"], "completed")
+        self.assertEqual(proof["human_status"], "unverified")
+        self.assertEqual(proof["tests"], ["登录回归通过"])
+        self.assertEqual(proof["files"], ["src/Login.vue"])
+
+    def test_workspace_read_cache_uses_revisions_and_falls_back_to_the_database(self) -> None:
+        from redis.exceptions import ConnectionError
+        from app.services.read_cache import ReadCache
+
+        cache = ReadCache("redis://unused.invalid/0")
+        cache.client = Mock()
+        values = {}
+        cache.client.get.side_effect = values.get
+        cache.client.set.side_effect = lambda key, value, ex: values.update({key: value})
+        revision = Mock(return_value=1)
+        loader = Mock(return_value={"projects": ["first"]})
+
+        self.assertEqual(cache.read("enabled-projects", revision, 30, loader), ({"projects": ["first"]}, "miss"))
+        self.assertEqual(cache.read("enabled-projects", revision, 30, loader), ({"projects": ["first"]}, "hit"))
+        loader.assert_called_once_with()
+
+        revision.return_value = 2
+        loader.return_value = {"projects": ["second"]}
+        self.assertEqual(cache.read("enabled-projects", revision, 30, loader), ({"projects": ["second"]}, "miss"))
+        cache.client.get.side_effect = ConnectionError("isolated test")
+        self.assertEqual(cache.read("enabled-projects", revision, 30, loader), ({"projects": ["second"]}, "bypass"))
+        reads_during_outage = cache.client.get.call_count
+        self.assertEqual(cache.read("enabled-projects", revision, 30, loader), ({"projects": ["second"]}, "bypass"))
+        self.assertEqual(cache.client.get.call_count, reads_during_outage)
 
     def submit_and_process(
         self,
@@ -2189,8 +2225,8 @@ else:
         self.assertIn("recent.slice(0,12)", script)
         self.assertNotIn("recent.slice(0,8)", script)
         self.assertNotIn("activeEl.innerHTML=state.dashboard.active", script)
-        self.assertIn("const projectRequest=aux?api('/api/projects')", script)
-        self.assertIn('Date.now()-auxiliaryReadAt>60000',script)
+        self.assertIn("state.dashboard=await api('/api/dashboard?compact=1')", script)
+        self.assertIn('Date.now()-catalogAt>60000',script)
         self.assertIn('if(document.hidden)return',script)
         self.assertIn("api('/api/notification-recipients')", script)
         self.assertIn("delivery_options", script)
@@ -2219,7 +2255,7 @@ else:
         self.assertIn("releaseDeliveryTokens", script)
         self.assertIn("collectOrbTransitions", script)
         self.assertIn("flushOrbTransitions", script)
-        self.assertIn("feeds-next", script)
+        self.assertIn("TaskWorkflow.miniRoute(TaskWorkflow.stages(run))", script)
         self.assertNotIn("const TASK_MOTION =", script)
         self.assertNotIn("taskMotionMarkup", script)
         self.assertNotIn("task-kinetic", script)

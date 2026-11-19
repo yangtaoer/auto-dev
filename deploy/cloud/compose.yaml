@@ -1,4 +1,17 @@
 services:
+  cache:
+    image: redis:7.4.12-alpine
+    command: ["redis-server", "/etc/autodev/redis.conf"]
+    restart: unless-stopped
+    user: "999:1000"
+    read_only: true
+    cap_drop: [ALL]
+    mem_limit: 96m
+    tmpfs: [/data]
+    volumes:
+      - ../cache/redis.conf:/etc/autodev/redis.conf:ro
+    networks: [cache]
+
   permissions:
     image: alpine:3.22
     restart: "no"
@@ -10,7 +23,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/cloud/Dockerfile
-    image: autodev-cloud:1.0-Beta.29
+    image: autodev-cloud:1.0-Beta.30
     restart: unless-stopped
     depends_on:
       permissions:
@@ -22,6 +35,7 @@ services:
       BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/bootstrap_admin_password
       AUTODEV_RUNNER_TOKEN_FILE: /run/secrets/runner_token
       SMTP_PASSWORD_FILE: /run/secrets/smtp_password
+      AUTODEV_REDIS_URL: "${AUTODEV_REDIS_URL-redis://cache:6379/0}"
     secrets:
       - autodev_secret_key
       - bootstrap_admin_password
@@ -29,6 +43,7 @@ services:
       - smtp_password
     volumes:
       - ./data/app:/app/data
+    networks: [default, cache]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=3)"]
       interval: 20s
@@ -53,6 +68,10 @@ services:
       - ./data/caddy-data:/data
       - ./data/caddy-config:/config
       - ./data/caddy-logs:/var/log/caddy
+
+networks:
+  cache:
+    internal: true
 
 secrets:
   autodev_secret_key:

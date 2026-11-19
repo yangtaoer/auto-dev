@@ -1,4 +1,17 @@
 services:
+  cache:
+    image: redis:7.4.12-alpine
+    command: ["redis-server", "/etc/autodev/redis.conf"]
+    restart: unless-stopped
+    user: "999:1000"
+    read_only: true
+    cap_drop: [ALL]
+    mem_limit: 96m
+    tmpfs: [/data]
+    volumes:
+      - ../cache/redis.conf:/etc/autodev/redis.conf:ro
+    networks: [cache]
+
   permissions:
     image: alpine:3.22
     restart: "no"
@@ -10,7 +23,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/cloud/Dockerfile
-    image: autodev-backend:1.0-Beta.29
+    image: autodev-backend:1.0-Beta.30
     restart: unless-stopped
     depends_on:
       permissions:
@@ -21,6 +34,7 @@ services:
       AUTODEV_SECRET_KEY_FILE: /run/secrets/autodev_secret_key
       BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/bootstrap_admin_password
       AUTODEV_RUNNER_TOKEN_FILE: /run/secrets/runner_token
+      AUTODEV_REDIS_URL: "${AUTODEV_REDIS_URL-redis://cache:6379/0}"
     secrets:
       - autodev_secret_key
       - bootstrap_admin_password
@@ -29,12 +43,17 @@ services:
       - "${AUTODEV_BIND_ADDRESS:-0.0.0.0}:${AUTODEV_BACKEND_PORT:-28765}:8765"
     volumes:
       - ./data/app:/app/data
+    networks: [default, cache]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=3)"]
       interval: 20s
       timeout: 5s
       retries: 5
       start_period: 15s
+
+networks:
+  cache:
+    internal: true
 
 secrets:
   autodev_secret_key:

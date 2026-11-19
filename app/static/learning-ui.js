@@ -150,17 +150,28 @@ window.ProjectLearning = (() => {
     return `<details class="learning-similar"><summary><b>本次参考的项目经验</b><span>${context.length} 条来源</span></summary><div>${context.map(item=>`<article><b>${H(item.title||item.criterion||'历史经验')}</b><p>${H(item.scope_summary||item.lesson||item.implementation_summary||'')}</p>${item.request_id?`<button type="button" class="text-button" data-learning-request="${H(item.request_id)}">来源需求 #${H(item.work_item_id||'')} ↗</button>`:''}${item.match_reason||item.reason||item.relevance?`<small>${H(item.match_reason||item.reason||item.relevance)}</small>`:''}${statusChip(item.status)}</article>`).join('')}${usage.length?`<h4>采用情况与当前代码复核</h4>${bullets(usageSummaries)}`:''}</div></details>`;
   }
 
+  function renderContext(request) {
+    const context=document.querySelector('#task-experience-context');
+    if(!context)return;
+    context.innerHTML=renderSimilar(request);
+    bindRequestLinks(context);
+  }
+
   function renderRequest(request) {
+    const mount=document.querySelector('#task-acceptance-mount');
+    if(!mount)return;
     let session=draftPanels.get(request.id);
     if(!session){session={request,element:document.createElement('section'),bundle:null,draft:null,status:'',loading:false};session.element.className='request-learning-panel';session.element.dataset.requestId=request.id;draftPanels.set(request.id,session);}
     session.request=request;
     // Reattach the original node after task polling; typed text, focus state and preview survive.
-    document.querySelector('#task-acceptance-mount')?.append(session.element);
-    document.querySelector('#task-experience-context').innerHTML=renderSimilar(request)||'<p class="muted">本次尚未登记引用的历史经验。</p>';
-    bindRequestLinks(document.querySelector('#task-experience-context'));
-    renderRequirementPoints(session);
-    if(!session.bundle&&!session.loading&&!session.loadFailed)loadAcceptance(session);
-    else if((session.status!==request.status||session.reload)&&!session.loading){session.reload=false;loadAcceptance(session);}
+    mount.append(session.element);
+    const revision=request.acceptance_progress?.latest_feedback_id;
+    if(revision!==undefined&&session.bundle&&Number(session.bundle.acceptance?.latest_feedback_id)!==Number(revision))session.reload=true;
+    if(session.status!==request.status&&session.bundle)session.reload=true;
+    if(!session.loading&&((!session.bundle&&!session.loadFailed)||session.reload)){
+      session.reload=false;
+      loadAcceptance(session);
+    }
     session.status=request.status;
   }
 
@@ -175,7 +186,6 @@ window.ProjectLearning = (() => {
         const acceptance=result.acceptance||{};
         session.draft={verdict:null,raw_feedback:'',failedIds:new Set(),expected_latest_feedback_id:Number(acceptance.latest_feedback_id)||0,idempotency_key:key(),optionalOpen:false};
       }
-      renderRequirementPoints(session);
       drawAcceptance(session);
       loader?.finish();
     } catch(error) {
@@ -185,16 +195,12 @@ window.ProjectLearning = (() => {
     } finally {session.loading=false;}
   }
 
-  function renderRequirementPoints(session) {
-    if(state.selectedRequest!==session.request.id)return;
-    const mount=document.querySelector('#requirement-points'),bundle=session.bundle;
-    if(!mount)return;
-    if(!bundle){mount.innerHTML=empty('正在读取需求拆解…');return;}
-    mount.innerHTML=`<ol class="task-points">${list(bundle.acceptance?.items).map(item=>`<li>${H(item.criterion)}</li>`).join('')}</ol>`;
+  function renderAssignee(session) {
+    const bundle=session.bundle;
     if(bundle.can_assign){
       const owner=document.createElement('details');owner.className='task-context';
       owner.innerHTML=`<summary>指定验收人</summary><form class="acceptance-assignee"><label>${selectMarkup('user_id','选择验收人')}</label><button class="btn btn-secondary" type="submit">保存</button><p class="form-error" hidden></p></form>`;
-      mount.append(owner);
+      session.element.querySelector('.acceptance-panel').append(owner);
       const form=owner.querySelector('form'),options=list(bundle.users).map(user=>[String(user.id),`${user.display_name} · ${user.username}`]);
       wireSelect(form.querySelector('.ledger-select'),options,bundle.acceptance?.acceptance_owner_id||session.request.requester_id||'');
       form.onsubmit=async event=>{
@@ -210,7 +216,7 @@ window.ProjectLearning = (() => {
     const items=list(acceptance.items),editable=Boolean(bundle.can_submit??bundle.can_accept),rounds=list(acceptance.rounds);
     const latestRound=rounds.find(round=>Number(round.id)===Number(acceptance.latest_feedback_id));
     const failed=latestRound&&(latestRound.overall_status==='failed'||list(latestRound.items).some(item=>item.status==='failed'));
-    session.element.innerHTML=`<section class="acceptance-panel"><header class="acceptance-heading"><div><p class="eyebrow">提出人验收 / ACCEPTANCE</p><h3>${H(acceptanceLabels[acceptance.status]||'等待验收')}</h3></div></header>
+    session.element.innerHTML=`<section class="acceptance-panel"><header class="acceptance-heading"><h3>${H(acceptanceLabels[acceptance.status]||'等待验收')}</h3></header>
       ${editable?`<form class="acceptance-form"><fieldset class="acceptance-verdict"><legend>这次需求验证结果如何？</legend>
         <button type="button" data-verdict="passed" aria-pressed="${draft.verdict==='passed'}"><span aria-hidden="true">✓</span>验证通过</button>
         <button type="button" data-verdict="failed" aria-pressed="${draft.verdict==='failed'}"><span aria-hidden="true">×</span>验证不通过</button></fieldset>
@@ -229,6 +235,7 @@ window.ProjectLearning = (() => {
       session.element.querySelector('.acceptance-form')?.prepend(notice);
       notice.querySelector('button').onclick=()=>{draft.expected_latest_feedback_id=Number(acceptance.latest_feedback_id)||0;draft.idempotency_key=key();notice.remove();};
     }
+    renderAssignee(session);
     bindRequestLinks(session.element);
     const form=session.element.querySelector('.acceptance-form');
     if(form){
@@ -266,6 +273,7 @@ window.ProjectLearning = (() => {
       session.draft=null;
       if(result.acceptance)session.bundle={...session.bundle,acceptance:result.acceptance};
       await loadAcceptance(session);toast('验收结果已保存');catalog.loaded=false;
+      if(state.selectedRequest===session.request.id)await refreshDetail(session.request.id,true);
     }catch(err){
       error.textContent=`${err.message}。草稿已保留。`;error.hidden=false;
       controls.forEach(([control,disabled])=>control.disabled=disabled);
@@ -289,5 +297,5 @@ window.ProjectLearning = (() => {
   if(requestedId&&/^[A-Za-z0-9-]{1,80}$/.test(requestedId)){
     openDetail(requestedId).then(()=>{if(new URLSearchParams(location.search).has('acceptance'))TaskDialog.select('acceptance');}).catch(error=>toast(error.message));
   }
-  return {renderRequest,syncProjects,willOpenRequest:id=>{const session=draftPanels.get(id);if(session)session.reload=true;},open:()=>{syncProjects();loadCatalog(catalog.page);}};
+  return {renderRequest,renderContext,syncProjects,willOpenRequest:id=>{const session=draftPanels.get(id);if(session)session.reload=true;},open:()=>{syncProjects();return loadCatalog(catalog.page);}};
 })();

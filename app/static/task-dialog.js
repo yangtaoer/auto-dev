@@ -1,7 +1,7 @@
 /* One task, one workspace. Tab and draft state survive background polling. */
 window.TaskDialog = (() => {
-  const tabs = new Map(), scrolls = new Map(), openSections = new Map();
-  let requestId = null, returnFocus = null;
+  const tabs = new Map(), scrolls = new Map(), openSections = new Map(), stageVisits = new Map();
+  let requestId = null, returnFocus = null, archivedReplies = [];
   const dialog = () => document.querySelector('#detail-drawer');
   function open() {
     const root = dialog();
@@ -26,6 +26,7 @@ window.TaskDialog = (() => {
       const id = tabs.keys().next().value;
       tabs.delete(id);
       openSections.delete(id);
+      stageVisits.delete(id);
       for (const key of scrolls.keys()) if (key.startsWith(id + ':')) scrolls.delete(key);
     }
   }
@@ -49,20 +50,41 @@ window.TaskDialog = (() => {
       panel.hidden = panel.dataset.panel !== id;
       if (!panel.hidden) panel.scrollTop = scrolls.get(`${requestId}:${id}`) || 0;
     });
+    document.dispatchEvent(new CustomEvent('autodev:task-stage', {detail:{requestId, stage:id}}));
   }
-  function render(id, head, panels) {
+  function render(id, head, panels, nodes = [], defaultPanel = 'overview') {
     rememberScroll();
     rememberSections();
     requestId = id;
-    const selected = tabs.get(id) || 'overview';
-    const icons = {overview:'clipboard',requirement:'layers',development:'code',delivery:'cube',acceptance:'check',followup:'message'};
-    const nav = panels.map(([key, label], index) => `<button type="button" id="task-tab-${key}" role="tab" data-task-tab="${key}" aria-controls="task-panel-${key}" aria-selected="${key === selected}" tabindex="${key === selected ? 0 : -1}"><small>${String(index + 1).padStart(2, '0')}</small>${editorialIcon(icons[key])}${label}</button>`).join('');
-    return `${head}<nav class="task-tabs" role="tablist" aria-label="任务流程">${nav}</nav><div class="task-tab-body">${panels.map(([key, , content]) => `<section class="task-tab-panel" id="task-panel-${key}" role="tabpanel" data-panel="${key}" aria-labelledby="task-tab-${key}" tabindex="0" ${key === selected ? '' : 'hidden'}>${content}</section>`).join('')}</div>`;
+    const available = new Map(panels.map(([key, label]) => [key,label]));
+    const selected = [tabs.get(id), defaultPanel, panels[0]?.[0]].find(key => available.has(key));
+    const active = nodes.find(node => node.active);
+    const changed = !!active && stageVisits.get(id) !== active.id;
+    stageVisits.set(id, active?.id || '');
+    const button = (key, body, attributes = '') => `<button type="button" id="task-tab-${key}" role="tab" data-task-tab="${key}" aria-controls="task-panel-${key}" aria-selected="${key === selected}" tabindex="${key === selected ? 0 : -1}" ${attributes}>${body}</button>`;
+    const shortcuts = ['overview','followup'].filter(key => available.has(key)).map(key => button(key, escapeHtml(available.get(key)))).join('');
+    const route = nodes.filter(node=>available.has(node.id)).map(node => {
+      const current = node.active && node.state === 'running';
+      const marker = current ? `<span class="workflow-orb" ${changed?'data-arrived':''}>${TaskWorkflow.asset('current-stage',32)}</span>` : editorialIcon(node.state === 'done' ? 'check' : node.icon);
+      return button(node.id, `<span class="workflow-marker" aria-hidden="true">${marker}</span><b>${escapeHtml(node.label)}</b><small>${TaskWorkflow.STATES[node.state]}</small>`,
+        `class="workflow-node" data-phase="${node.state}" ${node.active?'aria-current="step"':''}`);
+    }).join('');
+    const nav = `<nav class="workflow-nav" role="tablist" aria-label="任务流程">
+      <div class="workflow-nav-head"><h3>任务流程</h3><div class="workflow-shortcuts">${shortcuts}</div></div>
+      <div class="workflow-rail" style="--phase-count:${Math.max(1,nodes.length)}">${route}</div>
+    </nav>`;
+    return `${head}${nav}<div class="task-tab-body">${panels.map(([key, , content]) => `<section class="task-tab-panel" id="task-panel-${key}" role="tabpanel" data-panel="${key}" aria-labelledby="task-tab-${key}" tabindex="0" ${key === selected ? '' : 'hidden'}>${content}</section>`).join('')}</div>`;
   }
   function bind() {
     dialog().querySelectorAll('[data-task-disclosure]').forEach(details => {
       details.open = openSections.get(requestId)?.has(details.dataset.taskDisclosure) || false;
     });
+    const archive = dialog().querySelector('[data-reply-history]');
+    if (archive) {
+      const paint = () => { if (archive.open) archive.querySelector('.task-replies').innerHTML = archivedReplies.map(replyCard).join(''); };
+      archive.addEventListener('toggle',paint,{once:!archive.open});
+      paint();
+    }
     dialog().querySelectorAll('[data-task-tab]').forEach(button => {
       button.onclick = () => select(button.dataset.taskTab);
       button.onkeydown = event => {
@@ -95,13 +117,12 @@ window.TaskDialog = (() => {
   function repositoryPlan(detail) {
     const plan = detail.repository_plan || {};
     const entries = Array.isArray(plan.repositories) ? plan.repositories : [];
-    const preparing = ['queued', 'validating', 'developing', 'waiting_retry'].includes(detail.status) && !detail.result_summary;
-    const message = plan.summary || (preparing ? '拆解完成后显示预计修改的仓库。' : '这项任务没有已保存的仓库拆解记录。');
+    if (!plan.summary && !entries.length) return '';
     const list = entries.length ? `<ul class="task-plan-repositories">${entries.map(repo => `
       <li><code>${escapeHtml(repo.name)}</code>${repo.summary ? `<p>${escapeHtml(repo.summary)}</p>` : ''}</li>`).join('')}</ul>` : '';
     return `<section class="task-data-panel task-repository-plan">
       <h3>${editorialIcon('code')}预计改动的 Git 仓库</h3>
-      <p class="task-plan-summary">${escapeHtml(message)}</p>${list}
+      ${plan.summary?`<p class="task-plan-summary">${escapeHtml(plan.summary)}</p>`:''}${list}
     </section>`;
   }
 
@@ -109,29 +130,34 @@ window.TaskDialog = (() => {
     const changed = (repositories || []).filter(repo => Array.isArray(repo.changed_files) && repo.changed_files.length);
     if (!changed.length) return '';
     const count = changed.reduce((total, repo) => total + repo.changed_files.length, 0);
-    return `<section class="task-data-panel task-changed-files">
-      <header><h3>${editorialIcon('code')}实际改动文件</h3><span>${changed.length} 个仓库 · ${count} 个文件</span></header>
+    return `<details class="task-data-panel task-changed-files" data-task-disclosure="changed-files">
+      <summary><b>实际改动文件</b><span>${changed.length} 个仓库 · ${count} 个文件</span></summary>
       <div class="task-file-repositories">${changed.map(repo => `<article>
         <h4><code>${escapeHtml(repo.name || repo.repository_short_name || '代码仓库')}</code><span>${repo.changed_files.length}</span></h4>
         <ul>${repo.changed_files.map(path => `<li><code>${escapeHtml(path)}</code></li>`).join('')}</ul>
       </article>`).join('')}</div>
-    </section>`;
+    </details>`;
   }
 
+  function replyCard(reply) {
+    const labels = {'devcore.reply': 'AI 回复', 'devcore.summary': '本轮总结', 'workspace.plan_recorded': '需求拆解'};
+    return `<article class="task-reply" data-kind="${escapeHtml(reply.event_type)}">
+      <header><b>${labels[reply.event_type] || 'AI 回复'}</b><time datetime="${escapeHtml(reply.created_at || '')}">${fmt(reply.created_at)}</time></header>
+      <div class="task-reply-body">${replyMarkup(reply.message)}</div>
+    </article>`;
+  }
   function conversation(detail, live) {
     const replies = Array.isArray(detail.assistant_replies) ? [...detail.assistant_replies] : [];
     if (detail.result_summary && !replies.some(reply => reply.event_type === 'devcore.summary')) {
       replies.push({event_type: 'devcore.summary', message: detail.result_summary,
                     created_at: detail.completed_at || detail.updated_at});
     }
-    const labels = {'devcore.reply': 'AI 回复', 'devcore.summary': '本轮总结', 'workspace.plan_recorded': '需求拆解'};
-    const items = replies.map(reply => `<article class="task-reply" data-kind="${escapeHtml(reply.event_type)}">
-      <header><b>${labels[reply.event_type] || 'AI 回复'}</b><time datetime="${escapeHtml(reply.created_at || '')}">${fmt(reply.created_at)}</time></header>
-      <div class="task-reply-body">${replyMarkup(reply.message)}</div>
-    </article>`).join('');
+    const current = detail.status === 'delivered' ? replies.slice(-1) : replies.slice(-2);
+    archivedReplies = replies.slice(0,replies.length-current.length);
     return `<section class="task-data-panel task-conversation">
       <header><h3>${editorialIcon('message')}AI 回复与总结</h3>${live}</header>
-      ${items ? `<div class="task-replies">${items}</div>` : '<p class="muted">暂无 AI 回复。</p>'}
+      ${current.length ? `<div class="task-replies">${current.map(replyCard).join('')}</div>` : ''}
+      ${archivedReplies.length ? `<details class="task-reply-history" data-task-disclosure="reply-history" data-reply-history><summary>较早回复 · ${archivedReplies.length} 条</summary><div class="task-replies"></div></details>` : ''}
     </section>`;
   }
   // Handle the topmost overlay only; artifact preview and live output keep their own controls.

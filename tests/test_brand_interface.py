@@ -238,15 +238,16 @@ class BrandInterfaceTests(unittest.TestCase):
         self.assertIn('aria-controls', toggle)
         self.assertIn("form.querySelector('button[type=submit]')", html)
 
-    def test_reference_layout_keeps_data_entries_and_ordered_tabs(self):
+    def test_workflow_workspace_keeps_data_entries_and_stage_navigation(self):
         html = (ROOT / 'app/templates/index.html').read_text('utf-8')
         for identifier in ['record-filters', 'recent-table', 'all-table', 'project-detail-content',
                            'experience-metrics', 'request-form', 'model-settings-form', 'users-table']:
             self.assertEqual(html.count(f'id="{identifier}"'), 1)
         app = (ROOT / 'app/static/app.js').read_text('utf-8')
-        panels = app[app.index("TaskDialog.render(d.id,head,["):]
-        order = [panels.index(f"['{tab}',") for tab in ['overview', 'requirement', 'development', 'delivery', 'acceptance']]
-        self.assertEqual(order, sorted(order))
+        self.assertIn("TaskDialog.render(d.id,head,panels,phases", app)
+        self.assertIn("TaskWorkflow.stages(d)", app)
+        self.assertIn('class="workflow-evidence"', app)
+        self.assertLess(html.index('/static/task-workflow.js'), html.index('/static/app.js'))
         self.assertIn('展开技术详情', app)
         self.assertIn('project.repository_base_branches?.[name]', app)
 

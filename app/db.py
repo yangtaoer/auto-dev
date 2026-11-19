@@ -232,6 +232,7 @@ CREATE TABLE IF NOT EXISTS delivery_events (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_delivery_events_request_type ON delivery_events(request_id,event_type,id);
+CREATE INDEX IF NOT EXISTS ix_delivery_events_request_order ON delivery_events(request_id,id);
 CREATE TABLE IF NOT EXISTS delivery_artifacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id TEXT NOT NULL REFERENCES delivery_requests(id) ON DELETE CASCADE,

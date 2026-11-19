@@ -24,13 +24,14 @@
   <link rel="stylesheet" href="/static/ui-refinements.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/followup-ui.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/loading-ui.css?v={{ app_version }}">
+  <link rel="stylesheet" href="/static/task-workflow.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/deployment-links.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/themes.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/theme-components.css?v={{ app_version }}">
   <link rel="stylesheet" href="/static/workshop-ui.css?v={{ app_version }}">
   {% include 'media-head.html' %}
 </head>
-<body class="mint-ui mint-workspace" data-view="dashboard">
+<body class="mint-ui mint-workspace" data-view="dashboard" data-app-version="{{ app_version }}">
   <div class="app-shell">
     <aside class="sidebar">
       <div class="sidebar-film" data-film-stage aria-hidden="true"><video data-brand-video="sidebar" muted loop playsinline preload="metadata" tabindex="-1" disablepictureinpicture hidden></video></div>
@@ -92,7 +93,7 @@
         </div>
         <section class="active-pipeline" id="active-pipeline" hidden>
           <div class="section-heading live-heading"><div class="heading-copy"><p class="eyebrow">运行流水线 / LIVE PIPELINE</p><h2><i class="live-orbit" aria-hidden="true"></i>正在运行的任务</h2><span class="section-summary" id="active-summary"></span></div><div class="capacity-status" id="capacity-status">并发槽位 0 / 5</div></div>
-          <div class="run-grid" id="active-runs"></div>
+          <div class="workflow-desk"><div class="workflow-run-list" id="active-runs" aria-label="选择任务"></div><aside id="active-run-preview" class="workflow-peek" aria-label="任务速览"></aside></div>
         </section>
         <section class="recent-panel" aria-label="最近任务">
         <div class="section-heading compact"><div class="heading-copy"><p class="eyebrow">最近动态 / RECENT SIGNALS</p><h2>最近任务</h2><span class="section-summary" id="recent-summary"></span></div><button class="text-button" data-view-link="requests">查看全部任务 <svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#arrow-right"></use></svg></button></div>
@@ -310,6 +311,7 @@
   <script type="module" src="/static/appearance-ui.js?v={{ app_version }}"></script>
   <script type="module" src="/static/orb-scene.js?v={{ app_version }}"></script>
   <script src="/static/brand-media.js?v={{ app_version }}"></script>
+  <script src="/static/task-workflow.js?v={{ app_version }}"></script>
   <script src="/static/task-dialog.js?v={{ app_version }}"></script>
   <script src="/static/task-actions.js?v={{ app_version }}"></script>
   <script src="/static/loading-ui.js?v={{ app_version }}"></script>

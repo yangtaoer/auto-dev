@@ -45,7 +45,7 @@ from .services.tfs import TfsClient, TfsConnectionError
 from .services import pr_validation_recovery
 from .services.analysis_sync import report_ready
 from .services.command_logs import bounded_log
-from .services.pipeline_release import TfsPipelineReleaseService
+from .services.pipeline_release import TfsPipelineReleaseError, TfsPipelineReleaseService
 from .services.process_env import git_authenticated_env, sanitized_process_env
 from .project_catalog import load_project_presets, resolve_projects_for_work_item
 from .services.development_risks import development_risks, critical_risk
@@ -2282,6 +2282,11 @@ class Worker:
                     result = self._ensure_auto_release(request_id, detail, project)
             except Exception as exc:
                 self.store.release_finish(request_id, decision["batch_id"], {"error": str(exc)[:2000]}, failed=True)
+                if isinstance(exc, TfsPipelineReleaseError) and exc.result:
+                    result = {key: exc.result.get(key) for key in ("buildId", "result", "resultsUrl")}
+                    deployment = exc.result.get("deployment14") or {}
+                    result["deployment14"] = {key: deployment.get(key) for key in ("eligible", "status")}
+                    self.store.add_event(request_id, "release.failed", "发版流程未完成", level="error", metadata=result)
                 raise
             self.store.release_finish(request_id, decision["batch_id"], result)
         else:

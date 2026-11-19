@@ -17,8 +17,10 @@ test('server 14 addresses and authentication links preserve verified release sta
  assert.ok(html.includes(first.url));assert.ok(html.includes(second.url));assert.ok(html.includes('认证入口'));
  assert.ok(html.includes('发布时验证通过'));assert.equal(html.includes('部署与就绪未验证'),false);
 });
-test('overview and merge/release tab share the same service component loaded before app',()=>{
+test('deployment services have one layout and a shortcut from the completion trace',()=>{
  const app=fs.readFileSync('app/static/app.js','utf8'),page=fs.readFileSync('app/templates/index.html','utf8');
- assert.ok(app.includes('AutoDevDeploymentLinks?.section(d.deployment_services)'));assert.ok(app.includes('${deliverySummary}${deploymentServices}'));
+ assert.equal(app.split('AutoDevDeploymentLinks?.section(d.deployment_services)').length,2);
+ assert.ok(app.includes("deploymentServices?shortcut('deploy',"));
+ assert.ok(app.includes('deploy:deployment,delivery,acceptance:'));
  assert.ok(page.indexOf('/static/deployment-links.js')<page.indexOf('/static/app.js'));assert.ok(page.includes('/static/deployment-links.css'));
 });

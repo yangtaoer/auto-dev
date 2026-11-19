@@ -1,0 +1,22 @@
+{
+  "generator": "Built-in ImageGen",
+  "format": "WebP",
+  "assets": {
+    "current-stage.webp": {
+      "description": "橙色球形助手，用于标记当前阶段",
+      "source": "exec-df8e7d66-49ed-462a-a768-f7bbf1442e92.png",
+      "width": 144,
+      "height": 144,
+      "sha256": "622ce31805f4ae68c4002e0c5f48b938208622b1f10298c9982be66b50ec9e44",
+      "bytes": 5284
+    },
+    "delivery-parcel.webp": {
+      "description": "已完成交付的发布包图形",
+      "source": "exec-cf0ae319-c0cb-41a8-b2a4-a4420c77d5d6.png",
+      "width": 144,
+      "height": 144,
+      "sha256": "561bf343f13145c33c8b13daf0e1c2c82b8030778bad402e73230c4cf1d98db2",
+      "bytes": 5984
+    }
+  }
+}

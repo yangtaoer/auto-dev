@@ -10,6 +10,7 @@ import json
 import re
 import sqlite3
 import uuid
+from contextlib import closing
 from html.parser import HTMLParser
 from typing import Any
 
@@ -88,6 +89,9 @@ def _criteria(criteria: Any) -> list[str]:
     return result
 
 
+_NUMBERED_POINT = r"(?:\d+[、．）)]|\d+\.(?!\d)\s*|[一二三四五六七八九十]+[、．）)]|[（(](?:\d+|[一二三四五六七八九十]+)[）)])"
+
+
 def description_criteria(description: str) -> list[str]:
     """Keep explicit requirement points together with their explanatory paragraphs.
 
@@ -118,9 +122,8 @@ def description_criteria(description: str) -> list[str]:
         sections = plain.split("\u241e")
         prefix, values = sections[0].strip(), [value.strip() for value in sections[1:]]
     else:
-        marker = r"(?:\d+[、．）)]|\d+\.(?!\d)\s*|[一二三四五六七八九十]+[、．）)]|[（(](?:\d+|[一二三四五六七八九十]+)[）)])"
         # Inline numbered points may immediately follow the prior sentence.
-        pattern = re.compile(r"(?m)(?:^\s*|(?<=[；;。\n])\s*|(?<=\s))(?=" + marker + r")")
+        pattern = re.compile(r"(?m)(?:^\s*|(?<=[；;。\n])\s*|(?<=\s))(?=" + _NUMBERED_POINT + r")")
         starts = sorted({match.end() for match in pattern.finditer(plain)})
         if starts:
             prefix = plain[:starts[0]].strip()
@@ -195,6 +198,11 @@ def _canonical_id(value: Any) -> str:
     return f"AC-{int(match.group(1)):02}" if match else str(value or "")
 
 
+def _criterion_text(value: Any) -> str:
+    text = re.sub(r"^" + _NUMBERED_POINT, "", str(value or "").strip(), count=1)
+    return " ".join(text.split())
+
+
 def _round(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     result = dict(row)
     result["items"] = _load(result.get("items"), [])
@@ -219,16 +227,25 @@ def _acceptance(conn: sqlite3.Connection, request: dict[str, Any]) -> dict[str, 
             feedback[item["id"]] = {**item, "tested_version": version, "environment": entry["environment"],
                 "actor_name": entry["actor_name"], "created_at": entry["created_at"], "feedback_id": entry["id"]}
     ledger = [item for item in _load(request.get("acceptance_ledger"), []) if isinstance(item, dict)]
+    scopes = [_criterion_text(item["criterion"]) for item in items]
     for item in items:
         item["id"] = item.pop("item_id")
         # Match a criterion first; ID fallback only when model copied the frozen ID faithfully.
         dev = next((entry for entry in ledger if str(entry.get("criterion", "")).strip() == item["criterion"].strip()), None)
+        if dev is None:
+            scope = _criterion_text(item["criterion"])
+            # Match AI output that drops list numbering only when it unambiguously matches the scope.
+            if scope and scopes.count(scope) == 1:
+                matching = [entry for entry in ledger if _criterion_text(entry.get("criterion")) == scope]
+                if len(matching) == 1:
+                    dev = matching[0]
         if dev is None and item["source"] != DESCRIPTION_SOURCE:
             dev = next((entry for entry in ledger if _canonical_id(entry.get("id")) == item["id"]), {})
         dev = dev or {}
         item["development_status"] = dev.get("status", "unreported")
         item["tests"] = [_text(value, 2000) for value in dev["tests"][:30]] if isinstance(dev.get("tests"), list) else []
         item["evidence"] = [_text(value, 2000) for value in dev["evidence"][:30]] if isinstance(dev.get("evidence"), list) else []
+        item["files"] = [_text(value, 500) for value in dev["files"][:30]] if isinstance(dev.get("files"), list) else []
         item["human_status"] = feedback.get(item["id"], {}).get("status", "unverified")
         item["feedback"] = feedback.get(item["id"])
         item["automatic_test_status"] = "deferred"
@@ -255,6 +272,19 @@ def get_acceptance(request_id: str) -> dict[str, Any]:
         if request["status"] == "delivered":
             _ensure(conn, request, None, request.get("work_item_revision"), DESCRIPTION_SOURCE)
         return _acceptance(conn, request)
+
+
+def acceptance_progress(request: dict[str, Any]) -> dict[str, Any]:
+    """Read a lightweight view of recorded feedback, including older tasks."""
+    with closing(db.connect()) as conn:
+        current = _acceptance(conn, request)
+    return {
+        "status": current["status"],
+        "summary": current["summary"],
+        "latest_feedback_id": current["latest_feedback_id"],
+        "items": [{key: item[key] for key in ("id", "criterion", "development_status", "human_status", "tests", "evidence", "files")}
+                  for item in current["items"]],
+    }
 
 
 def assign_acceptance_owner(request_id: str, user_id: int, actor_id: int) -> dict[str, Any]:

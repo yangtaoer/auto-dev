@@ -5,6 +5,7 @@ import html
 import hmac
 import re
 import sqlite3
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
@@ -78,7 +79,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.29",
+    version="1.0-Beta.30",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -88,6 +89,21 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_ho
 app.mount("/static", StaticFiles(directory=ROOT / "app" / "static"), name="static")
 templates = Jinja2Templates(directory=ROOT / "app" / "templates")
 templates.env.globals.update(ui_media_url=ui_media.url, ui_media_bundle=ui_media.bundle)
+
+
+@app.middleware("http")
+async def measure_read(request: Request, call_next):
+    started = time.perf_counter()
+    response = await call_next(request)
+    path = request.url.path
+    if request.method == "GET" and (path.startswith("/api/") or path == "/"):
+        timing = f"app;dur={(time.perf_counter()-started)*1000:.2f}"
+        cache = response.headers.get("X-AutoDev-Cache")
+        response.headers["Server-Timing"] = f'{timing}, redis;desc="{cache}"' if cache else timing
+    if (path.startswith("/static/") and response.status_code in {200, 304}
+            and request.query_params.get("v") == app.version):
+        response.headers["Cache-Control"] = "public,max-age=31536000,immutable"
+    return response
 
 
 class LoginInput(BaseModel):
@@ -422,10 +438,11 @@ def runner_is_online(runner_id: str) -> bool:
     return runner_record_online(row("SELECT * FROM runners WHERE runner_id=?", (runner_id,)))
 
 
-def add_runner_display_state(item: dict[str, Any]) -> dict[str, Any]:
+def add_runner_display_state(item: dict[str, Any], online: bool | None = None) -> dict[str, Any]:
     """Expose an offline queue state without changing the persisted workflow status."""
     actual_status = str(item.get("status") or "")
-    online = runner_is_online(str(item.get("runner_id") or ""))
+    if online is None:
+        online = runner_is_online(str(item.get("runner_id") or ""))
     item["runner_online"] = online
     item["display_status"] = "waiting_runner" if actual_status == RunStatus.QUEUED.value and not online else actual_status
     if item["display_status"] == "waiting_runner":
@@ -917,8 +934,35 @@ def save_appearance(payload: AppearanceInput, response: Response, user: Annotate
     return {"appearance": appearance}
 
 
+_COMPACT_REQUEST_COLUMNS = ",".join(f"r.{name}" for name in (
+    "id", "work_item_id", "project_id", "requester_id", "runner_id", "task_type", "delivery_mode",
+    "status", "current_step", "progress", "title", "result_summary", "error_message", "repository_states",
+    "delivery_options", "pr_id", "pr_url", "commit_hash", "merge_commit", "started_at", "created_at",
+    "updated_at", "completed_at", "joint_group_id", "joint_project_index", "joint_project_count",
+))
+
+
+def compact_task_record(item: dict) -> None:
+    """Keep list navigation and trace counts without sending every task's detailed evidence."""
+    fields = {"name","repository_short_name","pr_id","pr_url","commit_hash","merge_commit"}
+    repositories = []
+    for repository in item.get("repository_states") or []:
+        if not isinstance(repository, dict):
+            continue
+        repositories.append({key: value for key,value in repository.items() if key in fields} | {
+            "changed_file_count": len(repository.get("changed_files") or []),
+        })
+    item["repository_states"] = repositories
+    for field in ("result_summary","current_activity","latest_reply","error_message"):
+        if item.get(field) and len(item[field]) > 450:
+            item[field] = item[field][:449] + "…"
+
+
 @app.get("/api/dashboard")
-def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
+def dashboard(user: Annotated[dict, Depends(current_user)], compact: bool = False) -> dict:
+    runners = rows("SELECT * FROM runners ORDER BY runner_id")
+    now = datetime.now(UTC)
+    online_by_runner = {runner["runner_id"]: runner_record_online(runner, now=now) for runner in runners}
     scope = "" if user["role"] == "admin" else "WHERE requester_id=?"
     params = () if user["role"] == "admin" else (user["id"],)
     counts = rows(f"SELECT status,COUNT(*) count FROM visible_delivery_requests {scope} GROUP BY status", params)
@@ -926,15 +970,16 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     active_scope = active_sql if not scope else f"requester_id=? AND {active_sql}"
     activity_select = """(SELECT e.message FROM delivery_events e
         WHERE e.request_id=r.id ORDER BY e.id DESC LIMIT 1) current_activity"""
+    request_columns = _COMPACT_REQUEST_COLUMNS if compact else "r.*"
     active_requests = rows(
-        f"""SELECT r.*,p.name project_name,p.tfs_collection_url,u.display_name requester_name,{activity_select}
+        f"""SELECT {request_columns},p.name project_name,p.tfs_collection_url,u.display_name requester_name,{activity_select}
             FROM visible_delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id
             WHERE {active_scope} ORDER BY r.updated_at DESC LIMIT 12""",
         params,
     )
     recent_scope = "" if not scope else "WHERE r.requester_id=?"
     recent_requests = rows(
-        f"""SELECT r.*,p.name project_name,p.tfs_collection_url,u.display_name requester_name,{activity_select}
+        f"""SELECT {request_columns},p.name project_name,p.tfs_collection_url,u.display_name requester_name,{activity_select}
             FROM visible_delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id
             {recent_scope} ORDER BY r.created_at DESC LIMIT 40""",
         params,
@@ -956,7 +1001,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
     )
     intake_items: list[dict[str, Any]] = []
     for intake in pending_intakes:
-        online = runner_is_online(str(intake["runner_id"]))
+        online = online_by_runner.get(intake["runner_id"], False)
         display_status = "routing" if online else "waiting_runner"
         if not online:
             activity = "执行器当前离线，任务已安全排队，待执行器上线后自动继续"
@@ -1037,13 +1082,20 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
             artifact_map.setdefault(artifact["request_id"], []).append(artifact)
     terminal_statuses = {"delivered", "failed", "rejected", "cancelled"}
     current_time = datetime.now(UTC)
+    from .services.task_trace import dashboard_previews
+    previews = dashboard_previews([item["id"] for item in active_requests])
     for item in (*active_requests, *recent_requests):
-        add_runner_display_state(item)
+        add_runner_display_state(item, online_by_runner.get(item["runner_id"], False))
         item.pop("codex_thread_id", None)
         item.pop("analysis_result", None)
         item["current_activity"] = public_engine_text(item.get("current_activity"))
         item["result_summary"] = public_engine_text(item.get("result_summary"))
         item["error_message"] = public_engine_text(item.get("error_message"))
+        if preview := previews.get(item["id"]):
+            item["steps"] = preview["steps"]
+            item["latest_reply"] = public_engine_text(preview.get("latest_reply"))
+            item["planning_repository_scope"] = preview["planning_repository_scope"]
+            item["repository_plan_recorded"] = preview["repository_plan_recorded"]
         item["delivery_options"] = (
             None
             if item.get("delivery_options") is None
@@ -1053,6 +1105,8 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
             item["delivery_mode"], artifact_map.get(item["id"], []), item["delivery_options"]
         )
         item["repository_states"] = json_value(item.get("repository_states"), [])
+        if compact:
+            compact_task_record(item)
         started_value = item.get("created_at") or item.get("started_at")
         ended_value = item.get("completed_at")
         if not ended_value and item.get("status") in terminal_statuses:
@@ -1063,10 +1117,8 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
             item["duration_seconds"] = max(0, int((ended - started).total_seconds())) if started else None
         except (TypeError, ValueError):
             item["duration_seconds"] = None
-    runners = rows("SELECT * FROM runners ORDER BY runner_id")
-    now = datetime.now(UTC)
     for item in runners:
-        item["online"] = runner_record_online(item, now=now)
+        item["online"] = online_by_runner[item["runner_id"]]
         runner_detail = json_value(item.get("detail"), {})
         item["devcore_usage"] = runner_detail.get("codex_usage", {})
         item["current_request_ids"] = runner_detail.get(
@@ -1141,7 +1193,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)]) -> dict:
             f"SELECT runner_id FROM visible_delivery_requests WHERE status='queued' {queued_scope}",
             queued_params,
         )
-        if not runner_is_online(str(item["runner_id"]))
+        if not online_by_runner.get(item["runner_id"], False)
     )
     request_counts["routing"] = max(0, pending_total - waiting_runner_total)
     request_counts["queued"] = max(0, int(request_counts.get("queued") or 0) - offline_queued_total)
@@ -1174,6 +1226,7 @@ def delivery_records(
     keyword: str = "",
     date_from: str = "",
     date_to: str = "",
+    compact: bool = False,
 ) -> dict:
     """Return a scoped, filterable delivery ledger without loading the entire history."""
     page = max(1, page)
@@ -1235,8 +1288,9 @@ def delivery_records(
     page = min(page, total_pages)
     activity_select = """(SELECT e.message FROM delivery_events e
         WHERE e.request_id=r.id ORDER BY e.id DESC LIMIT 1) current_activity"""
+    request_columns = _COMPACT_REQUEST_COLUMNS if compact else "r.*"
     items = rows(
-        f"""SELECT r.*,p.name project_name,p.project_key,p.tfs_collection_url,
+        f"""SELECT {request_columns},p.name project_name,p.project_key,p.tfs_collection_url,
                    u.display_name requester_name,{activity_select}
             {from_clause} {where_clause}
             ORDER BY r.created_at DESC LIMIT ? OFFSET ?""",
@@ -1259,8 +1313,10 @@ def delivery_records(
 
     current_time = datetime.now(UTC)
     terminal_statuses = {item.value for item in TERMINAL_STATUSES}
+    online_by_runner = {runner["runner_id"]: runner_record_online(runner, now=current_time)
+                        for runner in rows("SELECT runner_id,state,last_seen_at FROM runners")}
     for item in items:
-        add_runner_display_state(item)
+        add_runner_display_state(item, online_by_runner.get(item["runner_id"], False))
         item.pop("codex_thread_id", None)
         item.pop("analysis_result", None)
         item["current_activity"] = public_engine_text(item.get("current_activity"))
@@ -1275,6 +1331,8 @@ def delivery_records(
             item["delivery_mode"], artifact_map.get(item["id"], []), item["delivery_options"]
         )
         item["repository_states"] = json_value(item.get("repository_states"), [])
+        if compact:
+            compact_task_record(item)
         started_value = item.get("created_at") or item.get("started_at")
         ended_value = item.get("completed_at")
         if not ended_value and item.get("status") in terminal_statuses:
@@ -1297,7 +1355,21 @@ def delivery_records(
 
 
 @app.get("/api/admin/analytics")
-def admin_analytics(_: Annotated[dict, Depends(admin_user)]) -> dict:
+def admin_analytics(_: Annotated[dict, Depends(admin_user)], response: Response) -> dict:
+    from .services.read_cache import cached_read
+
+    def revision():
+        task = row("SELECT COUNT(*) n, MAX(updated_at) changed FROM visible_delivery_requests") or {}
+        projects = row("SELECT COUNT(*) n, MAX(updated_at) changed FROM projects") or {}
+        users = rows("SELECT id,display_name FROM users ORDER BY id")
+        return [task, projects, users, str(datetime.now(timezone(timedelta(hours=8))).date())]
+
+    result, source = cached_read("admin-analytics", revision, 30, _analytics)
+    response.headers["X-AutoDev-Cache"] = source
+    return result
+
+
+def _analytics() -> dict:
     overview = row(
         """SELECT COUNT(*) total,
                   SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END) delivered,
@@ -1374,8 +1446,18 @@ def admin_analytics(_: Annotated[dict, Depends(admin_user)]) -> dict:
 
 
 @app.get("/api/projects")
-def list_projects(_: Annotated[dict, Depends(current_user)]) -> dict:
-    return {"projects": [project_for_api(item) for item in rows("SELECT * FROM projects WHERE enabled=1 ORDER BY name")]}
+def list_projects(_: Annotated[dict, Depends(current_user)], response: Response) -> dict:
+    from .services.read_cache import cached_read
+
+    def revision():
+        return row("SELECT COUNT(*) n, MAX(updated_at) changed FROM projects WHERE enabled=1")
+
+    def load():
+        return {"projects": [project_for_api(item) for item in rows("SELECT * FROM projects WHERE enabled=1 ORDER BY name")]}
+
+    result, source = cached_read("projects", revision, 60, load)
+    response.headers["X-AutoDev-Cache"] = source
+    return result
 
 
 @app.post("/api/projects")
@@ -1677,16 +1759,22 @@ def get_request_intake(intake_id: str, user: Annotated[dict, Depends(current_use
 @app.get("/api/requests/{request_id}")
 def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
     original = can_access_request(user, request_id, allow_acceptance_owner=True)
-    request_id = original.get("routing_superseded_by") or request_id
-    detail = public_request_payload(add_runner_display_state(
-        can_access_request(user, request_id, allow_acceptance_owner=True)
-    ))
+    replacement = original.get("routing_superseded_by")
+    if replacement:
+        request_id = replacement
+        original = can_access_request(user, request_id, allow_acceptance_owner=True)
+    detail = public_request_payload(add_runner_display_state(original))
     replies = rows("""SELECT id,event_type,message,created_at FROM delivery_events
                       WHERE request_id=? AND event_type IN ('devcore.reply','devcore.summary','workspace.plan_recorded')
                       ORDER BY id""", (request_id,))
     detail["assistant_replies"] = [
         {**reply, "message": public_engine_text(reply["message"])} for reply in replies
     ]
+    from .services.task_trace import for_request as task_trace
+    detail["task_trace"] = public_engine_text_tree(task_trace(request_id))
+    events = detail["task_trace"]["milestones"]
+    detail["planning_repository_scope"] = events.get("workspace.planning", {}).get("at", "") > events.get("workspace.plan_recorded", {}).get("at", "")
+    detail["acceptance_progress"] = public_engine_text_tree(project_learning.acceptance_progress(original))
     detail.update(acceptance_permissions(detail, user))
     detail["can_followup"] = detail["status"] == RunStatus.DELIVERED.value
     display_status = detail.get("display_status") or detail["status"]
