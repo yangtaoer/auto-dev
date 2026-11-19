@@ -13,6 +13,7 @@ window.TaskDialog = (() => {
   }
   function close() {
     rememberScroll();
+    dialog().querySelector('.workflow-actions[open]')?.removeAttribute('open');
     rememberSections();
     dialog().inert = true;
     document.body.classList.remove('task-dialog-open');
@@ -37,6 +38,7 @@ window.TaskDialog = (() => {
   function select(id, focus = false) {
     const root = dialog();
     if (!root.querySelector(`[data-panel="${id}"]`)) return;
+    root.querySelector('.workflow-actions[open]')?.removeAttribute('open');
     rememberScroll();
     tabs.set(requestId, id);
     root.querySelectorAll('[data-task-tab]').forEach(button => {
@@ -160,6 +162,11 @@ window.TaskDialog = (() => {
       ${archivedReplies.length ? `<details class="task-reply-history" data-task-disclosure="reply-history" data-reply-history><summary>较早回复 · ${archivedReplies.length} 条</summary><div class="task-replies"></div></details>` : ''}
     </section>`;
   }
+  document.addEventListener('click', event => {
+    const actions = dialog()?.querySelector('.workflow-actions[open]');
+    if(actions && !actions.contains(event.target)) actions.open=false;
+  }, true);
+
   // Handle the topmost overlay only; artifact preview and live output keep their own controls.
   document.addEventListener('keydown', event => {
     const root = dialog();
@@ -172,6 +179,13 @@ window.TaskDialog = (() => {
       return;
     }
     if (event.key === 'Escape') {
+      const actions = root.querySelector('.workflow-actions[open]');
+      if(actions){
+        event.stopImmediatePropagation();
+        actions.open=false;
+        actions.querySelector('summary').focus({preventScroll:true});
+        return;
+      }
       const popover = root.querySelector('.ledger-select-menu:not([hidden])');
       if (popover) { closeLedgerPopovers(); return; }
       event.stopImmediatePropagation(); closeDetail();

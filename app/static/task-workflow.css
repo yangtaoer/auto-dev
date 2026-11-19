@@ -69,10 +69,15 @@
 .workflow-actions { position: relative; margin-inline-end: 8px; font-size: 12px; color: var(--skin-ink); }
 .workflow-actions summary { cursor: pointer; }
 .workflow-actions > div {
-  position: absolute; inset-inline-end: 0; top: calc(100% + 4px); z-index: 4; width: min(320px, 74vw); max-height: 42vh; overflow: auto;
+  position: absolute; inset-inline-end: 0; top: calc(100% + 6px); z-index: 4;
+  inline-size: max-content; min-inline-size: 142px; max-inline-size: min(320px, 74vw); max-height: 42vh; overflow: auto;
   background: var(--skin-card-bg, var(--skin-surface)); border: 1px solid var(--skin-line); border-radius: var(--skin-card-radius, 10px);
-  padding: 10px 14px; box-shadow: var(--skin-shadow, 0 4px 18px #0002);
+  padding: 6px; box-shadow: var(--skin-shadow, 0 4px 18px #0002);
 }
+.workflow-actions .task-controls { margin: 0; padding: 0; border: 0; }
+.workflow-actions .task-controls > .detail-actions { display: grid; gap: 3px; margin: 0; }
+.workflow-actions .detail-actions > button { justify-content: flex-start; min-height: 36px; padding: 6px 10px; white-space: normal; text-align: start; }
+.workflow-actions .task-control-record { margin: 4px 0 0; }
 .workflow-nav { flex: 0 0 auto; margin-inline: clamp(10px, 2vw, 30px); overflow: hidden; }
 .workflow-nav-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 6px 14px; gap: 4px 10px; }
 .workflow-nav-head h3 { margin: 0; font-size: 14px; }
@@ -136,7 +141,15 @@
 .workflow-disclosure summary span, .task-changed-files summary span { margin-inline-start: 9px; font-size: 12px; color: var(--skin-muted); }
 .workflow-evidence .workflow-disclosure { margin: 5px 0; }
 .workflow-fold-body { padding: 0 12px 12px; min-width: 0; overflow-wrap: anywhere; }
-.workflow-fold-body .timeline-item, .workflow-fold-body .event { min-width: 0; overflow-wrap: anywhere; }
+.workflow-fold-body .timeline-item {
+  grid-template-columns: 12px minmax(0, 1fr); gap: 10px;
+  min-height: 0; padding: 8px 0 12px; border-bottom: 1px solid var(--skin-line);
+}
+.workflow-fold-body .timeline-mark::after { content: none; }
+.workflow-fold-body .timeline-copy, .workflow-fold-body .event { min-width: 0; overflow-wrap: anywhere; }
+.workflow-fold-body .timeline-message { white-space: pre-wrap; }
+.workflow-fold-body .timeline-times { margin-top: 3px; }
+.workflow-fold-body .timeline-times :is(span, time, strong) { color: var(--skin-muted); }
 .workflow-receipt, .workflow-repo-line, .workflow-link { background: var(--skin-surface-alt); border: 1px solid var(--skin-line); border-radius: var(--skin-field-radius, 7px); padding: 9px 12px; margin-bottom: 8px; }
 .workflow-receipt { display: flex; gap: 7px 16px; flex-wrap: wrap; align-items: center; }
 .workflow-receipt p { margin: 0; }

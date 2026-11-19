@@ -251,6 +251,15 @@ class BrandInterfaceTests(unittest.TestCase):
         self.assertIn('展开技术详情', app)
         self.assertIn('project.repository_base_branches?.[name]', app)
 
+    def test_workflow_execution_step_keeps_marker_and_copy_in_separate_grid_cells(self):
+        app = (ROOT / 'app/static/app.js').read_text('utf-8')
+        steps = app[app.index('<article class="timeline-item'):app.index("const operations=taskDisclosure('执行记录'")]
+        row, marker, copy = Elements(steps).elements[:3]
+        self.assertEqual(row[0], 'article')
+        self.assertEqual(marker, ('span', {'class': 'timeline-mark', 'aria-hidden': 'true'}))
+        self.assertEqual(copy, ('div', {'class': 'timeline-copy'}))
+        self.assertIn('class="timeline-message"', steps)
+
     def test_geometric_icon_references_resolve_to_local_symbols(self):
         import re
         sprite = (ROOT / 'app/static/editorial-icons.svg').read_text('utf-8')

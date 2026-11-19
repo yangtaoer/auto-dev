@@ -718,7 +718,15 @@ function renderDetail(d){
   const completion=renderCompletionItems(d);
   const techEvents=(d.events||[]).filter(event=>!['devcore.reply','devcore.summary','workspace.plan_recorded'].includes(event.event_type));
   const historyMarkup=techEvents.map(e=>`<article class="event"><b>${escapeHtml(engineText(e.event_type))} · ${fmt(e.created_at)}</b><p>${escapeHtml(engineText(e.message))}</p></article>`).join('');
-  const steps=(d.steps||[]).filter(s=>s.started_at||s.message).map(s=>`<article class="timeline-item ${escapeHtml(s.status)}"><div class="timeline-copy"><b>${escapeHtml(engineText(s.name))}</b><span>${escapeHtml(engineText(s.message||''))}</span>${stepTiming(s)}</div></article>`).join('');
+  const steps=(d.steps||[]).filter(step=>step.started_at||step.message).map(step=>`
+    <article class="timeline-item ${escapeHtml(step.status)}">
+      <span class="timeline-mark" aria-hidden="true"></span>
+      <div class="timeline-copy">
+        <b>${escapeHtml(engineText(step.name))}</b>
+        ${step.message?`<span class="timeline-message">${escapeHtml(engineText(step.message))}</span>`:''}
+        ${stepTiming(step)}
+      </div>
+    </article>`).join('');
   const operations=taskDisclosure('执行记录',steps+historyMarkup,'execution',techEvents.length?`${techEvents.length} 条近期记录`:'');
   const routingEvidence=(d.classification_summary||[]).filter(item=>item.matched_terms?.length).map(item=>{
     const child=jointChildren.find(record=>record.project_key===item.project_key);

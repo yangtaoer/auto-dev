@@ -4,7 +4,7 @@ window.TaskActions = (() => {
   const names = {cancel:'取消任务',restart:'重新开始',rollback:'回退需求'};
   function render(d) {
     const controls=d.controls||[], busy=controls.some(c=>['pending','running','waiting_merge'].includes(c.status));
-    const latest=controls[0], manager=d.can_manage_request!==false;
+    const manager=d.can_manage_request!==false;
     const running=!['delivered','failed','rejected','cancelled'].includes(d.status);
     const rolled=controls.some(c=>c.action==='rollback');
     const canRollback=d.status==='delivered'&&!isAnalysisTask(d)&&!rolled&&(d.repository_states||[]).some(s=>s.changed_files?.length&&(s.merge_commit||s.commit_hash));
@@ -14,11 +14,18 @@ window.TaskActions = (() => {
       const result=c.result||{};
       return `<article class="task-control-record" data-control-status="${escapeHtml(c.status)}"><header><b>${names[c.action]||'任务操作'}</b><span>${status[c.status]||c.status}</span></header><p>${escapeHtml(c.message||'')}</p>${result.new_request_id?`<button class="text-button" data-restarted-request="${escapeHtml(result.new_request_id)}">打开新任务 ↗</button>`:''}${(result.repositories||[]).map(r=>`<div class="rollback-repo"><b>${escapeHtml(r.name||'仓库')}</b><code>${escapeHtml((r.revert_commit||'').slice(0,12))}</code><span>${escapeHtml(r.status==='completed'?'目标分支已回退':r.status==='waiting_merge'?'等待合并':'已准备')}</span>${r.pr_url&&/^https?:\/\//i.test(r.pr_url)?`<a href="${escapeHtml(r.pr_url)}" target="_blank" rel="noopener">查看回退 PR ↗</a>`:''}</div>`).join('')}</article>`;
     }).join('');
-    return actions||records?`<section class="task-controls"><div class="detail-actions">${actions}</div>${records}</section>`:'';
+    return actions||records?`<section class="task-controls">${actions?`<div class="detail-actions">${actions}</div>`:''}${records}</section>`:'';
   }
   function bind(d) {
     document.querySelectorAll('[data-restarted-request]').forEach(b=>b.onclick=()=>openDetail(b.dataset.restartedRequest));
-    document.querySelectorAll('[data-task-action]').forEach(b=>b.onclick=()=>confirmAction(d,b.dataset.taskAction));
+    document.querySelectorAll('[data-task-action]').forEach(button=>button.onclick=()=>{
+      const menu=button.closest('.workflow-actions');
+      if(menu){
+        menu.open=false;
+        menu.querySelector('summary').focus({preventScroll:true});
+      }
+      confirmAction(d,button.dataset.taskAction);
+    });
   }
   function confirmAction(d,action) {
     let modal=document.querySelector('#task-action-confirm');
