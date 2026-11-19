@@ -9,6 +9,7 @@ from .commit_policy import stage_delivery_changes
 from .process_env import git_authenticated_env, sanitized_process_env
 from .tfs import TfsClient
 from ..config import settings
+from ..domain import SICHUAN_APPROVAL_DELIVERY_MODES
 
 
 def prepare(repository: Path, target: str, commit: str | list[str], destination: Path, branch: str, subject: str, *, env=None) -> dict:
@@ -113,6 +114,7 @@ def execute(control: dict, detail: dict, save) -> tuple[str, str, dict]:
         save('running', '反向提交校验完成，开始按原交付策略提交', result)
     if not result.get('prepared_all'):
         raise RuntimeError('回退准备不完整，未继续推送；请核查保留现场')
+    automatic_review = detail['delivery_mode'] in SICHUAN_APPROVAL_DELIVERY_MODES
     for state in states:
         worktree = Path(state['worktree_path'])
         if state['status'] == 'prepared':
@@ -125,11 +127,12 @@ def execute(control: dict, detail: dict, save) -> tuple[str, str, dict]:
             else:
                 pr = tfs.create_pull_request(str(worktree), state['branch'], state['base_branch'],
                                             f"revert(#{detail['work_item_id']}):回退需求改动 {detail['id'][:8]}",
-                                            detail['work_item_id'], f"原任务 {detail['id']}；反向提交 {state['revert_commit']}。仅代码回退，不执行数据库回滚或环境部署。")
+                                            detail['work_item_id'], f"原任务 {detail['id']}；反向提交 {state['revert_commit']}。仅代码回退，不执行数据库回滚或环境部署。",
+                                            auto_complete=not automatic_review)
                 state.update(pr_id=pr['PullRequestId'], pr_url=pr['WebUrl'], status='waiting_merge')
                 # Record the PR before approval (approval can merge immediately).
                 save('running', '回退 PR 已创建', result)
-                if detail['delivery_mode'] in {'sichuan_auto_review', 'sichuan_review_local_package'}:
+                if automatic_review:
                     tfs.approve_pull_request(str(worktree), int(state['pr_id']))
             save('running', '已提交 ' + state['name'] + ' 的回退改动', result)
         if state['status'] == 'waiting_merge':

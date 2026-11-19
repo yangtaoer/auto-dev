@@ -746,14 +746,11 @@ class Worker:
                 if project.get("simulation_mode"):
                     self.store.add_event(request_id, "pr.approved", "演示模式：四川审核服务账号已批准 PR")
                 else:
-                    tfs = TfsClient(project["tfs_collection_url"])
-                    for state, pr in pull_requests:
-                        self._check_cancelled(request_id)
-                        tfs.approve_pull_request(state["repository_path"], pr["id"])
-                    self.store.add_event(
+                    self._approve_sichuan_pull_requests(
                         request_id,
-                        "pr.approved",
-                        f"四川审核人 {project.get('reviewer_name') or settings.tfs_reviewer_name} 已批准 {len(pull_requests)} 个 PR；操作已记录审计",
+                        TfsClient(project["tfs_collection_url"]),
+                        pull_requests,
+                        project,
                     )
             else:
                 if not (detail.get("joint_group_id") and self.store.remote):
@@ -1575,8 +1572,25 @@ class Worker:
         description = f"自动研发任务：{request_id}\n需求：#{work_item['id']}\n\n{detail.get('result_summary','')}"
         result = TfsClient(project["tfs_collection_url"]).create_pull_request(
             str(worktree), branch, target_branch or project.get("base_branch", "dev"), title, work_item["id"], description,
+            auto_complete=detail.get("delivery_mode") not in SICHUAN_APPROVAL_DELIVERY_MODES,
         )
-        return {"id": int(result["PullRequestId"]), "url": result["WebUrl"]}
+        return {"id": int(result["PullRequestId"]), "url": result["WebUrl"], "status": result.get("Status")}
+
+    def _approve_sichuan_pull_requests(
+        self, request_id: str, tfs: TfsClient, pull_requests: list[tuple[dict, dict]], project: dict,
+    ) -> None:
+        reviewer = project.get("reviewer_name") or settings.tfs_reviewer_name
+        for state, pr in pull_requests:
+            self._check_cancelled(request_id)
+            pr_id = pr["id"]
+            metadata = {"pr_id": pr_id, "repository": state["name"]}
+            if pr.get("status") != "completed" and tfs.approve_pull_request(state["repository_path"], pr_id):
+                self.store.add_event(request_id, "pr.approved", f"四川审核人 {reviewer} 已批准 PR #{pr_id}", metadata=metadata)
+            else:
+                self.store.add_event(
+                    request_id, "pr.already_merged", f"PR #{pr_id} 已合并，本次未写入自动审核投票",
+                    level="warning", metadata=metadata,
+                )
 
     def _deliver_local_package(self, request_id: str, detail: dict, project: dict, worktree: Path | None, work_item: dict) -> None:
         self._check_cancelled(request_id)

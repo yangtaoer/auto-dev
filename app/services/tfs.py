@@ -46,6 +46,10 @@ class TfsConnectionError(TfsError):
     """A read failed after bounded retries; no remote mutation was attempted."""
 
 
+class TfsPullRequestNotEditableError(TfsError):
+    """TFS rejected an edit because of the pull request's state."""
+
+
 def recoverable_preflight_failure(detail: dict) -> bool:
     """Only resume a failed read before any new submission, never uncertain writes."""
     message = str(detail.get("error_message") or "").lower()
@@ -95,7 +99,10 @@ class TfsClient:
             time.sleep(delay)
         if response.is_error:
             detail = response.text[:1000]
-            raise TfsError(f"TFS {method} {url} 返回 {response.status_code}: {detail}")
+            message = f"TFS {method} {url} 返回 {response.status_code}: {detail}"
+            if response.status_code == 400 and "TF401181:" in detail:
+                raise TfsPullRequestNotEditableError(message)
+            raise TfsError(message)
         return response.json()
 
     def get_work_item(self, work_item_id: int) -> dict:
@@ -534,6 +541,8 @@ class TfsClient:
         title: str,
         work_item_id: int,
         description: str,
+        *,
+        auto_complete: bool = True,
     ) -> dict:
         repo = self.repository_info(repo_path)
         project_path = quote(repo.project, safe="")
@@ -571,19 +580,8 @@ class TfsClient:
                 },
             )
 
-        creator_id = (pr.get("createdBy") or {}).get("id")
-        if not creator_id:
-            raise TfsError("PR 响应缺少 createdBy.id，无法启用自动完成")
-        pr = self._request(
-            "PATCH",
-            f"{collection}/{pr['pullRequestId']}?api-version=2.0",
-            json={
-                "autoCompleteSetBy": {"id": creator_id},
-                "completionOptions": {"deleteSourceBranch": True},
-            },
-        )
-        if not pr.get("autoCompleteSetBy"):
-            raise TfsError("TFS 未确认启用 PR 自动完成")
+        if auto_complete:
+            pr = self._enable_auto_complete(f"{collection}/{pr['pullRequestId']}?api-version=2.0", pr)
 
         linked = self._ensure_work_item_link(repo, int(pr["pullRequestId"]), work_item_id)
         web_url = (
@@ -600,8 +598,8 @@ class TfsClient:
             "Repository": repo.name,
             "WorkItemId": work_item_id,
             "WorkItemLinked": linked,
-            "AutoCompleteEnabled": True,
-            "DeleteSourceBranch": True,
+            "AutoCompleteEnabled": bool(pr.get("autoCompleteSetBy")),
+            "DeleteSourceBranch": bool((pr.get("completionOptions") or {}).get("deleteSourceBranch")),
             "WebUrl": web_url,
             "ApiUrl": pr.get("url"),
         }
@@ -640,15 +638,60 @@ class TfsClient:
         )
         return True
 
-    def approve_pull_request(self, repo_path: str, pr_id: int) -> None:
+    def _completed_pull_request_after_edit_error(self, url: str, error: TfsPullRequestNotEditableError) -> dict:
+        current = self._request("GET", url)
+        if current.get("status") != "completed":
+            raise error
+        return current
+
+    def _enable_auto_complete(self, url: str, pr: dict) -> dict:
+        if pr.get("status") == "completed":
+            return pr
+        creator_id = (pr.get("createdBy") or {}).get("id")
+        if not creator_id:
+            raise TfsError("PR 响应缺少 createdBy.id，无法启用自动完成")
+        try:
+            updated = self._request(
+                "PATCH",
+                url,
+                json={
+                    "autoCompleteSetBy": {"id": creator_id},
+                    "completionOptions": {"deleteSourceBranch": True},
+                },
+            )
+        except TfsPullRequestNotEditableError as exc:
+            return self._completed_pull_request_after_edit_error(url, exc)
+        if updated.get("status") != "completed" and not updated.get("autoCompleteSetBy"):
+            raise TfsError("TFS 未确认启用 PR 自动完成")
+        return updated
+
+    def approve_pull_request(self, repo_path: str, pr_id: int) -> bool:
+        """Record a vote before enabling auto-complete. Return False for a PR already merged."""
+        repo = self.repository_info(repo_path)
+        url = f"{self.base_url}/{quote(repo.project, safe='')}/_apis/git/repositories/{repo.id}/pullRequests/{pr_id}"
+        pr_url = f"{url}?api-version=2.0"
+        pr = self._request("GET", pr_url)
+        status = pr.get("status")
+        if status == "completed":
+            return False
+        if status != "active":
+            raise TfsError(f"PR #{pr_id} 状态为 {status or '未知'}，无法自动审核")
         if not settings.tfs_reviewer_pat or not settings.tfs_reviewer_id:
             raise TfsError("四川自动审核需要配置 TFS_REVIEWER_PAT 和 TFS_REVIEWER_ID")
-        repo = self.repository_info(repo_path)
-        url = (
-            f"{self.base_url}/{quote(repo.project, safe='')}/_apis/git/repositories/{repo.id}"
-            f"/pullRequests/{pr_id}/reviewers/{settings.tfs_reviewer_id}?api-version=2.0"
-        )
-        self._request("PUT", url, pat=settings.tfs_reviewer_pat, json={"vote": 10})
+        try:
+            reviewer = self._request(
+                "PUT",
+                f"{url}/reviewers/{settings.tfs_reviewer_id}?api-version=2.0",
+                pat=settings.tfs_reviewer_pat,
+                json={"vote": 10},
+            )
+        except TfsPullRequestNotEditableError as exc:
+            self._completed_pull_request_after_edit_error(pr_url, exc)
+            return False
+        if reviewer.get("vote") != 10:
+            raise TfsError(f"TFS 未确认 PR #{pr_id} 的批准票")
+        self._enable_auto_complete(pr_url, pr)
+        return True
 
     def get_pull_request(self, repo_path: str, pr_id: int) -> dict:
         repo = self.repository_info(repo_path)

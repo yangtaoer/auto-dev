@@ -1191,7 +1191,7 @@ class WorkflowTests(unittest.TestCase):
         create_pull_request.return_value = {"PullRequestId": 310, "WebUrl": "https://tfs.test/pr/310"}
         result = worker._create_pr(
             "branch-override-request",
-            {"result_summary": "重庆 starter 调整"},
+            {"result_summary": "重庆 starter 调整", "delivery_mode": "sichuan_auto_review"},
             {
                 "simulation_mode": False,
                 "tfs_collection_url": "http://dev.tellhowsoft.com/DefaultCollection",
@@ -1204,6 +1204,7 @@ class WorkflowTests(unittest.TestCase):
         )
         self.assertEqual(result["id"], 310)
         self.assertEqual(create_pull_request.call_args.args[2], "chongqing")
+        self.assertFalse(create_pull_request.call_args.kwargs["auto_complete"])
 
     def test_remote_store_retries_transient_gateway_failure(self) -> None:
         request = httpx.Request("PATCH", "https://cloud.test/api/runner/requests/request-1")

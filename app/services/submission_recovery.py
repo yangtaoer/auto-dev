@@ -13,7 +13,10 @@ from .execution_recovery import submission_ready
 from .tfs import TfsClient
 
 
-def reconcile_pr(tfs: TfsClient, state: dict, work_item_id: int, description: str, *, dry_run: bool = False) -> dict:
+def reconcile_pr(
+    tfs: TfsClient, state: dict, work_item_id: int, description: str, *,
+    dry_run: bool = False, auto_complete: bool = True,
+) -> dict:
     root=Path(state['worktree_path'])
     expected=state['commit_hash']
     if not root.is_dir() or git(root,'rev-parse','HEAD') != expected:
@@ -49,8 +52,11 @@ def reconcile_pr(tfs: TfsClient, state: dict, work_item_id: int, description: st
         raise RuntimeError(f"{state['name']} 冻结提交不属于当前需求")
     if dry_run:
         return {'id':0,'status':'ready','url':''}
-    result=tfs.create_pull_request(str(root),state['branch'],state['base_branch'],subject,work_item_id,description)
-    return {'id':int(result['PullRequestId']),'url':result['WebUrl'],'status':'active'}
+    result = tfs.create_pull_request(
+        str(root), state['branch'], state['base_branch'], subject, work_item_id, description,
+        auto_complete=auto_complete,
+    )
+    return {'id': int(result['PullRequestId']), 'url': result['WebUrl'], 'status': result['Status']}
 
 
 def resume(worker, request_id: str) -> None:
@@ -60,6 +66,7 @@ def resume(worker, request_id: str) -> None:
     if context.get('kind')!='submission' or not submission_ready(detail):
         raise RuntimeError('没有可核对的推送提交检查点，不能直接恢复提交')
     project=enforce_artifact_policy(detail['policy_snapshot'])
+    automatic_review = detail['delivery_mode'] in SICHUAN_APPROVAL_DELIVERY_MODES
     states=detail['repository_states']
     changed=[state for state in states if state.get('commit_hash') or state.get('pr_id')]
     tfs=TfsClient(project['tfs_collection_url'])
@@ -78,7 +85,7 @@ def resume(worker, request_id: str) -> None:
     worker.store.add_event(request_id,'execution.resuming','从已推送提交继续 PR 交付；不启动研发、不创建新提交、不重放业务 SQL',metadata={'commits':fingerprints})
     if context.get('verified_commits')!=fingerprints:
         command=str(project.get('verification_command') or project.get('build_command') or '').strip()
-        if not command and detail['delivery_mode'] in SICHUAN_APPROVAL_DELIVERY_MODES:
+        if not command and automatic_review:
             raise RuntimeError('缺少可复核的提交前校验命令，不能自动批准')
         if command:
             workspace=Path(states[0]['worktree_path']).parent if len(states)>1 else Path(states[0]['worktree_path'])
@@ -97,18 +104,17 @@ def resume(worker, request_id: str) -> None:
     prs=[]
     for state in changed:
         worker._check_cancelled(request_id)
-        pr=reconcile_pr(tfs,state,detail['work_item_id'],f"自动研发任务 {request_id} 中断恢复\n{detail.get('result_summary','')}")
+        pr = reconcile_pr(
+            tfs, state, detail['work_item_id'], f"自动研发任务 {request_id} 中断恢复\n{detail.get('result_summary','')}",
+            auto_complete=not automatic_review,
+        )
         state.update(pr_id=pr['id'],pr_url=pr['url'],status='waiting_merge')
         worker.store.update_request(request_id,repository_states=states)
         worker.store.add_event(request_id,'pr.recovered',f"{state['name']} 已核对/接续 PR #{pr['id']}",metadata={'pr_id':pr['id'],'url':pr['url']})
         prs.append((state,pr))
     worker._check_cancelled(request_id)
-    if detail['delivery_mode'] in SICHUAN_APPROVAL_DELIVERY_MODES:
-        for state,pr in prs:
-            worker._check_cancelled(request_id)
-            if pr['status']!='completed':
-                tfs.approve_pull_request(state['repository_path'],pr['id'])
-        worker.store.add_event(request_id,'pr.approved','恢复后的 PR 已按既定四川审核策略处理')
+    if automatic_review:
+        worker._approve_sichuan_pull_requests(request_id, tfs, prs, project)
     elif not (detail.get('joint_group_id') and worker.store.remote):
         worker._send_status_email(request_id,action_required=True)
     context.update(state='resumed',completed_at=datetime.now(UTC).isoformat())

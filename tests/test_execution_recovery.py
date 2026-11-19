@@ -168,6 +168,8 @@ class RecoveryRecordTests(unittest.TestCase):
 
 class SubmissionRecoveryTests(unittest.TestCase):
     def setUp(self):
+        from app.orchestrator import Worker
+
         self.temp=tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)
@@ -185,15 +187,22 @@ class SubmissionRecoveryTests(unittest.TestCase):
         store=Mock(remote=True)
         store.detail.return_value=self.detail
         store.update_request.side_effect=lambda _id,**fields:self.detail.update(fields)
-        self.worker=Mock(store=store)
-        self.worker._plain_text.side_effect=lambda text:text
-        self.worker._build_environment.return_value={}
+        store.get_status.side_effect=lambda _id:self.detail['status']
+        self.worker=Worker(store)
+        self.worker.artifacts=Mock()
+        self.worker._build_environment=Mock(return_value={})
+        self.worker.run_request=Mock()
         self.tfs=Mock()
         self.tfs.get_work_item.return_value={'title':'Regional fix','description':'frozen requirement','state':'新建'}
         self.tfs.parse_origin.return_value=('DCS','regional')
         self.tfs.pull_requests_for_branch.return_value=[]
         self.tfs.branch_head.side_effect=lambda path,_branch:next(s['commit_hash'] for s in self.states if s['worktree_path']==path)
-        self.tfs.create_pull_request.side_effect=lambda path,*_args:{'PullRequestId':101 if path.endswith('region-ui') else 102,'WebUrl':'https://tfs.invalid/pr'}
+        self.tfs.create_pull_request.side_effect = lambda path, *args, **kwargs: {
+            'PullRequestId': 101 if path.endswith('region-ui') else 102,
+            'WebUrl': 'https://tfs.invalid/pr',
+            'Status': 'active',
+        }
+        self.tfs.approve_pull_request.return_value = True
         self.tfs.repository_info.return_value=SimpleNamespace(project='DCS',name='regional')
         def git(path,*args):
             state=next(s for s in self.states if s['worktree_path']==str(path))
@@ -216,6 +225,7 @@ class SubmissionRecoveryTests(unittest.TestCase):
             self.resume()
         self.assertEqual(self.detail['status'],'waiting_merge')
         self.assertEqual(self.tfs.create_pull_request.call_count,2)
+        self.assertEqual([c.kwargs['auto_complete'] for c in self.tfs.create_pull_request.call_args_list], [False, False])
         self.assertEqual(self.tfs.approve_pull_request.call_count,2)
         self.assertEqual(self.detail['recovery_context']['state'],'resumed')
         self.build.assert_not_called()
@@ -249,6 +259,20 @@ class SubmissionRecoveryTests(unittest.TestCase):
         self.tfs.create_pull_request.assert_not_called()
         self.tfs.approve_pull_request.assert_not_called()
         self.assertEqual(self.detail['status'],'waiting_merge')
+        event_types = [c.args[1] for c in self.worker.store.add_event.call_args_list]
+        self.assertEqual(event_types.count('pr.already_merged'), 2)
+        self.assertNotIn('pr.approved', event_types)
+
+    def test_merge_during_vote_is_audited_without_a_false_approval(self):
+        self.tfs.approve_pull_request.side_effect = [False, True]
+        self.resume()
+        self.assertEqual(self.detail['status'], 'waiting_merge')
+        review_events = {
+            c.kwargs['metadata']['pr_id']: c.args[1]
+            for c in self.worker.store.add_event.call_args_list
+            if c.args[1] in {'pr.already_merged', 'pr.approved'}
+        }
+        self.assertEqual(review_events, {101: 'pr.already_merged', 102: 'pr.approved'})
 
     def test_abandoned_pr_is_not_reopened(self):
         self.tfs.pull_requests_for_branch.return_value=[{'pullRequestId':99,'status':'abandoned','lastMergeSourceCommit':{'commitId':'a'*40}}]
