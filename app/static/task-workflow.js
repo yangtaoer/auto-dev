@@ -11,6 +11,9 @@
   const REVIEW = new Set(['sichuan_auto_review','sichuan_review_local_package','product_manual_review']);
   const DEPLOYED = new Set(['deployed','already-current']);
   const DEPLOY_FAILURES = new Set(['blocked','failed','failed-rolled-back','failed-rollback-failed']);
+  const START_TIME_FORMAT = new Intl.DateTimeFormat('zh-CN', {
+    timeZone:'Asia/Shanghai', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23',
+  });
 
   function list(value) { return Array.isArray(value) ? value : []; }
   function counts(record) {
@@ -43,6 +46,7 @@
     const steps = Object.fromEntries(list(record.steps).map(step=>[step.step_code, step.status]));
     const events = record.task_trace?.milestones || {};
     const release = record.task_trace?.release || {};
+    const timings = record.task_trace?.stage_timings || {};
     const acceptance = record.acceptance_progress || {};
     const analysis = record.task_type === 'analysis';
     const intakeOnly = record.record_type === 'intake' || record.intake_id || status === 'routing';
@@ -68,7 +72,7 @@
         else if (status.startsWith('waiting_') || status === 'queued' || record.runner_online === false) code = 'waiting';
         else if (code !== 'failed') code = 'running';
       }
-      nodes.push({id,label,short,icon,state:code,note,active});
+      nodes.push({id,label,short,icon,state:code,note,active,timing:timings[id]});
     }
     add('intake','识别需求','识别','search',steps.validate === 'completed' || events['tfs.validated'],
       status === 'waiting_runner' ? '等待执行器' : record.project_name || '');
@@ -99,6 +103,22 @@
       final && acceptance.status !== 'accepted' ? 'waiting' : undefined);
     return nodes;
   }
+  function timingLabels(timing = {}) {
+    const start = Date.parse(timing.started_at || '');
+    const started = Number.isFinite(start) ? START_TIME_FORMAT.format(start) : '—';
+    const seconds = timing.duration_seconds;
+    if (!Number.isFinite(seconds) || seconds < 0) return {started, elapsed:'—'};
+    const whole = Math.floor(seconds);
+    const days = Math.floor(whole / 86400);
+    const hours = Math.floor(whole / 3600) % 24;
+    const minutes = Math.floor(whole / 60) % 60;
+    const remainder = whole % 60;
+    const elapsed = days ? `${days} 天${hours ? ` ${hours} 小时` : ''}`
+      : hours ? `${hours} 小时${minutes ? ` ${minutes} 分` : ''}`
+      : minutes ? `${minutes} 分${remainder ? ` ${remainder} 秒` : ''}`
+      : whole ? `${whole} 秒` : '不足 1 秒';
+    return {started, elapsed};
+  }
   function summary(record) {
     const replies = list(record.assistant_replies);
     const latest = [...replies].reverse().find(item=>item.event_type === 'devcore.reply' || item.event_type === 'devcore.summary');
@@ -124,7 +144,7 @@
     return `<span class="workflow-mini" role="list" aria-label="任务进度">${nodes.map(node=>`<span role="listitem" data-phase="${node.state}" ${node.active?'aria-current="step"':''}><i aria-hidden="true"></i><span title="${escape(node.label)} · ${STATES[node.state]}">${escape(node.short)}</span><span class="sr-only">${STATES[node.state]}</span></span>`).join('')}</span>`;
   }
 
-  const api = {stages,currentStage,summary,counts,concise,asset,miniRoute,STATES,ACCEPTANCE};
+  const api = {stages,currentStage,timingLabels,summary,counts,concise,asset,miniRoute,STATES,ACCEPTANCE};
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.TaskWorkflow = api;
 })(globalThis);

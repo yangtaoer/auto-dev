@@ -79,7 +79,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.32",
+    version="1.0-Beta.33",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -1753,6 +1753,8 @@ def get_request_intake(intake_id: str, user: Annotated[dict, Depends(current_use
                 "多项目联合问题分析已完成" if analysis_task else "多项目联合研发已全部交付"
             ) if intake["status"] == "delivered" else f"联合{'分析' if analysis_task else '研发'}任务已结束"
         )
+    from .services.task_timings import intake_timing
+    intake["stage_timings"] = intake_timing(intake)
     return {"intake": intake}
 
 
@@ -1775,6 +1777,8 @@ def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -
     events = detail["task_trace"]["milestones"]
     detail["planning_repository_scope"] = events.get("workspace.planning", {}).get("at", "") > events.get("workspace.plan_recorded", {}).get("at", "")
     detail["acceptance_progress"] = public_engine_text_tree(project_learning.acceptance_progress(original))
+    from .services.task_timings import stage_timings
+    detail["task_trace"]["stage_timings"] = stage_timings(detail)
     detail.update(acceptance_permissions(detail, user))
     detail["can_followup"] = detail["status"] == RunStatus.DELIVERED.value
     display_status = detail.get("display_status") or detail["status"]

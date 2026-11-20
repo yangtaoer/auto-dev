@@ -8,9 +8,9 @@ from .deployment_links import safe_url
 EVENTS = (
     "request.created", "tfs.validated", "tfs.attachments_prepared", "tfs.attachments_partial",
     "workspace.prepared", "workspace.planning", "workspace.plan_recorded",
-    "git.pushed", "pr.created", "pr.merged", "pr.validation_failed", "build.completed",
-    "release.started", "release.completed", "release.shared", "release.failed",
-    "tfs.delivery_completed", "mail.delivery_sent", "delivery.completed", "analysis.sync_pending",
+    "git.pushed", "pr.created", "pr.waiting_merge", "pr.merged", "pr.validation_failed", "build.started", "build.completed",
+    "release.started", "release.completed", "release.shared", "release.failed", "release.build_observed",
+    "delivery.started", "tfs.delivery_completed", "mail.delivery_sent", "delivery.completed", "analysis.sync_pending",
 )
 
 
@@ -25,9 +25,15 @@ def for_request(request_id: str) -> dict:
         (request_id, *EVENTS),
     )
     milestones, release = {}, {}
+    timing_receipt = {}
+    identity = {}
+    identity_keys = ("buildId", "definitionId", "tfsProject")
     for event in observed:
         kind = event["event_type"]
         milestones.setdefault(kind, {"at": event["created_at"], "message": event["message"]})
+        if kind == "release.build_observed":
+            timing_receipt = json_value(event["metadata"], {})
+            continue
         if kind not in {"release.completed", "release.shared", "release.failed"} or release:
             continue
         result = json_value(event["metadata"], {})
@@ -37,16 +43,29 @@ def for_request(request_id: str) -> dict:
             result = result.get("result") or {}
         if not isinstance(result, dict):
             continue
+        identity = {key: result.get(key) for key in identity_keys}
         deployment = result.get("deployment14") or {}
         release = {
             "at": event["created_at"],
+            "shared": kind == "release.shared",
             "build_id": result.get("buildId"),
+            "build_started_at": result.get("buildStartedAt"),
+            "build_finished_at": result.get("buildFinishedAt"),
             "result": result.get("result") or ("failed" if kind == "release.failed" else ""),
             "results_url": safe_url(result.get("resultsUrl")),
         }
         if isinstance(deployment, dict):
             release["deployment_status"] = deployment.get("status")
             release["deployment_reason"] = deployment.get("reason") if deployment.get("eligible") else None
+            release["deployment_started_at"] = deployment.get("startedAt")
+            release["deployment_finished_at"] = deployment.get("finishedAt")
+            runtime = deployment.get("runtime")
+            if isinstance(runtime, dict):
+                release["runtime_started_at"] = runtime.get("startedAt")
+    if identity and all(identity.values()) and isinstance(timing_receipt, dict):
+        if all(timing_receipt.get(key) == value for key, value in identity.items()):
+            release["build_started_at"] = release["build_started_at"] or timing_receipt.get("buildStartedAt")
+            release["build_finished_at"] = release["build_finished_at"] or timing_receipt.get("buildFinishedAt")
     return {"milestones": milestones, "release": release}
 
 

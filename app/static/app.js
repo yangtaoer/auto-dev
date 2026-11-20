@@ -536,14 +536,14 @@ function addOptimisticIntake(intakeId,workItemId,runnerOnline=true,deliveryOptio
 }
 
 function showDetailDrawer(){TaskDialog.open();document.querySelector('#detail-backdrop').hidden=false;document.querySelector('#detail-drawer').classList.add('open');document.querySelector('#detail-drawer').setAttribute('aria-hidden','false')}
-function renderRoutingState(intakeId,workItemId,status='routing',message='',taskType='development'){
+function renderRoutingState(intakeId,workItemId,status='routing',message='',taskType='development',stageTimings={}){
   if(state.selectedIntake!==intakeId)return;
   const offline=status==='waiting_runner',analysis=taskType==='analysis';
   const record={work_item_id:workItemId};
   const head=`<div class="detail-head routing-head"><p class="detail-caption">任务详情 <small>RUN / ${escapeHtml(intakeId.slice(0,8))}</small></p><h2>${tfsLink(record,`#${workItemId}`)} <span>${offline?'等待执行器上线':`正在识别${analysis?'分析':'研发'}项目`}</span><i class="status-dot" data-status="${offline?'queued':'developing'}">${offline?'已进入安全队列':'识别中'}</i></h2><div class="detail-meta"><span>${editorialIcon('cube')}所属项目 <b>待识别</b></span><span>${analysis?'问题分析':'自主研发'}</span><span>任务已成功发起</span></div></div>`;
   const note=escapeHtml(message||(offline?`任务不会丢失，执行器上线后会自动领取并继续${analysis?'分析':'研发'}。`:`系统会自动识别所属项目与${analysis?'分析范围':'交付策略'}，识别完成后此处直接切换为任务详情。`));
   const overview=`<section class="routing-summary"><div class="routing-summary-icon">${editorialIcon(offline?'clock':'network')}</div><div><h3>${offline?'已进入安全队列':'正在识别项目'}</h3><p>${note}</p><ol class="routing-steps"><li data-state="done"><i>✓</i><b>已提交</b><small>任务已保存</small></li><li data-state="${offline?'active':'done'}"><i>${offline?'2':'✓'}</i><b>等待执行器</b><small>${offline?'上线后自动继续':'执行器已领取'}</small></li><li data-state="${offline?'pending':'active'}"><i>3</i><b>识别项目</b><small>${offline?'等待执行器上线':'读取需求与项目规则'}</small></li></ol></div></section><div class="routing-facts"><section><h3>任务信息</h3><p>TFS #${workItemId}</p><p>${analysis?'问题分析':'自主研发'} · 项目识别完成后显示交付策略</p></section><section><h3>项目识别依据</h3><p>使用需求标题、内容和项目别名确认范围，不会在识别前启动业务代码修改。</p></section></div>`;
-  const phases=TaskWorkflow.stages({record_type:'intake',status:offline?'waiting_runner':'routing',task_type:taskType});
+  const phases=TaskWorkflow.stages({record_type:'intake',status:offline?'waiting_runner':'routing',task_type:taskType,task_trace:{stage_timings:stageTimings}});
   document.querySelector('#detail-content').innerHTML=TaskDialog.render(`intake-${intakeId}`,head,[['intake','识别需求',overview]],phases,'intake');
   TaskDialog.bind();
 }
@@ -553,7 +553,7 @@ async function openRoutingDetail(intakeId,workItemId,initialStatus='routing',tas
   const generation=++state.routingGeneration;
   showDetailDrawer();renderRoutingState(intakeId,workItemId,initialStatus,'',taskType);
   try{
-    const routed=await waitForRouting(intakeId,intake=>renderRoutingState(intakeId,workItemId,intake.display_status,intake.display_message,intake.task_type||taskType));
+    const routed=await waitForRouting(intakeId,intake=>renderRoutingState(intakeId,workItemId,intake.display_status,intake.display_message,intake.task_type||taskType,intake.stage_timings));
     if(generation!==state.routingGeneration||state.selectedIntake!==intakeId)return;
     const requestId=routed?.result_request_id;
     if(requestId){state.selectedIntake=null;const analysis=(routed.task_type||taskType)==='analysis';toast(routed.joint?`已归类为 ${routed.children.length} 个项目，联合${analysis?'分析':'研发'}已启动`:`项目已识别，${analysis?'问题分析':'研发'}任务进入队列`);await refresh();await openDetail(requestId)}

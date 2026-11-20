@@ -47,6 +47,18 @@ test('analysis omits the code delivery stages, and routing only exposes intake',
   assert.deepEqual(workflow.stages(intake).map(node=>[node.id,node.state]),[['intake','waiting']]);
 });
 
+test('node timings use Shanghai start times and keep unknown durations distinct from sub-second ones', () => {
+  const recorded = {started_at:'2026-11-19T08:03:40.404345+00:00', duration_seconds:3185};
+  const record = {...review, task_trace:{stage_timings:{merge:recorded}}};
+  assert.equal(phase(record,'merge').timing,recorded);
+  const labels=workflow.timingLabels(recorded);
+  assert.match(labels.started, /11\/19\D+16:03:40/);
+  assert.equal(labels.elapsed,'53 分 5 秒');
+  assert.equal(workflow.timingLabels({...recorded,duration_seconds:0}).elapsed,'不足 1 秒');
+  assert.equal(workflow.timingLabels({...recorded,duration_seconds:null}).elapsed,'—');
+  assert.equal(workflow.timingLabels().started,'—');
+});
+
 test('rollback is a header action for eligible tasks and keeps the existing permission and busy checks', () => {
   const context = {window:{}, escapeHtml:String, isAnalysisTask:detail=>detail.task_type==='analysis'};
   vm.runInNewContext(fs.readFileSync('app/static/task-actions.js','utf8'),context);

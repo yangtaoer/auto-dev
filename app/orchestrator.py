@@ -1557,8 +1557,10 @@ class Worker:
         self._check_cancelled(request_id)
         self.store.update_request(request_id, status=RunStatus.BUILDING.value, current_step="deliver", progress=74)
         self.store.update_step(request_id, "deliver", "running", "代码已提交目标分支；正在基于最新目标分支强制构建并归集交付物")
+        self.store.add_event(request_id, "build.started", "本地构建已开始")
         if project.get("simulation_mode"):
             self._create_demo_artifacts(request_id, include_package=True)
+            self.store.add_event(request_id, "build.completed", "演示构建已完成")
         else:
             build_command = project.get("build_command", "").strip()
             if not build_command:
@@ -2093,6 +2095,7 @@ class Worker:
                 message = "主程序发版与接口程序打包均已完成" if DELIVERY_OPTION_AUTO_RELEASE in options else "接口程序已合入目标分支并生成系统包"
                 self.store.update_step(request_id, "release", "completed", message)
         self.store.update_request(request_id, status=RunStatus.DELIVERING.value, current_step="deliver", progress=96)
+        self.store.add_event(request_id, "delivery.started", "开始核对交付物并同步交付结果")
         self._check_cancelled(request_id)
         if (
             detail["delivery_mode"] in REVIEW_DELIVERY_MODES
@@ -2283,9 +2286,9 @@ class Worker:
             except Exception as exc:
                 self.store.release_finish(request_id, decision["batch_id"], {"error": str(exc)[:2000]}, failed=True)
                 if isinstance(exc, TfsPipelineReleaseError) and exc.result:
-                    result = {key: exc.result.get(key) for key in ("buildId", "result", "resultsUrl")}
+                    result = {key: exc.result.get(key) for key in ("buildId", "result", "resultsUrl", "buildStartedAt", "buildFinishedAt")}
                     deployment = exc.result.get("deployment14") or {}
-                    result["deployment14"] = {key: deployment.get(key) for key in ("eligible", "status")}
+                    result["deployment14"] = {key: deployment.get(key) for key in ("eligible", "status", "startedAt", "finishedAt")}
                     self.store.add_event(request_id, "release.failed", "发版流程未完成", level="error", metadata=result)
                 raise
             self.store.release_finish(request_id, decision["batch_id"], result)

@@ -127,7 +127,7 @@
 }
 .workflow-shortcuts button[aria-selected="true"] { border-color: var(--skin-accent); }
 .workflow-rail {
-  display: grid; grid-template-columns: repeat(var(--phase-count),minmax(84px,1fr));
+  display: grid; grid-template-columns: repeat(var(--phase-count),minmax(130px,1fr));
   padding: 4px 8px 8px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin;
 }
 .workflow-node {
@@ -142,6 +142,10 @@
 .workflow-node:last-child::after { content: none; }
 .workflow-node[data-phase="done"]::after { background: var(--skin-success); }
 .workflow-node small { color: var(--skin-muted); font-size: 10px; }
+.workflow-node .workflow-node-timing {
+  display: grid; gap: 2px; margin-top: 2px; font-size: 11px; line-height: 1.4; font-variant-numeric: tabular-nums;
+}
+.workflow-node-timing time, .workflow-node-timing b { color: var(--skin-ink); }
 .workflow-node[aria-selected="true"] { background: color-mix(in srgb, var(--skin-accent) 12%, transparent); border-color: var(--skin-accent); }
 .workflow-marker {
   z-index: 1; display: grid; place-items: center; block-size: 34px; inline-size: 34px; background: var(--skin-card-bg,var(--skin-surface));
@@ -209,7 +213,7 @@ html[data-motion="static"] .workflow-orb, html[data-motion="reduced"] .workflow-
 @media (max-width: 820px) {
   .workflow-desk { grid-template-columns: 1fr; }
   .workflow-run-list { max-height: 330px; }
-  .workflow-rail { grid-template-columns: repeat(var(--phase-count),minmax(72px,1fr)); }
+  .workflow-rail { grid-template-columns: repeat(var(--phase-count),minmax(126px,1fr)); }
 }
 @media (max-width: 700px), (max-height: 650px) {
   #detail-content:has(.workflow-nav) { overflow: auto; overscroll-behavior: contain; }

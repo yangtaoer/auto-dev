@@ -282,6 +282,7 @@ def acceptance_progress(request: dict[str, Any]) -> dict[str, Any]:
         "status": current["status"],
         "summary": current["summary"],
         "latest_feedback_id": current["latest_feedback_id"],
+        "latest_feedback_at": current["rounds"][-1]["created_at"] if current["rounds"] else None,
         "items": [{key: item[key] for key in ("id", "criterion", "development_status", "human_status", "tests", "evidence", "files")}
                   for item in current["items"]],
     }

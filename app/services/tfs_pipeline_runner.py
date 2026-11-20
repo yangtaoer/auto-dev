@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -344,6 +345,8 @@ def completed_build_result(
         **plan,
         "buildId": build_id,
         "buildNumber": completed.get("buildNumber"),
+        "buildStartedAt": completed.get("startTime"),
+        "buildFinishedAt": completed.get("finishTime"),
         "status": completed.get("status"),
         "result": completed.get("result"),
         **build_links(base_url, str(plan["tfsProject"]), build_id),
@@ -374,6 +377,7 @@ def attach_deployment14(result, project, plan, client, completed, args):
         return
     if build_result_exit_code(result) != 0:
         return
+    started_at = datetime.now(UTC).isoformat()
     try:
         try:
             from .pipeline_bridge import install_deployment_worker
@@ -388,6 +392,9 @@ def attach_deployment14(result, project, plan, client, completed, args):
         result["deploymentMonitoring"] = "server14-reported-separately; company-release-not-monitored"
     except Exception as error:
         result["deployment14"] = dict(status="failed", eligible=True, reason=str(error), applicationUrl=None)
+    if result["deployment14"].get("eligible"):
+        result["deployment14"].setdefault("startedAt", started_at)
+        result["deployment14"].setdefault("finishedAt", datetime.now(UTC).isoformat())
 
 
 def guarded_build(client, plan, active, integrity, args):

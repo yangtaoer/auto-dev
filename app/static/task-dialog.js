@@ -68,7 +68,13 @@ window.TaskDialog = (() => {
     const route = nodes.filter(node=>available.has(node.id)).map(node => {
       const current = node.active && node.state === 'running';
       const marker = current ? `<span class="workflow-orb" ${changed?'data-arrived':''}>${TaskWorkflow.asset('current-stage',32)}</span>` : editorialIcon(node.state === 'done' ? 'check' : node.icon);
-      return button(node.id, `<span class="workflow-marker" aria-hidden="true">${marker}</span><b>${escapeHtml(node.label)}</b><small>${TaskWorkflow.STATES[node.state]}</small>`,
+      const {started, elapsed} = TaskWorkflow.timingLabels(node.timing);
+      const startTime = started === '—' ? started : `<time datetime="${escapeHtml(node.timing.started_at)}" title="北京时间">${escapeHtml(started)}</time>`;
+      const basis = [node.timing?.basis, node.timing?.running ? '截至本次刷新' : '',
+        elapsed === '—' && node.state !== 'pending' && node.state !== 'skipped' ? '缺少完整计时记录' : ''].filter(Boolean).join('，');
+      const timing = `<small class="workflow-node-timing" title="${escapeHtml(basis)}">
+        <span>开始 ${startTime}</span><span>耗时 <b>${escapeHtml(elapsed)}</b></span></small>`;
+      return button(node.id, `<span class="workflow-marker" aria-hidden="true">${marker}</span><b>${escapeHtml(node.label)}</b><small>${TaskWorkflow.STATES[node.state]}</small>${timing}`,
         `class="workflow-node" data-phase="${node.state}" ${node.active?'aria-current="step"':''}`);
     }).join('');
     const nav = `<nav class="workflow-nav" role="tablist" aria-label="任务流程">
