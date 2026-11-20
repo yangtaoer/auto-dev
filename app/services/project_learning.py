@@ -10,6 +10,7 @@ import json
 import re
 import sqlite3
 import uuid
+from collections import defaultdict
 from contextlib import closing
 from html.parser import HTMLParser
 from typing import Any
@@ -211,10 +212,7 @@ def _round(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _acceptance(conn: sqlite3.Connection, request: dict[str, Any]) -> dict[str, Any]:
-    items = [dict(row) for row in conn.execute("SELECT * FROM acceptance_items WHERE request_id=? ORDER BY position", (request["id"],))]
-    rounds = [_round(row) for row in conn.execute("""SELECT f.*,x.request_id repair_request_id FROM acceptance_feedback f
-              LEFT JOIN acceptance_repairs x ON x.feedback_id=f.id WHERE f.request_id=? ORDER BY f.id""", (request["id"],))]
+def _current_feedback(rounds: list[dict]) -> dict[str, Any]:
     version = rounds[-1]["tested_version"] if rounds else ""
     environment = rounds[-1]["environment"] if rounds else ""
     feedback: dict[str, Any] = {}
@@ -226,6 +224,45 @@ def _acceptance(conn: sqlite3.Connection, request: dict[str, Any]) -> dict[str, 
         for item in entry["items"]:
             feedback[item["id"]] = {**item, "tested_version": version, "environment": entry["environment"],
                 "actor_name": entry["actor_name"], "created_at": entry["created_at"], "feedback_id": entry["id"]}
+    return feedback
+
+
+def _verdict(total: int, passed: int, failed: int, rounds: list[dict]) -> str:
+    if rounds and rounds[-1].get("overall_status") == "failed":
+        return "changes_requested"
+    return "accepted" if total and passed == total else "partial" if passed else "changes_requested" if failed else "pending"
+
+
+def acceptance_workbench_states(request_ids: list[str]) -> dict[str, dict]:
+    """Read only the human feedback necessary for the homepage queues."""
+    states = {}
+    with closing(db.connect()) as conn:
+        for offset in range(0, len(request_ids), 400):
+            batch = request_ids[offset:offset + 400]
+            marks = ",".join("?" for _ in batch)
+            items, rounds = defaultdict(list), defaultdict(list)
+            for row in conn.execute(f"SELECT request_id,item_id FROM acceptance_items WHERE request_id IN ({marks})", batch):
+                items[row["request_id"]].append(row["item_id"])
+            for row in conn.execute(f"""SELECT f.*,x.request_id repair_request_id FROM acceptance_feedback f
+                LEFT JOIN acceptance_repairs x ON x.feedback_id=f.id WHERE f.request_id IN ({marks}) ORDER BY f.id""", batch):
+                rounds[row["request_id"]].append(_round(row))
+            for request_id in batch:
+                history = rounds[request_id]
+                feedback = _current_feedback(history)
+                ids = items[request_id]
+                status = _verdict(len(ids), sum(feedback.get(key, {}).get("status") == "passed" for key in ids),
+                                  sum(feedback.get(key, {}).get("status") == "failed" for key in ids), history)
+                states[request_id] = {"status": status, "repair_request_id": history[-1].get("repair_request_id") if history else None}
+    return states
+
+
+def _acceptance(conn: sqlite3.Connection, request: dict[str, Any]) -> dict[str, Any]:
+    items = [dict(row) for row in conn.execute("SELECT * FROM acceptance_items WHERE request_id=? ORDER BY position", (request["id"],))]
+    rounds = [_round(row) for row in conn.execute("""SELECT f.*,x.request_id repair_request_id FROM acceptance_feedback f
+              LEFT JOIN acceptance_repairs x ON x.feedback_id=f.id WHERE f.request_id=? ORDER BY f.id""", (request["id"],))]
+    version = rounds[-1]["tested_version"] if rounds else ""
+    environment = rounds[-1]["environment"] if rounds else ""
+    feedback = _current_feedback(rounds)
     ledger = [item for item in _load(request.get("acceptance_ledger"), []) if isinstance(item, dict)]
     scopes = [_criterion_text(item["criterion"]) for item in items]
     for item in items:
@@ -251,9 +288,7 @@ def _acceptance(conn: sqlite3.Connection, request: dict[str, Any]) -> dict[str, 
         item["automatic_test_status"] = "deferred"
     passed = sum(item["human_status"] == "passed" for item in items)
     failed = sum(item["human_status"] == "failed" for item in items)
-    status = "accepted" if items and passed == len(items) else "partial" if passed else "changes_requested" if failed else "pending"
-    if rounds and rounds[-1].get("overall_status") == "failed":
-        status = "changes_requested"
+    status = _verdict(len(items), passed, failed, rounds)
     return {"items": items, "rounds": rounds, "status": status, "tested_version": version, "environment": environment,
             "requirement_revision": items[0]["requirement_revision"] if items else request.get("work_item_revision"),
             "latest_feedback_id": rounds[-1]["id"] if rounds else 0,
@@ -283,6 +318,7 @@ def acceptance_progress(request: dict[str, Any]) -> dict[str, Any]:
         "summary": current["summary"],
         "latest_feedback_id": current["latest_feedback_id"],
         "latest_feedback_at": current["rounds"][-1]["created_at"] if current["rounds"] else None,
+        "repair_request_id": current["rounds"][-1].get("repair_request_id") if current["rounds"] else None,
         "items": [{key: item[key] for key in ("id", "criterion", "development_status", "human_status", "tests", "evidence", "files")}
                   for item in current["items"]],
     }

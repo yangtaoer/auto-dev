@@ -66,7 +66,7 @@ class LocalStore:
     control_restart = staticmethod(task_controls.restart)
 
     def claim_control(self, active_ids):
-        return task_controls.claim(settings.runner_id, active_ids)
+        return task_controls.claim(settings.runner_id, active_ids, supports_stage_recovery=True)
 
     def next_queued(self) -> str | None:
         with transaction() as conn:
@@ -195,7 +195,9 @@ class RemoteStore:
         }))['item']
 
     def claim_control(self, active_ids):
-        return self._json(self._request('POST', '/api/runner/controls/claim', json={'runner_id': self.runner_id, 'active_ids': active_ids})).get('control')
+        return self._json(self._request('POST', '/api/runner/controls/claim', json={
+            'runner_id': self.runner_id, 'active_ids': active_ids, 'supports_stage_recovery': True,
+        })).get('control')
 
     def control_update(self, control_id, *, status, message, result):
         return self._json(self._request('PATCH', f'/api/runner/controls/{control_id}', json={'status': status, 'message': message, 'result': result}))

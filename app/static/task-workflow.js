@@ -21,8 +21,10 @@
     return {repos: files.length, files: files.reduce((total, count) => total + count, 0)};
   }
   function currentStage(record) {
-    const status = record.display_status || record.status || '';
+    const visible = record.display_status || record.status || '';
+    const status = visible === 'runner_disconnected' ? record.status : visible;
     const release = record.task_trace?.release || {};
+    if (record.stage_recovery?.pending) return record.stage_recovery.stage;
     if (status === 'validating' && record.current_step === 'prepare') return 'requirement';
     if (status === 'developing' && record.planning_repository_scope) return 'requirement';
     const byStatus = {
@@ -59,7 +61,7 @@
     const links = list(record.deployment_services);
     const verified = links.filter(item => item.readiness_status === 'verified');
     const deployed = verified.length || DEPLOYED.has(release.deployment_status);
-    const visibleDeploy = !analysis && (links.length || deployed || DEPLOY_FAILURES.has(release.deployment_status));
+    const visibleDeploy = !analysis && (links.length || deployed || DEPLOY_FAILURES.has(release.deployment_status) || record.stage_recovery?.stage==='deploy');
     const merged = prs.length ? prs.every(repo => !!repo.merge_commit) : !!events['pr.merged'] || !!record.merge_commit;
     const final = record.status === 'delivered';
     const key = currentStage(record);
@@ -69,10 +71,14 @@
       let code = state || (done ? 'done' : final ? 'unknown' : 'pending');
       if (active && code !== 'done') {
         if (['failed','rejected'].includes(status)) code = 'failed';
-        else if (status.startsWith('waiting_') || status === 'queued' || record.runner_online === false) code = 'waiting';
+        else if (status.startsWith('waiting_') || status === 'queued' || status==='runner_disconnected' || record.runner_online === false) code = 'waiting';
+        else if (record.stage_recovery?.pending) code = record.stage_recovery.control_status==='running'?'running':'waiting';
         else if (code !== 'failed') code = 'running';
       }
-      nodes.push({id,label,short,icon,state:code,note,active,timing:timings[id]});
+      const statusLabel=active&&status==='runner_disconnected' ? record.status_label||'执行器离线，待核对'
+        : active&&record.stage_recovery?.pending&&record.status_label ? record.status_label
+        : id==='acceptance'&&final ? (code==='done'?'任务完成':ACCEPTANCE[acceptance.status]||ACCEPTANCE.pending) : STATES[code];
+      nodes.push({id,label,short,icon,state:code,note,active,statusLabel,timing:id==='acceptance'?undefined:timings[id]});
     }
     add('intake','识别需求','识别','search',steps.validate === 'completed' || events['tfs.validated'],
       status === 'waiting_runner' ? '等待执行器' : record.project_name || '');
@@ -99,7 +105,7 @@
     }
     add('delivery',analysis?'报告交付':'交付结果','交付','clipboard',final || steps.deliver === 'completed',
       list(record.artifacts).length ? `${record.artifacts.length} 项产物` : '');
-    add('acceptance','验收反馈','验收','check',acceptance.status === 'accepted',final ? (ACCEPTANCE[acceptance.status] || ACCEPTANCE.pending) : '',
+    add('acceptance','验收反馈','验收','check',acceptance.status === 'accepted','',
       final && acceptance.status !== 'accepted' ? 'waiting' : undefined);
     return nodes;
   }
@@ -141,7 +147,7 @@
     return `<img src="${url}" alt="" width="${size}" height="${size}" decoding="async">`;
   }
   function miniRoute(nodes) {
-    return `<span class="workflow-mini" role="list" aria-label="任务进度">${nodes.map(node=>`<span role="listitem" data-phase="${node.state}" ${node.active?'aria-current="step"':''}><i aria-hidden="true"></i><span title="${escape(node.label)} · ${STATES[node.state]}">${escape(node.short)}</span><span class="sr-only">${STATES[node.state]}</span></span>`).join('')}</span>`;
+    return `<span class="workflow-mini" role="list" aria-label="任务进度">${nodes.map(node=>`<span role="listitem" data-phase="${node.state}" ${node.active?'aria-current="step"':''}><i aria-hidden="true"></i><span title="${escape(node.label)} · ${escape(node.statusLabel)}">${escape(node.short)}</span><span class="sr-only">${escape(node.statusLabel)}</span></span>`).join('')}</span>`;
   }
 
   const api = {stages,currentStage,timingLabels,summary,counts,concise,asset,miniRoute,STATES,ACCEPTANCE};

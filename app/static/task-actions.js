@@ -1,7 +1,7 @@
 window.TaskActions = (() => {
   const pending = new Set();
   const status = {pending:'等待执行器',running:'正在处理',waiting_merge:'等待回退 PR 合并',completed:'已完成',failed:'未完成 · 请查看原因'};
-  const names = {cancel:'取消任务',restart:'重新开始',rollback:'回退需求'};
+  const names = {cancel:'取消任务',restart:'重新开始',rollback:'回退需求',retry_deployment:'重试部署',retry_delivery_sync:'重试同步'};
   function render(d) {
     const controls=d.controls||[], busy=controls.some(c=>['pending','running','waiting_merge'].includes(c.status));
     const manager=d.can_manage_request!==false;
@@ -48,13 +48,21 @@ window.TaskActions = (() => {
       finally{pending.delete(d.id);}
     };
   }
-  function confirmRetry(d,reportSync=false) {
+  function confirmRetry(d,reportSync=false,recovery=null) {
     let modal=document.querySelector('#task-action-confirm');
     if(!modal){modal=document.createElement('dialog');modal.id='task-action-confirm';modal.className='task-action-confirm';document.body.append(modal);}
-    const title=reportSync?'重试报告同步':'重新发起任务';
+    const title=recovery?.label||(reportSync?'重试报告同步':'重新发起任务');
+    const explanation=recovery?.description||(reportSync?'复用已生成报告，继续 TFS 状态同步与通知。':'将保留原任务记录，并创建一条新的排队任务。新任务将按当前项目策略执行。');
     const reports=(d.artifacts||[]).filter(isAnalysisReport);
     modal.dataset.action='retry';
-    modal.innerHTML=`<form method="dialog"><button class="modal-close" value="cancel" aria-label="关闭操作确认">×</button><h2><span class="action-symbol">${editorialIcon('refresh')}</span>${title}</h2><p class="action-explanation">${reportSync?'复用已生成报告，仅重试 TFS 状态同步与通知；不会重新分析或创建新任务。':'将保留原任务记录，并创建一条新的排队任务。新任务将按当前项目策略执行。'}</p><p class="action-source">#${d.work_item_id} · ${escapeHtml(d.project_name)}</p>${reportSync?`<div class="retry-report-files">${reports.map(file=>`<div>${editorialIcon('clipboard')}<span>${escapeHtml(file.name)}</span></div>`).join('')}</div>`:''}<div class="detail-actions"><button class="btn btn-ghost" value="cancel">暂不操作</button><button class="btn btn-primary" value="confirm">确认${reportSync?'重试':'重新发起'}</button></div></form>`;
+    modal.innerHTML=`<form method="dialog">
+      <button class="modal-close" value="cancel" aria-label="关闭操作确认">×</button>
+      <h2><span class="action-symbol">${editorialIcon('refresh')}</span>${escapeHtml(title)}</h2>
+      <p class="action-explanation">${escapeHtml(explanation)}</p>
+      <p class="action-source">#${d.work_item_id} · ${escapeHtml(d.project_name)}</p>
+      ${reportSync?`<div class="retry-report-files">${reports.map(file=>`<div>${editorialIcon('clipboard')}<span>${escapeHtml(file.name)}</span></div>`).join('')}</div>`:''}
+      <div class="detail-actions"><button class="btn btn-ghost" value="cancel">暂不操作</button><button class="btn btn-primary" value="confirm">确认${recovery?escapeHtml(recovery.label):reportSync?'重试':'重新发起'}</button></div>
+      </form>`;
     return new Promise(resolve=>{modal.addEventListener('close',()=>resolve(modal.returnValue==='confirm'),{once:true});modal.returnValue='';modal.showModal();});
   }
   return {render,bind,confirmRetry};

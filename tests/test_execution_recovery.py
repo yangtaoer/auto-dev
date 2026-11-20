@@ -152,10 +152,12 @@ class RecoveryRecordTests(unittest.TestCase):
 
     def test_offline_task_displays_loss_of_heartbeat_without_mutating_status(self):
         from app.main import add_runner_display_state
-        with patch('app.main.runner_is_online',return_value=False):
-            detail=add_runner_display_state({'status':'submitting','runner_id':self.runner})
+        last_seen = '2026-11-20T00:00:00+00:00'
+        detail = add_runner_display_state({'status':'submitting','runner_id':self.runner}, False, last_seen)
         self.assertEqual(detail['status'],'submitting')
-        self.assertIn('不代表任务仍在运行',detail['current_activity'])
+        self.assertEqual(detail['display_status'],'runner_disconnected')
+        self.assertEqual(detail['last_confirmed_at'],last_seen)
+        self.assertIn('尚未确认执行状态',detail['current_activity'])
 
     def test_slow_usage_lookup_is_not_on_the_liveness_thread(self):
         from app import local_runner_main

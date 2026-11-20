@@ -40,6 +40,21 @@ test('delivery does not infer readiness or acceptance for old records', () => {
   assert.equal(phase({...record,acceptance_progress:{status:'accepted'}},'acceptance').state,'done');
 });
 
+test('the acceptance endpoint is untimed and completion follows the human verdict', () => {
+  const record={...review,status:'delivered',task_trace:{stage_timings:{acceptance:{duration_seconds:3600}}}};
+  assert.equal(phase(record,'acceptance').statusLabel,'待验收');
+  assert.equal(phase(record,'acceptance').timing,undefined);
+  assert.equal(phase({...record,acceptance_progress:{status:'accepted'}},'acceptance').statusLabel,'任务完成');
+});
+
+test('a disconnected execution keeps its stage and shares the same display state', () => {
+  const record={status:'developing',current_step:'develop',display_status:'runner_disconnected',
+    status_label:'执行器离线，待核对',runner_online:false};
+  assert.equal(workflow.currentStage(record),'development');
+  assert.equal(phase(record,'development').state,'waiting');
+  assert.equal(phase(record,'development').statusLabel,record.status_label);
+});
+
 test('analysis omits the code delivery stages, and routing only exposes intake', () => {
   assert.deepEqual(workflow.stages({...review,task_type:'analysis'}).map(node=>node.id),
     ['intake','requirement','development','delivery','acceptance']);

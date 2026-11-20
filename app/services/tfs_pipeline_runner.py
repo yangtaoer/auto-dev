@@ -387,8 +387,17 @@ def attach_deployment14(result, project, plan, client, completed, args):
         from netorder_14 import deploy_completed
         # Plan fields use expectedArtifact; preserve the catalog's artifact contract.
         pipeline = dict(plan, artifactName=plan.get("expectedArtifact"))
+        options = {}
+        if getattr(args, "retry_deployment", False):
+            from netorder_14 import Server
+
+            class RecoveryServer(Server):
+                def worker(self, request, **kwargs):
+                    return super().worker({**request, "preventOlderBuild": True}, **kwargs)
+
+            options["server_factory"] = RecoveryServer
         result["deployment14"] = deploy_completed(client, project, pipeline, completed,
-            cache_dir=Path(args.artifact_cache), force=args.force_redeploy_14)
+            cache_dir=Path(args.artifact_cache), force=args.force_redeploy_14, **options)
         result["deploymentMonitoring"] = "server14-reported-separately; company-release-not-monitored"
     except Exception as error:
         result["deployment14"] = dict(status="failed", eligible=True, reason=str(error), applicationUrl=None)
@@ -475,6 +484,7 @@ def main() -> int:
     parser.add_argument("--timeout-seconds", type=int, default=3600)
     deploy = parser.add_mutually_exclusive_group()
     deploy.add_argument("--deploy-14", action="store_true", help="Deploy an existing/latest completed delivery to server 14; normal --confirm-run releases do this automatically")
+    parser.add_argument("--retry-deployment", action="store_true", help="Resume deployment of a specific build with downgrade protection")
     deploy.add_argument("--skip-deploy-14", action="store_true", help="Packaging-only override when the user explicitly excludes local deployment")
     parser.add_argument("--force-redeploy-14", action="store_true", help="Explicitly recreate even when the same verified package is already current")
     parser.add_argument("--artifact-cache", default=str(Path.home()/".codex/artifacts/netorder14"))
@@ -551,6 +561,9 @@ def main() -> int:
             raise ValueError("--latest-successful requires --definition-id for multi-pipeline projects")
         if args.deploy_14 and not (args.confirm_run or args.build_id or args.latest_successful):
             raise ValueError("--deploy-14 requires a run, existing build, or latest-successful action")
+        if args.retry_deployment and (not args.deploy_14 or not args.build_id or not args.definition_id
+                                      or args.force_redeploy_14 or args.source_branch or args.skip_deploy_14):
+            raise ValueError("部署恢复必须按原流水线和构建编号使用已登记的目标分支")
         if args.force_redeploy_14 and (not (args.confirm_run or args.deploy_14) or args.skip_deploy_14):
             raise ValueError("--force-redeploy-14 requires an authorized deployment action")
         if args.skip_deploy_14 and args.check_definition:

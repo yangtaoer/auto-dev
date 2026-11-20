@@ -67,21 +67,23 @@ window.TaskDialog = (() => {
     const shortcuts = ['overview','followup'].filter(key => available.has(key)).map(key => button(key, escapeHtml(available.get(key)))).join('');
     const route = nodes.filter(node=>available.has(node.id)).map(node => {
       const current = node.active && node.state === 'running';
+      const terminal = node.id==='acceptance';
       const marker = current ? `<span class="workflow-orb" ${changed?'data-arrived':''}>${TaskWorkflow.asset('current-stage',32)}</span>` : editorialIcon(node.state === 'done' ? 'check' : node.icon);
       const {started, elapsed} = TaskWorkflow.timingLabels(node.timing);
       const startTime = started === '—' ? started : `<time datetime="${escapeHtml(node.timing.started_at)}" title="北京时间">${escapeHtml(started)}</time>`;
       const basis = [node.timing?.basis, node.timing?.running ? '截至本次刷新' : '',
         elapsed === '—' && node.state !== 'pending' && node.state !== 'skipped' ? '缺少完整计时记录' : ''].filter(Boolean).join('，');
-      const timing = `<small class="workflow-node-timing" title="${escapeHtml(basis)}">
+      const timing = terminal?'':`<small class="workflow-node-timing" title="${escapeHtml(basis)}">
         <span>开始 ${startTime}</span><span>耗时 <b>${escapeHtml(elapsed)}</b></span></small>`;
-      return button(node.id, `<span class="workflow-marker" aria-hidden="true">${marker}</span><b>${escapeHtml(node.label)}</b><small>${TaskWorkflow.STATES[node.state]}</small>${timing}`,
-        `class="workflow-node" data-phase="${node.state}" ${node.active?'aria-current="step"':''}`);
+      return button(node.id, `<span class="workflow-marker" aria-hidden="true">${marker}</span><span class="workflow-node-copy"><b>${escapeHtml(node.label)}</b><small>${escapeHtml(node.statusLabel)}</small>${timing}</span>`,
+        `class="workflow-node${terminal?' workflow-node-terminal':''}" data-phase="${node.state}" ${node.active?'aria-current="step"':''}`);
     }).join('');
-    const nav = `<nav class="workflow-nav" role="tablist" aria-label="任务流程">
+    const nav = `<nav class="workflow-nav" role="tablist" aria-label="任务流程" aria-orientation="vertical">
       <div class="workflow-nav-head"><h3>任务流程</h3><div class="workflow-shortcuts">${shortcuts}</div></div>
-      <div class="workflow-rail" style="--phase-count:${Math.max(1,nodes.length)}">${route}</div>
+      <div class="workflow-rail">${route}</div>
     </nav>`;
-    return `${head}${brief}${nav}<div class="task-tab-body">${panels.map(([key, , content]) => `<section class="task-tab-panel" id="task-panel-${key}" role="tabpanel" data-panel="${key}" aria-labelledby="task-tab-${key}" tabindex="0" ${key === selected ? '' : 'hidden'}>${content}</section>`).join('')}</div>`;
+    return `${head}<div class="workflow-detail-layout">${nav}<div class="workflow-detail-main">${brief}
+      <div class="task-tab-body">${panels.map(([key, , content]) => `<section class="task-tab-panel" id="task-panel-${key}" role="tabpanel" data-panel="${key}" aria-labelledby="task-tab-${key}" tabindex="0" ${key === selected ? '' : 'hidden'}>${content}</section>`).join('')}</div></div></div>`;
   }
   function bind() {
     dialog().querySelectorAll('[data-task-disclosure]').forEach(details => {
@@ -97,7 +99,7 @@ window.TaskDialog = (() => {
       button.onclick = () => select(button.dataset.taskTab);
       button.onkeydown = event => {
         const buttons = [...dialog().querySelectorAll('[data-task-tab]')], index = buttons.indexOf(button);
-        const next = event.key === 'ArrowRight' ? (index + 1) % buttons.length : event.key === 'ArrowLeft' ? (index + buttons.length - 1) % buttons.length : event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : -1;
+        const next = ['ArrowDown','ArrowRight'].includes(event.key) ? (index + 1) % buttons.length : ['ArrowUp','ArrowLeft'].includes(event.key) ? (index + buttons.length - 1) % buttons.length : event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : -1;
         if (next >= 0) { event.preventDefault(); select(buttons[next].dataset.taskTab, true); }
       };
     });

@@ -253,6 +253,8 @@ class Worker:
             )
 
     def _process_control(self) -> bool:
+        from .services import stage_recovery
+
         claim = getattr(self.store, 'claim_control', None)
         if not callable(claim):
             return False
@@ -269,7 +271,11 @@ class Worker:
             if control['action'] == 'rollback':
                 from .services.code_rollback import execute
                 save(*execute(control, detail, save))
-            else:
+            elif control['action'] in stage_recovery.CONTROL_ACTIONS:
+                result = control.get("result") or {}
+                self._recover_delivery_stage(detail, result["plan"])
+                save("completed", "原任务已从已核对的阶段完成交付", result)
+            elif control['action'] in {'cancel', 'restart'}:
                 result = control.get('result') or {}
                 result['pull_requests'] = []
                 if not detail['policy_snapshot'].get('simulation_mode'):
@@ -289,11 +295,53 @@ class Worker:
                     save('completed', '已从最新目标分支重新排队，使用新会话与新工作区', result)
                 else:
                     save('completed', '任务已停止；已合并代码与已启动的外部发版不自动撤销', result)
+            else:
+                raise RuntimeError("执行器尚未支持此任务操作")
         except Exception as exc:
+            if control['action'] in stage_recovery.CONTROL_ACTIONS and self.store.get_status(control['request_id']) not in {
+                "delivered", "failed", "cancelled", "rejected",
+            }:
+                self._fail(control['request_id'], exc)
             save('failed', str(exc)[:3000], control.get('result') or {})
         finally:
             self._set_active(control['request_id'], False)
         return True
+
+    def _recover_delivery_stage(self, detail: dict, recovery: dict) -> None:
+        from .services import stage_recovery
+
+        if not detail or stage_recovery.plan(detail, include_queued=True) != recovery:
+            raise RuntimeError("交付检查点已变化，请重新核对任务")
+        request_id = detail["id"]
+        self._check_cancelled(request_id)
+        project = enforce_artifact_policy(detail["policy_snapshot"])
+        if recovery["action"] == stage_recovery.SYNC:
+            blockers = self.artifacts.validate_artifact_policy(request_id, project)
+            if blockers:
+                raise RuntimeError("交付物复核未通过：" + "；".join(blockers))
+            self.store.update_request(request_id, status=RunStatus.DELIVERING.value, current_step="deliver",
+                                      completed_at=None, error_message="", progress=96)
+            self.store.update_step(request_id, "deliver", "running", "使用原交付物恢复同步")
+            self._synchronize_development_delivery(request_id, detail, project, resume=True)
+            return
+
+        self.store.update_request(request_id, status=RunStatus.RELEASING.value, current_step="release",
+                                  completed_at=None, error_message="", progress=93)
+        self.store.update_step(request_id, "release", "running", recovery["description"])
+        try:
+            result = TfsPipelineReleaseService().retry_deployment(
+                str(project.get("name") or detail["project_name"]), definition_id=recovery["definition_id"],
+                build_id=recovery["build_id"],
+            )
+        except TfsPipelineReleaseError as exc:
+            if exc.result.get("buildId") == recovery["build_id"]:
+                self.store.add_event(request_id, "release.failed", "部署恢复未通过验证", level="error",
+                                     metadata=stage_recovery.failed_release_metadata(exc.result))
+            raise
+        self._check_cancelled(request_id)
+        self._record_release_result(request_id, result, project)
+        self.store.update_step(request_id, "release", "completed", "使用原构建产物完成部署验证")
+        self._finish_development_delivery(request_id, self.store.detail(request_id), project)
 
     @staticmethod
     def _verify_build_baseline(worktree: Path, state: dict) -> None:
@@ -2094,6 +2142,10 @@ class Worker:
             if any(state.get("companion_delivery") for state in detail.get("repository_states") or []):
                 message = "主程序发版与接口程序打包均已完成" if DELIVERY_OPTION_AUTO_RELEASE in options else "接口程序已合入目标分支并生成系统包"
                 self.store.update_step(request_id, "release", "completed", message)
+        self._finish_development_delivery(request_id, detail, project)
+
+    def _finish_development_delivery(self, request_id: str, detail: dict, project: dict) -> None:
+        options = self._delivery_options(detail)
         self.store.update_request(request_id, status=RunStatus.DELIVERING.value, current_step="deliver", progress=96)
         self.store.add_event(request_id, "delivery.started", "开始核对交付物并同步交付结果")
         self._check_cancelled(request_id)
@@ -2155,7 +2207,13 @@ class Worker:
             if result.get("finalized"):
                 self.store.add_event(request_id, "joint.delivery_completed", "全部联合项目已完成并汇总交付")
             return
-        if not project.get("simulation_mode"):
+        self._synchronize_development_delivery(request_id, detail, project)
+
+    def _synchronize_development_delivery(self, request_id: str, detail: dict, project: dict, *, resume=False) -> None:
+        from .services.stage_recovery import recorded
+
+        self.store.add_event(request_id, "delivery.sync_started", "交付物已核对，开始同步交付结果")
+        if not project.get("simulation_mode") and not (resume and recorded(detail, "tfs.delivery_completed")):
             self._check_cancelled(request_id)
             manifest = self.artifacts.delivery_manifest_html(detail)
             tfs_result = TfsClient(project["tfs_collection_url"]).complete_delivery(
@@ -2172,7 +2230,8 @@ class Worker:
         completed_at = utc_now()
         self._check_cancelled(request_id)
         self.store.update_request(request_id, completed_at=completed_at)
-        self._send_status_email(request_id, action_required=False)
+        if not (resume and recorded(detail, "mail.delivery_sent")):
+            self._send_status_email(request_id, action_required=False)
         self.store.update_request(request_id, status=RunStatus.DELIVERED.value, current_step="deliver", progress=100)
         self.store.update_step(request_id, "deliver", "completed", "交付产物与通知邮件已生成，TFS 状态及实际交付版本已更新")
         self.store.add_event(request_id, "delivery.completed", "需求研发交付完成")
@@ -2286,10 +2345,9 @@ class Worker:
             except Exception as exc:
                 self.store.release_finish(request_id, decision["batch_id"], {"error": str(exc)[:2000]}, failed=True)
                 if isinstance(exc, TfsPipelineReleaseError) and exc.result:
-                    result = {key: exc.result.get(key) for key in ("buildId", "result", "resultsUrl", "buildStartedAt", "buildFinishedAt")}
-                    deployment = exc.result.get("deployment14") or {}
-                    result["deployment14"] = {key: deployment.get(key) for key in ("eligible", "status", "startedAt", "finishedAt")}
-                    self.store.add_event(request_id, "release.failed", "发版流程未完成", level="error", metadata=result)
+                    from .services.stage_recovery import failed_release_metadata
+                    self.store.add_event(request_id, "release.failed", "发版流程未完成", level="error",
+                                         metadata=failed_release_metadata(exc.result))
                 raise
             self.store.release_finish(request_id, decision["batch_id"], result)
         else:
@@ -2362,9 +2420,15 @@ class Worker:
                     level="warning",
                     metadata={"retry_history": result.get("retryHistory", [])},
                 )
+        self._record_release_result(request_id, result, project)
+        return result
+
+    def _record_release_result(self, request_id: str, result: dict, project: dict) -> None:
+        from .services.release_policy import requires_integrity
+
         if requires_integrity(project):
             self.store.record_verified_release(request_id, result)
-            return result
+            return
         self.store.add_artifact(
             request_id,
             "release_artifact",
@@ -2380,7 +2444,6 @@ class Worker:
             ),
             metadata=result,
         )
-        return result
 
     def _ensure_license_application(self, request_id: str, detail: dict, project: dict) -> None:
         existing = next(
@@ -2497,6 +2560,8 @@ class Worker:
         self.mailer.send(to=recipients, subject=subject, html_body=html_body, attachments=attachments)
         if terminal or not action_required:
             self.store.update_request(request_id, email_sent_at=utc_now())
+        if not terminal and not action_required:
+            self.store.add_event(request_id, "mail.delivery_sent", "已发送最终交付邮件")
 
     def _send_terminal_email(self, request_id: str) -> None:
         try:

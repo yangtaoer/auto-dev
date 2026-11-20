@@ -63,7 +63,7 @@ from .security import hash_password, verify_password
 from .services.delivery import ArtifactService, Mailer
 from .services.blocker_summary import summarize_blocker
 from .services.tfs import TfsClient, recoverable_preflight_failure
-from .services import project_learning, model_settings, release_coordination, task_controls, request_followups, ui_preferences, ui_media
+from .services import project_learning, model_settings, release_coordination, stage_recovery, task_controls, task_workbench, request_followups, ui_preferences, ui_media
 
 
 @asynccontextmanager
@@ -79,7 +79,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.33",
+    version="1.0-Beta.34",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -438,19 +438,12 @@ def runner_is_online(runner_id: str) -> bool:
     return runner_record_online(row("SELECT * FROM runners WHERE runner_id=?", (runner_id,)))
 
 
-def add_runner_display_state(item: dict[str, Any], online: bool | None = None) -> dict[str, Any]:
-    """Expose an offline queue state without changing the persisted workflow status."""
-    actual_status = str(item.get("status") or "")
+def add_runner_display_state(item: dict[str, Any], online: bool | None = None, last_seen: str | None = None) -> dict[str, Any]:
     if online is None:
-        online = runner_is_online(str(item.get("runner_id") or ""))
-    item["runner_online"] = online
-    item["display_status"] = "waiting_runner" if actual_status == RunStatus.QUEUED.value and not online else actual_status
-    if item["display_status"] == "waiting_runner":
-        item["current_activity"] = "执行器当前离线，任务已安全排队，待执行器上线后自动继续"
-        item["display_message"] = item["current_activity"]
-    elif not online and actual_status in {'validating','developing','submitting','building','releasing','capturing','delivering'}:
-        item['current_activity']='执行器心跳已离线，现场保留；上线后将核对检查点，不代表任务仍在运行'
-        item['display_message']=item['current_activity']
+        runner = row("SELECT * FROM runners WHERE runner_id=?", (str(item.get("runner_id") or ""),))
+        online = runner_record_online(runner)
+        last_seen = (runner or {}).get("last_seen_at")
+    task_workbench.display_state(item, online, last_seen)
     return item
 
 
@@ -658,13 +651,9 @@ def joint_child_summary(child: dict[str, Any]) -> dict[str, Any]:
         "task_type_label": TASK_TYPE_LABELS[TaskType(public.get("task_type", TaskType.DEVELOPMENT.value))],
         "status": public["status"],
         "display_status": display_status,
-        "status_label": (
-            "等待执行器上线"
-            if display_status == "waiting_runner"
-            else status_label(public.get("task_type", TaskType.DEVELOPMENT.value), public["status"])
-        ),
+        "status_label": public["status_label"],
         "current_step": public.get("current_step"),
-        "current_activity": latest_event.get("message") or public.get("result_summary") or "等待执行",
+        "current_activity": public.get("display_message") or latest_event.get("message") or public.get("result_summary") or "等待执行",
         "result_summary": public.get("result_summary") or "",
         "error_message": public.get("error_message") or "",
         "repository_states": public.get("repository_states") or [],
@@ -961,6 +950,7 @@ def compact_task_record(item: dict) -> None:
 @app.get("/api/dashboard")
 def dashboard(user: Annotated[dict, Depends(current_user)], compact: bool = False) -> dict:
     runners = rows("SELECT * FROM runners ORDER BY runner_id")
+    runners_by_id = {runner["runner_id"]: runner for runner in runners}
     now = datetime.now(UTC)
     online_by_runner = {runner["runner_id"]: runner_record_online(runner, now=now) for runner in runners}
     scope = "" if user["role"] == "admin" else "WHERE requester_id=?"
@@ -1085,7 +1075,8 @@ def dashboard(user: Annotated[dict, Depends(current_user)], compact: bool = Fals
     from .services.task_trace import dashboard_previews
     previews = dashboard_previews([item["id"] for item in active_requests])
     for item in (*active_requests, *recent_requests):
-        add_runner_display_state(item, online_by_runner.get(item["runner_id"], False))
+        runner_id = item["runner_id"]
+        add_runner_display_state(item, online_by_runner.get(runner_id, False), runners_by_id.get(runner_id, {}).get("last_seen_at"))
         item.pop("codex_thread_id", None)
         item.pop("analysis_result", None)
         item["current_activity"] = public_engine_text(item.get("current_activity"))
@@ -1199,12 +1190,22 @@ def dashboard(user: Annotated[dict, Depends(current_user)], compact: bool = Fals
     request_counts["queued"] = max(0, int(request_counts.get("queued") or 0) - offline_queued_total)
     request_counts["waiting_runner"] = waiting_runner_total + offline_queued_total
     request_counts["failed"] = int(request_counts.get("failed") or 0) + intake_failed_total
+    workbench = task_workbench.load(user, runners_by_id, online_by_runner, public_engine_text)
+    for item, intake in zip(intake_items, pending_intakes):
+        lane = "executing" if item["runner_online"] and intake["status"] == "claimed" else "queue"
+        workbench[lane].append({
+            "id": item["id"], "record_type": "intake", "work_item_id": item["work_item_id"],
+            "task_type": item["task_type"], "title": item["title"], "project_name": item["project_name"],
+            "display_status": item["status"], "status_label": "识别需求中" if lane == "executing" else "等待识别需求",
+            "actor": "执行器", "label": "查看识别", "confirmed_at": item["updated_at"],
+        })
     return {
         "counts": request_counts,
         "active": active,
         "recent": recent,
         "runners": runners,
         "stats": stats,
+        "workbench": workbench,
         "capacity": {
             "limit": settings.runner_max_concurrency,
             "active": capacity_active,
@@ -1313,10 +1314,11 @@ def delivery_records(
 
     current_time = datetime.now(UTC)
     terminal_statuses = {item.value for item in TERMINAL_STATUSES}
-    online_by_runner = {runner["runner_id"]: runner_record_online(runner, now=current_time)
-                        for runner in rows("SELECT runner_id,state,last_seen_at FROM runners")}
+    runners_by_id = {runner["runner_id"]: runner for runner in rows("SELECT runner_id,state,last_seen_at FROM runners")}
+    online_by_runner = {key: runner_record_online(runner, now=current_time) for key, runner in runners_by_id.items()}
     for item in items:
-        add_runner_display_state(item, online_by_runner.get(item["runner_id"], False))
+        runner_id = item["runner_id"]
+        add_runner_display_state(item, online_by_runner.get(runner_id, False), runners_by_id.get(runner_id, {}).get("last_seen_at"))
         item.pop("codex_thread_id", None)
         item.pop("analysis_result", None)
         item["current_activity"] = public_engine_text(item.get("current_activity"))
@@ -1781,12 +1783,6 @@ def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -
     detail["task_trace"]["stage_timings"] = stage_timings(detail)
     detail.update(acceptance_permissions(detail, user))
     detail["can_followup"] = detail["status"] == RunStatus.DELIVERED.value
-    display_status = detail.get("display_status") or detail["status"]
-    detail["status_label"] = (
-        "等待执行器上线"
-        if display_status == "waiting_runner"
-        else status_label(detail.get("task_type", TaskType.DEVELOPMENT.value), detail["status"])
-    )
     detail["task_type_label"] = TASK_TYPE_LABELS[TaskType(detail.get("task_type", TaskType.DEVELOPMENT.value))]
     detail["delivery_mode_label"] = DELIVERY_MODE_LABELS[DeliveryMode(detail["delivery_mode"])]
     joint_group_id = str(detail.get("joint_group_id") or "")
@@ -1803,6 +1799,18 @@ def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -
             "delivered", "failed", "cancelled"
         }:
             detail["status_label"] = "本项目已完成，等待联合项目"
+    if not any(control.get("action") == "rollback" and control.get("status") in {"pending", "running", "waiting_merge", "completed"}
+               for control in detail.get("controls", [])):
+        recovery = stage_recovery.plan(original) if detail["can_manage_request"] else None
+        active_recovery = next((control for control in detail.get("controls", []) if control.get("action") in stage_recovery.CONTROL_ACTIONS
+                               and control.get("status") in stage_recovery.ACTIVE_CONTROLS), None)
+        detail["stage_recovery"] = recovery
+        detail["handoff"] = task_workbench.handoff(detail, user, acceptance=detail["acceptance_progress"], recovery=recovery)
+        if active_recovery:
+            queued_plan = (active_recovery.get("result") or {}).get("plan") or {}
+            detail["stage_recovery"] = {**queued_plan, "pending": True, "control_status": active_recovery["status"]}
+            detail["handoff"] = {"lane": "queue", "actor": "执行器", "label": "查看恢复", "stage": queued_plan.get("stage"),
+                                 "confirmed_at": detail.get("last_confirmed_at")}
     return {"request": detail}
 
 
@@ -2015,6 +2023,16 @@ def retry_analysis_sync(request_id: str, user: Annotated[dict, Depends(current_u
     return learning_call(retry, request_id, user)
 
 
+class StageRecoveryInput(BaseModel):
+    action: Literal["retry_deployment", "retry_delivery_sync"]
+
+
+@app.post('/api/requests/{request_id}/recover-stage')
+def recover_request_stage(request_id: str, payload: StageRecoveryInput, user: Annotated[dict, Depends(current_user)]) -> dict:
+    can_access_request(user, request_id)
+    return {"control": learning_call(task_controls.queue, request_id, payload.action, user)}
+
+
 @app.post('/api/requests/{request_id}/restart')
 def restart_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -> dict:
     can_access_request(user, request_id)
@@ -2030,6 +2048,7 @@ def rollback_request(request_id: str, user: Annotated[dict, Depends(current_user
 class ControlClaimInput(BaseModel):
     runner_id: str
     active_ids: list[str] = Field(default_factory=list, max_length=10)
+    supports_stage_recovery: bool = False
 
 
 class ControlUpdateInput(BaseModel):
@@ -2040,7 +2059,7 @@ class ControlUpdateInput(BaseModel):
 
 @app.post('/api/runner/controls/claim', dependencies=[Depends(runner_auth)])
 def runner_claim_control(payload: ControlClaimInput) -> dict:
-    return {'control': task_controls.claim(payload.runner_id, payload.active_ids)}
+    return {'control': task_controls.claim(payload.runner_id, payload.active_ids, supports_stage_recovery=payload.supports_stage_recovery)}
 
 
 @app.patch('/api/runner/controls/{control_id}', dependencies=[Depends(runner_auth)])

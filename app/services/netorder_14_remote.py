@@ -430,6 +430,16 @@ def deploy(request):
         plan=preflight(request)
         if plan['status']!='ready':
             return plan
+        if request.get('preventOlderBuild') and plan['mode']=='existing-compose':
+            compose_dir=Path(plan['composeDirectory'])
+            manifest=compose_dir/'release.json'
+            recorded=json.loads(manifest.read_text('utf-8')).get('buildId') if manifest.exists() else None
+            env_value=properties(text(compose_dir/'.env')).get(plan['releaseVariable'],'')
+            matched=re.fullmatch(r'(?:\./)?releases/(\d+)',env_value)
+            current_ids=[int(value) for value in (recorded, matched.group(1) if matched else None)
+                         if value is not None and str(value).isdigit()]
+            if current_ids and max(current_ids)>int(package['buildId']):
+                return dict(plan,status='blocked',reason='target-already-on-newer-build',currentBuildId=max(current_ids),applicationUrl=None)
         if plan['mode']=='existing-compose':
             dependencies={}
             for service in ['auth','zk']:

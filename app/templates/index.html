@@ -87,6 +87,11 @@
       <h1 class="sr-only" id="view-title">任务总览</h1>
 
       <section class="view active" id="view-dashboard">
+        <section class="task-workbench" id="task-workbench" aria-labelledby="workbench-title">
+          <div class="workbench-heading"><h2 id="workbench-title">待办工作台</h2><span id="workbench-summary"></span></div>
+          <div class="workbench-filters" id="workbench-filters" role="group" aria-label="按处理状态查看任务"></div>
+          <ul class="workbench-list" id="workbench-list"></ul>
+        </section>
         <div class="control-strip {{ 'admin-strip' if user.role == 'admin' else 'pm-strip' }}">
           {% if user.role == 'admin' %}<div class="devcore-quota" id="devcore-quota"><div><p class="eyebrow">研发容量 / DEVCORE CAPACITY</p><h2>套餐用量正在同步</h2></div><span class="muted">由本机研发引擎同步</span></div>{% endif %}
           <div class="metrics" id="metrics"></div>

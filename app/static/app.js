@@ -14,6 +14,8 @@ STATUS.waiting_release='等待同项目合并发版';
 STATUS.waiting_retry='连接恢复后自动重试';
 ANALYSIS_STATUS.waiting_retry=STATUS.waiting_retry;
 STATUS.waiting_analysis_sync=ANALYSIS_STATUS.waiting_analysis_sync='分析完成，待同步交付';
+STATUS.runner_disconnected=ANALYSIS_STATUS.runner_disconnected='执行器离线，待核对';
+STATUS.waiting_stage_recovery=ANALYSIS_STATUS.waiting_stage_recovery='等待阶段恢复';
 const escapeHtml = (value='') => String(value).replace(/[&<>'"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const editorialIcon = name => globalThis.AutoDevThemeIcons?.markup(name) || `<svg class="ui-icon" aria-hidden="true"><use href="/static/editorial-icons.svg#${name}"></use></svg>`;
 const fmt = value => value ? new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(value)) : '—';
@@ -48,7 +50,7 @@ const tfsLink = (record,label=`#${record?.work_item_id||''}`,className='tfs-work
 const jointBadge = record => Number(record?.joint_project_count)>1?`<span class="joint-badge">联合 ${Number(record.joint_project_index)||1}/${Number(record.joint_project_count)}</span>`:'';
 const isAnalysisTask = record => record?.task_type==='analysis';
 const taskTypeLabel = record => isAnalysisTask(record)?'问题分析':'自主研发';
-const taskStatus = (record,status=runVisualStatus(record)) => (isAnalysisTask(record)?ANALYSIS_STATUS:STATUS)[status]||status;
+const taskStatus = (record,status=runVisualStatus(record)) => (status===runVisualStatus(record)&&record.status_label)||(isAnalysisTask(record)?ANALYSIS_STATUS:STATUS)[status]||status;
 const taskModeLabel = record => isAnalysisTask(record)?'问题分析':(MODE[record?.delivery_mode]?.[0]||record?.delivery_mode||'自主研发');
 
 function bindArtifactPreviews(root=document){root.querySelectorAll('.artifact-preview-trigger').forEach(button=>{button.onclick=event=>{event.stopPropagation();openArtifactPreview(button.dataset.previewUrl,button.dataset.downloadUrl,button.dataset.previewTitle,button.dataset.previewRepository)}})}
@@ -276,6 +278,48 @@ function deliveryTokenLabels(record){const labels=[];const aliases={sql:'SQL',co
 function releaseDeliveryTokens(target,record){if(orbMotionReduced()||!target?.isConnected)return;const rect=target.getBoundingClientRect(),layer=orbSignalLayer();deliveryTokenLabels(record).forEach((label,index)=>{const token=document.createElement('b');token.className='orb-delivery-token';token.textContent=label;token.style.left=`${rect.left+Math.min(rect.width*.24,106)+index*9}px`;token.style.top=`${rect.top+Math.min(rect.height*.48,42)}px`;layer.appendChild(token);const drift=(index-1)*34;const animation=token.animate([{transform:'translate3d(0,10px,0) scale(.6)',opacity:0},{transform:`translate3d(${drift*.35}px,-28px,0) scale(1)`,opacity:1,offset:.32},{transform:`translate3d(${drift}px,-7px,0) scale(.92)`,opacity:1,offset:.76},{transform:`translate3d(${drift}px,4px,0) scale(.82)`,opacity:0}],{duration:1250+index*90,delay:index*90,easing:'cubic-bezier(.2,.75,.24,1)',fill:'forwards'});animation.onfinish=()=>token.remove()})}
 function collectOrbTransitions(runs){const experience=state.orbExperience,current=new Map();runs.forEach(run=>{const key=activeRunKey(run),status=runVisualStatus(run);current.set(key,{status,record:run});if(!experience.initialized)return;const previous=experience.runs.get(key);const target=document.querySelector(`[data-run-key="${CSS.escape(key)}"]`);if(!previous)experience.pending.push({type:'dispatch',target,record:run});else if(previous.status!==status)experience.pending.push({type:status==='waiting_approval'?'blocked':'progress',target,record:run})});if(experience.initialized)experience.runs.forEach((previous,key)=>{if(current.has(key))return;const record=(state.dashboard.recent||[]).find(item=>activeRunKey(item)===key),status=record?runVisualStatus(record):'';if(status==='delivered')experience.pending.push({type:'success',key,record});else if(['failed','rejected'].includes(status))experience.pending.push({type:'blocked',key,record})});experience.runs=current;experience.initialized=true}
 function flushOrbTransitions(){const experience=state.orbExperience,character=window.sidebarCharacter;if(!character||!experience.pending.length)return;const priority={success:4,blocked:3,dispatch:2,progress:1},event=experience.pending.sort((a,b)=>priority[b.type]-priority[a.type])[0];experience.pending=[];requestAnimationFrame(()=>{const target=event.target?.isConnected?event.target:document.querySelector(`#recent-table [data-run-key="${CSS.escape(event.key||'')}"]`);if(event.type==='success'){character.celebrateOnce(target);launchOrbSignal(target,'success');releaseDeliveryTokens(target,event.record)}else if(event.type==='blocked'){character.alertOnce(target);launchOrbSignal(target,'blocked')}else if(event.type==='dispatch'){character.dispatchOnce(target);launchOrbSignal(target,'dispatch')}else{character.progressOnce(target);launchOrbSignal(target,'progress')}})}
+const WORKBENCH_LANES = {
+  acceptance:['待我验收','没有待你验收的任务'],
+  supplement:['待我补充','没有待你补充的任务'],
+  waiting:['等待他人','没有等待他人处理的任务'],
+  executing:['系统执行中','当前没有正在执行的任务'],
+  queue:['等待系统','当前没有等待系统的任务'],
+  attention:['待处理异常','当前没有待处理的异常'],
+};
+let workbenchLane='', workbenchSignature='';
+
+function renderWorkbench(){
+  const groups=state.dashboard.workbench||{};
+  const keys=Object.keys(WORKBENCH_LANES).filter(key=>key!=='attention'&&key!=='queue'||groups[key]?.length||key===workbenchLane);
+  if(!workbenchLane)workbenchLane=['acceptance','supplement','attention','waiting','executing','queue'].find(key=>groups[key]?.length)||'acceptance';
+  const signature=JSON.stringify([workbenchLane,groups]);
+  if(signature===workbenchSignature)return;
+  workbenchSignature=signature;
+  const host=document.querySelector('#task-workbench'), focus=document.activeElement;
+  const focusKey=host.contains(focus)&&{lane:focus.dataset.workbenchLane,id:focus.dataset.workbenchTask};
+  const visible=groups[workbenchLane]||[];
+  host.querySelector('#workbench-summary').textContent=`共 ${Object.values(groups).reduce((sum,list)=>sum+list.length,0)} 项`;
+  host.querySelector('#workbench-filters').innerHTML=keys.map(key=>
+    `<button class="workbench-filter" type="button" data-workbench-lane="${key}" aria-pressed="${key===workbenchLane}">${WORKBENCH_LANES[key][0]}<b>${groups[key]?.length||0}</b></button>`).join('');
+  host.querySelector('#workbench-list').innerHTML=visible.length?visible.map(item=>
+    `<li class="workbench-row"><div class="workbench-task"><small>#${escapeHtml(item.work_item_id)} · ${escapeHtml(item.project_name||'')}</small><b>${escapeHtml(item.title||'读取需求中')}</b></div>
+      <div class="workbench-state"><span class="status-dot" data-status="${escapeHtml(item.display_status)}">${escapeHtml(item.status_label)}</span><span>${escapeHtml(item.actor)} · ${item.confirmed_at?fmt(item.confirmed_at):'待确认'}</span></div>
+      <button type="button" class="btn ${['acceptance','supplement'].includes(workbenchLane)?'btn-primary':'btn-secondary'}" data-workbench-task="${escapeHtml(item.id)}">${escapeHtml(item.label)} ${editorialIcon('arrow-right')}</button></li>`).join('')
+    :`<li class="workbench-empty">${WORKBENCH_LANES[workbenchLane][1]}</li>`;
+  if(focusKey?.lane)host.querySelector(`[data-workbench-lane="${CSS.escape(focusKey.lane)}"]`)?.focus({preventScroll:true});
+  if(focusKey?.id)(host.querySelector(`[data-workbench-task="${CSS.escape(focusKey.id)}"]`)||host.querySelector('[aria-pressed="true"]'))?.focus({preventScroll:true});
+}
+
+document.querySelector('#task-workbench')?.addEventListener('click',event=>{
+  const lane=event.target.closest('[data-workbench-lane]')?.dataset.workbenchLane;
+  if(lane){workbenchLane=lane;renderWorkbench();return;}
+  const id=event.target.closest('[data-workbench-task]')?.dataset.workbenchTask;
+  const item=(state.dashboard.workbench?.[workbenchLane]||[]).find(record=>record.id===id);
+  if(!item)return;
+  if(item.record_type==='intake')openRoutingDetail(item.id,item.work_item_id,item.display_status,item.task_type);
+  else openDetail(item.id,item.stage,item.lane==='supplement');
+});
+
 function renderDashboard(){
   if(document.body.dataset.view&&document.body.dataset.view!=='dashboard'){
     document.body.classList.toggle('has-active-runs',state.dashboard.active.length>0);
@@ -283,19 +327,22 @@ function renderDashboard(){
   }
   const c=state.dashboard.counts;
   const delivered=c.delivered||0, waiting=c.waiting_merge||0, failed=c.failed||0;
-  const active=Object.entries(c).filter(([k])=>!['delivered','failed','rejected','cancelled','waiting_input'].includes(k)).reduce((a,[,v])=>a+v,0);
+  const active=state.dashboard.workbench?.executing?.length||0;
   const stats=state.dashboard.stats||{};
-  const metricData=USER.role==='admin'?[['当日任务',stats.today_total||0,'accent'],['任务总量',stats.total||0,''],['成功交付',stats.success||0,''],['失败 / 驳回',stats.failed||0,'danger'],['运行中',stats.running||0,'accent'],['待补充',stats.waiting_input||0,'attention'],['等待合并',stats.waiting_merge||0,'warn']]:[['运行中',active,'accent'],['等待合并',waiting,'warn'],['已交付',delivered,''],['需要关注',failed+(c.waiting_approval||0)+(c.waiting_input||0),'attention']];
+  const metricData=USER.role==='admin'?[['当日任务',stats.today_total||0,'accent'],['任务总量',stats.total||0,''],['成功交付',stats.success||0,''],['失败 / 驳回',stats.failed||0,'danger'],['系统执行中',active,'accent'],['待补充',stats.waiting_input||0,'attention'],['等待合并',stats.waiting_merge||0,'warn']]:[['系统执行中',active,'accent'],['等待合并',waiting,'warn'],['已交付',delivered,''],['需要关注',failed+(c.waiting_approval||0)+(c.waiting_input||0),'attention']];
   const metrics=document.querySelector('#metrics');metrics.classList.toggle('admin-metrics',USER.role==='admin');metrics.innerHTML=metricData.map(([l,v,k])=>`<div class="metric ${k} ${l==='运行中'&&Number(v)>0?'live':''}"><span>${l}</span><div class="metric-value"><b>${String(v).padStart(2,'0')}</b><small>个</small></div></div>`).join('');
   renderDevCoreQuota();
+  renderWorkbench();
   const activeEl=document.querySelector('#active-runs'),activePipeline=document.querySelector('#active-pipeline');
-  activePipeline.hidden=state.dashboard.active.length===0;
-  renderActiveRuns(activeEl,state.dashboard.active);
+  const executingIds=new Set((state.dashboard.workbench?.executing||[]).map(item=>item.id));
+  const executing=state.dashboard.active.filter(item=>executingIds.has(item.id));
+  activePipeline.hidden=executing.length===0;
+  renderActiveRuns(activeEl,executing);
   const capacity=state.dashboard.capacity||{limit:5,active:0,queued:0};
   const capacityStatus=document.querySelector('#capacity-status');
   if(capacityStatus)capacityStatus.innerHTML=`<b>${Number(capacity.active)||0} / ${Number(capacity.limit)||5}</b><span>并发槽位${capacity.queued?` · ${Number(capacity.queued)} 个排队`:''}</span>`;
   document.body.classList.toggle('has-active-runs',state.dashboard.active.length>0);
-  document.querySelector('#active-summary').textContent=`共 ${state.dashboard.active.length} 个任务${capacity.queued?`，其中 ${Number(capacity.queued)} 个排队`:''}`;
+  document.querySelector('#active-summary').textContent=`共 ${active} 个任务`;
   renderRecentTasks();
   const runners=state.dashboard.runners||[],online=runners.filter(r=>r.online),status=document.querySelector('#runner-status');
   status.classList.toggle('offline',online.length===0);status.querySelector('span').textContent=online.length?'执行器在线':'执行器离线';
@@ -348,7 +395,7 @@ function renderTaskPeek(run) {
   const reply=TaskWorkflow.summary(run)||run.current_activity;
   const changed=TaskWorkflow.counts(run);
   host.innerHTML=`<div class="workflow-peek-lead">
-      <div><span>${escapeHtml(stage?[stage.label,TaskWorkflow.STATES[stage.state]].join(' · '):taskStatus(run))}</span><h3>${escapeHtml(run.title||`需求 #${run.work_item_id}`)}</h3></div>${TaskWorkflow.asset('current-stage',62)}
+      <div><span>${escapeHtml(stage?[stage.label,stage.statusLabel].join(' · '):taskStatus(run))}</span><h3>${escapeHtml(run.title||`需求 #${run.work_item_id}`)}</h3></div>${TaskWorkflow.asset('current-stage',62)}
     </div>
     <div class="workflow-peek-body"><div class="workflow-peek-meta">${tfsLink(run,`#${run.work_item_id}`)}<span>${changed.files?`${changed.repos} 个仓库 · ${changed.files} 个文件`:escapeHtml(taskModeLabel(run))}</span></div>
       ${reply?`<div class="workflow-peek-reply"><b>最新进展</b><p>${escapeHtml(TaskWorkflow.concise(engineText(reply),220))}</p></div>`:''}
@@ -565,7 +612,15 @@ async function openRoutingDetail(intakeId,workItemId,initialStatus='routing',tas
     document.querySelector('#retry-new-run')?.addEventListener('click',()=>{closeDetail();openRequestModal(taskType)});
   }
 }
-async function openDetail(id){window.ProjectLearning?.willOpenRequest(id);state.routingGeneration+=1;state.selectedIntake=null;state.selectedRequest=id;state.selectedTerminal=false;showDetailDrawer();await refreshDetail(id)}
+async function openDetail(id,stage=null,focusSupplement=false){
+  window.ProjectLearning?.willOpenRequest(id);state.routingGeneration+=1;state.selectedIntake=null;state.selectedRequest=id;state.selectedTerminal=false;
+  showDetailDrawer();
+  await refreshDetail(id);
+  if(state.selectedRequest===id&&stage){
+    TaskDialog.select(stage,true);
+    if(focusSupplement)document.querySelector('#supplement-form textarea')?.focus();
+  }
+}
 async function refreshDetail(id,silent=false){
   if(silent&&detailPending)return;
   const generation=++detailGeneration;detailPending=true;
@@ -688,7 +743,7 @@ const TASK_BRIEF_LIMIT = 120;
 
 function renderTaskBrief(detail, note, {analysis, isDelivered, isJoint, current, artifactCount, services}) {
   const status = detail.display_status || detail.status;
-  const attention = ['failed','rejected','waiting_approval','waiting_input'].includes(status);
+  const attention = ['failed','rejected','waiting_approval','waiting_input','runner_disconnected','waiting_stage_recovery'].includes(status);
   const title = isDelivered
     ? (analysis ? '分析结论' : isJoint ? '当前项目交付摘要' : '交付摘要')
     : attention ? '当前待处理' : '任务进展';
@@ -712,6 +767,11 @@ function renderTaskBrief(detail, note, {analysis, isDelivered, isJoint, current,
     services.length?fact('部署入口',deploymentLabel,'deploy'):'',
     isDelivered?fact('人工验收',verdict+completedChecks,'acceptance'):'',
   ].join('');
+  const next = detail.handoff;
+  const showNext = next && next.lane !== 'executing';
+  const target = next?.stage || current?.id;
+  const actionAttributes=next?.operation?`data-stage-recovery="${escapeHtml(next.operation)}"`:
+    `data-task-switch="${escapeHtml(target||'')}" ${next?.label==='补充信息'?'data-focus-supplement':''}`;
   return `<section class="workflow-brief" data-tone="${isDelivered?'delivered':attention?'attention':'progress'}" aria-labelledby="task-brief-title">
     <div class="workflow-brief-main">
       ${isDelivered?TaskWorkflow.asset('delivery-parcel',42):''}
@@ -722,6 +782,10 @@ function renderTaskBrief(detail, note, {analysis, isDelivered, isJoint, current,
       </div>
     </div>
     ${facts?`<div class="workflow-brief-facts">${facts}</div>`:''}
+    ${showNext?`<div class="workflow-next-action"><div>
+        <b>${escapeHtml(detail.status_label||taskStatus(detail))}</b>
+        <span>处理人 ${escapeHtml(next.actor)}${next.confirmed_at?` · 最近确认 ${fmtStepTime(next.confirmed_at)}`:''}</span>
+      </div>${target||next.operation?`<button type="button" class="btn btn-primary" ${actionAttributes}>${escapeHtml(next.label)} ${editorialIcon('arrow-right')}</button>`:''}</div>`:''}
   </section>`;
 }
 
@@ -752,11 +816,13 @@ function renderDetail(d){
     .filter(service=>window.AutoDevDeploymentLinks?.safeUrl(service?.url));
   const deploymentServices=window.AutoDevDeploymentLinks?.section(services)||'';
   const reportSync=analysis&&d.current_step==='deliver'&&deliveryArtifacts.some(isAnalysisReport)&&['failed','waiting_analysis_sync'].includes(d.status);
-  const retry=d.can_manage_request!==false&&!isJoint&&(d.status==='failed'||reportSync)?`<button type="button" class="btn btn-secondary" id="retry-run">${reportSync?'重试报告同步':'重新发起'}</button>`:'';
+  const recovery=d.stage_recovery;
+  const retry=d.can_manage_request!==false&&!isJoint&&!recovery&&(d.status==='failed'||reportSync)?`<button type="button" class="btn btn-secondary" id="retry-run">${reportSync?'重试报告同步':'重新发起'}</button>`:'';
   const continuation=USER.role==='admin'&&(d.status==='waiting_approval'||d.can_continue_in_place)?renderContinuationPanel(d):'';
   const supplement=d.can_manage_request!==false&&d.status==='waiting_input'?renderSupplementPanel(d):'';
   const blocker=d.status==='waiting_approval'?renderBlockerSummary(d):'';
-  const failure=d.error_message&&d.status!=='waiting_approval'?`<section class="task-failure-summary"><h3>${reportSync?'报告已生成，外部同步待重试':'当前阶段需要处理'}</h3><p>${escapeHtml(TaskWorkflow.concise(engineText(d.error_message),180))}</p><details data-task-disclosure="failure-detail"><summary>展开技术详情</summary><pre>${escapeHtml(engineText(d.error_message))}</pre></details></section>`:'';
+  const failure=d.error_message&&!['waiting_approval','waiting_input'].includes(d.status)?taskDisclosure('展开技术详情',
+    `<pre class="workflow-error-log">${escapeHtml(engineText(d.error_message))}</pre>`,'failure-detail'):'';
   const actions=TaskActions.render(d);
   const live=d.status==='developing'?'<button type="button" class="btn btn-secondary" id="open-devcore-stream">打开实时会话 ↗</button>':'';
   const simulate=USER.role==='admin'&&d.status==='waiting_merge'&&d.policy_snapshot?.simulation_mode?'<button type="button" class="btn btn-secondary" id="simulate-merge">模拟 PR 已合并</button>':'';
@@ -824,7 +890,7 @@ function renderDetail(d){
   const responsive=phases.map(node=>{
     const current=node.id===selected;
     const context=current?`${blocker}${failure}${supplement}${continuation}${retry}`:'';
-    return [node.id,node.label,`<div class="workflow-content"><div class="workflow-stage-head"><h3>${escapeHtml(node.label)}</h3><span data-phase="${node.state}">${TaskWorkflow.STATES[node.state]}${node.note?` · ${escapeHtml(node.note)}`:''}</span></div>${context}${maps[node.id]||''}</div>`];
+    return [node.id,node.label,`<div class="workflow-content"><div class="workflow-stage-head"><h3>${escapeHtml(node.label)}</h3><span data-phase="${node.state}">${escapeHtml(node.statusLabel)}${node.note?` · ${escapeHtml(node.note)}`:''}</span></div>${context}${maps[node.id]||''}</div>`];
   });
   const panels=overview?[['overview','完成轨迹',`<div class="workflow-content">${overview}</div>`],...responsive]:responsive;
   if(d.can_followup||isDelivered)panels.push(['followup','需求追问','<div id="task-followup-mount"></div>']);
@@ -834,6 +900,7 @@ function renderDetail(d){
   TaskActions.bind(d);
   document.querySelectorAll('[data-task-switch]').forEach(button=>button.onclick=()=>{
     TaskDialog.select(button.dataset.taskSwitch,true);
+    if(button.hasAttribute('data-focus-supplement'))document.querySelector('#supplement-form textarea')?.focus();
     if(button.dataset.taskExpand){
       const detail=document.querySelector(`[data-task-disclosure="${CSS.escape(button.dataset.taskExpand)}"]`);
       if(detail){detail.open=true;detail.scrollIntoView({block:'nearest'});}
@@ -847,6 +914,19 @@ function renderDetail(d){
   document.querySelector('#open-devcore-stream')?.addEventListener('click',()=>openDevCoreStream(d.id,d.work_item_id,d));
   document.querySelector('#simulate-merge')?.addEventListener('click',async()=>{try{await api(`/api/requests/${d.id}/simulate-merge`,{method:'POST'});toast('已模拟合并，正在生成交付物');await refresh()}catch(e){toast(e.message)}});
   document.querySelectorAll('#retry-run,#retry-delivery').forEach(button=>button.addEventListener('click',async()=>{if(!await TaskActions.confirmRetry(d,reportSync))return;button.disabled=true;try{const result=await api(`/api/requests/${d.id}/${reportSync?'retry-analysis-sync':'retry'}`,{method:'POST'});toast(result.reuse_report?'已安排报告同步，不重新执行分析':'已重新发起，任务进入队列');await refresh();await openDetail(result.id)}catch(e){toast(e.message);button.disabled=false}}));
+  document.querySelector('[data-stage-recovery]')?.addEventListener('click',async event=>{
+    const button=event.currentTarget,action=button.dataset.stageRecovery;
+    if(!recovery||recovery.pending||action!==recovery.action||!await TaskActions.confirmRetry(d,action==='retry-analysis-sync',recovery))return;
+    button.disabled=true;
+    try{
+      const request=action==='retry-analysis-sync'?'retry-analysis-sync':'recover-stage';
+      await api(`/api/requests/${d.id}/${request}`,{method:'POST',body:JSON.stringify({action})});
+      toast('原任务已进入恢复队列');
+      state.selectedTerminal=false;
+      await openDetail(d.id,recovery.stage);
+      refresh().catch(()=>{});
+    }catch(error){toast(error.message);button.disabled=false;}
+  });
   document.querySelector('#continuation-prompt')?.addEventListener('input',event=>state.continuationDrafts.set(d.id,event.currentTarget.value));
   document.querySelector('#continuation-form')?.addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector('button[type="submit"]'),error=form.querySelector('.continuation-error'),prompt=form.elements.prompt.value.trim();error.hidden=true;button.disabled=true;try{await api(`/api/requests/${d.id}/continue`,{method:'POST',body:JSON.stringify({prompt})});state.continuationDrafts.delete(d.id);toast('已继续执行，将复用原工作区和 DevCore 会话');state.selectedTerminal=false;await refresh();await openDetail(d.id)}catch(e){error.textContent=e.message;error.hidden=false;button.disabled=false}});
   document.querySelector('#supplement-form')?.addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector('button[type="submit"]'),error=form.querySelector('.supplement-error');const answers=[...form.querySelectorAll('.supplement-answer')].map(input=>({id:input.dataset.id,answer:input.value.trim()})).filter(item=>item.answer);error.hidden=true;button.disabled=true;try{await api(`/api/requests/${d.id}/supplement`,{method:'POST',body:JSON.stringify({answers})});toast(`补充信息已提交，任务重新进入${isAnalysisTask(d)?'分析':'研发'}队列`);state.selectedTerminal=false;await refresh();await openDetail(d.id)}catch(e){error.textContent=e.message;error.hidden=false;button.disabled=false}});

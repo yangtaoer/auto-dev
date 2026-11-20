@@ -5,14 +5,15 @@ import json
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from ..db import transaction, utc_now, project_for_api, json_value
+from ..db import transaction, utc_now, project_for_api, json_value, request_detail
 from ..domain import PIPELINE_STEPS
+from . import stage_recovery
 
 TERMINAL = {'delivered', 'failed', 'rejected', 'cancelled'}
 
 
 def queue(request_id: str, action: str, actor: dict) -> dict:
-    if action not in {'cancel', 'restart', 'rollback'}:
+    if action not in {'cancel', 'restart', 'rollback'} | stage_recovery.CONTROL_ACTIONS:
         raise ValueError('未知任务操作')
     with transaction() as conn:
         conn.execute('BEGIN IMMEDIATE')
@@ -28,7 +29,20 @@ def queue(request_id: str, action: str, actor: dict) -> dict:
             return dict(prior)
         if conn.execute("SELECT 1 FROM request_controls WHERE request_id=? AND status IN ('pending','running','waiting_merge')", (request_id,)).fetchone():
             raise RuntimeError('该任务已有操作正在处理，请等待完成')
-        if action == 'rollback':
+        result = {}
+        if action in stage_recovery.CONTROL_ACTIONS:
+            recovery = stage_recovery.plan(request_detail(request_id) or {})
+            if not recovery or recovery["action"] != action:
+                raise RuntimeError('当前阶段没有可复用的交付证据，请刷新任务')
+            if not conn.execute('SELECT 1 FROM projects WHERE id=? AND enabled=1', (source['project_id'],)).fetchone():
+                raise RuntimeError('项目已停用，不能恢复交付')
+            if conn.execute("""SELECT 1 FROM visible_delivery_requests WHERE project_id=? AND work_item_id=? AND id!=?
+                AND (status NOT IN ('delivered','failed','rejected','cancelled') OR
+                     (status NOT IN ('rejected','cancelled') AND created_at>?))""",
+                (source['project_id'], source['work_item_id'], request_id, source['created_at'])).fetchone():
+                raise RuntimeError('该需求已有较新的执行记录，请从最新任务处理')
+            result['plan'] = recovery
+        elif action == 'rollback':
             if source['status'] != 'delivered' or source['task_type'] == 'analysis':
                 raise RuntimeError('仅已完成的代码研发任务支持回退；问题分析不产生代码改动')
             states = json_value(source['repository_states'], [])
@@ -41,13 +55,16 @@ def queue(request_id: str, action: str, actor: dict) -> dict:
         elif not conn.execute('SELECT 1 FROM projects WHERE id=? AND enabled=1', (source['project_id'],)).fetchone() and action == 'restart':
             raise RuntimeError('项目已停用，不能重新开始')
         now, control_id = utc_now(), str(uuid.uuid4())
-        if action != 'rollback':
+        if action in stage_recovery.CONTROL_ACTIONS:
+            conn.execute("UPDATE delivery_requests SET status=?,updated_at=? WHERE id=?", (stage_recovery.WAITING, now, request_id))
+        elif action in {'cancel', 'restart'}:
             conn.execute("UPDATE delivery_requests SET status='cancelled',completed_at=?,updated_at=? WHERE id=?", (now, now, request_id))
         message = {'cancel': '已请求取消，等待执行器停止当前工作并关闭未合并 PR；已合并代码不会自动撤销',
                    'restart': '等待原任务停止；将使用新会话、新工作区从最新目标分支重新开始',
-                   'rollback': '等待执行器核对本次提交，生成可审计的反向提交；不自动回滚数据库或已部署环境'}[action]
-        conn.execute('INSERT INTO request_controls(id,request_id,action,actor_id,runner_id,message,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)',
-                     (control_id, request_id, action, actor['id'], source['runner_id'], message, now, now))
+                   'rollback': '等待执行器核对本次提交，生成可审计的反向提交；不自动回滚数据库或已部署环境',
+                   }.get(action) or result['plan']['description']
+        conn.execute('INSERT INTO request_controls(id,request_id,action,actor_id,runner_id,message,result,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
+                     (control_id, request_id, action, actor['id'], source['runner_id'], message, json.dumps(result, ensure_ascii=False), now, now))
         conn.execute('INSERT INTO delivery_events(request_id,level,event_type,message,created_at) VALUES(?,?,?,?,?)',
                      (request_id, 'warning', 'control.' + action, message, now))
         conn.execute('INSERT INTO audit_logs(actor_id,action,target_type,target_id,detail,created_at) VALUES(?,?,?,?,?,?)',
@@ -55,7 +72,7 @@ def queue(request_id: str, action: str, actor: dict) -> dict:
         return dict(conn.execute('SELECT * FROM request_controls WHERE id=?', (control_id,)).fetchone())
 
 
-def claim(runner_id: str, active_ids: list[str]) -> dict | None:
+def claim(runner_id: str, active_ids: list[str], *, supports_stage_recovery=False) -> dict | None:
     with transaction() as conn:
         conn.execute('BEGIN IMMEDIATE')
         # The runner reports all locally active operations under its claim lock.
@@ -63,13 +80,33 @@ def claim(runner_id: str, active_ids: list[str]) -> dict | None:
         # rollback blindly, but allow idempotent cancel/restart cleanup to resume.
         for stale in conn.execute("SELECT * FROM request_controls WHERE runner_id=? AND status='running'", (runner_id,)).fetchall():
             if stale['request_id'] not in active_ids:
+                if stale['action'] in stage_recovery.CONTROL_ACTIONS:
+                    if not supports_stage_recovery:
+                        continue
+                    source = conn.execute('SELECT status FROM delivery_requests WHERE id=?', (stale['request_id'],)).fetchone()
+                    finished = source and source['status'] == 'delivered'
+                    note = '原任务已交付' if finished else '执行器在阶段恢复中中断，已保留回执，请核对后再恢复'
+                    now = utc_now()
+                    conn.execute('UPDATE request_controls SET status=?,message=?,updated_at=? WHERE id=?',
+                                 ('completed' if finished else 'failed', note, now, stale['id']))
+                    conn.execute("""UPDATE delivery_requests SET status='failed',error_message=?,completed_at=?,updated_at=?
+                                    WHERE id=? AND status NOT IN ('delivered','failed','rejected','cancelled')""",
+                                 (note, now, now, stale['request_id']))
+                    continue
                 state = 'failed' if stale['action'] == 'rollback' else 'pending'
                 message = '执行器曾中断，请核对已记录的回退提交与 PR；为防止重复回退，未自动重放' if state == 'failed' else '执行器重启后继续处理原操作'
                 conn.execute('UPDATE request_controls SET status=?,message=?,updated_at=? WHERE id=?', (state, message, utc_now(), stale['id']))
         for control in conn.execute("SELECT * FROM request_controls WHERE runner_id=? AND status IN ('pending','waiting_merge') AND (next_poll_at IS NULL OR next_poll_at<=?) ORDER BY created_at", (runner_id, utc_now())).fetchall():
+            if control['action'] in stage_recovery.CONTROL_ACTIONS and not supports_stage_recovery:
+                continue
             if control['request_id'] in active_ids:
                 continue  # Wait for the actual worker, not merely a cancelled DB status.
             source = conn.execute('SELECT project_id FROM delivery_requests WHERE id=?', (control['request_id'],)).fetchone()
+            if control['action'] == stage_recovery.DEPLOY and conn.execute(
+                """SELECT 1 FROM delivery_requests WHERE project_id=? AND id!=?
+                   AND status IN ('building','releasing','delivering')""", (source['project_id'], control['request_id']),
+            ).fetchone():
+                continue
             if control['action'] == 'rollback' and control['status'] == 'pending' and conn.execute("SELECT 1 FROM delivery_requests WHERE project_id=? AND status NOT IN ('delivered','failed','rejected','cancelled')", (source['project_id'],)).fetchone():
                 continue
             # A single control per runner avoids simultaneous multi-repository rollback writes.

@@ -108,6 +108,21 @@ class TfsPipelineReleaseService:
         from .deployment_links import enrich_result
         return enrich_result(result)
 
+    def retry_deployment(self, project_name: str, *, definition_id: int, build_id: int) -> dict[str, Any]:
+        result = self._delivery_result(self._invoke(
+            project_name, ["--definition-id", str(definition_id), "--build-id", str(build_id), "--deploy-14", "--retry-deployment"],
+            require_pat=True, timeout=settings.tfs_pipeline_timeout_seconds + 90,
+        ))
+        deployment = result.get("deployment14") or {}
+        if (result.get("buildId") != build_id or result.get("definitionId") != definition_id
+                or result.get("result") != "succeeded" or result.get("expectedArtifactFound") is not True
+                or not result.get("artifactsUrl") or deployment.get("eligible") is not True
+                or deployment.get("buildId") != build_id
+                or deployment.get("status") not in {"deployed", "already-current"}):
+            raise TfsPipelineReleaseError("原构建的部署验证尚未通过", result=result)
+        from .deployment_links import enrich_result
+        return enrich_result(result)
+
     def _invoke(
         self,
         project_name: str,
