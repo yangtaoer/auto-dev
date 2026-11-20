@@ -240,6 +240,7 @@ class BrandInterfaceTests(unittest.TestCase):
 
     def test_workflow_workspace_keeps_data_entries_and_stage_navigation(self):
         html = (ROOT / 'app/templates/index.html').read_text('utf-8')
+        self.assertNotIn('id="task-workbench"', html)
         for identifier in ['record-filters', 'recent-table', 'all-table', 'project-detail-content',
                            'experience-metrics', 'request-form', 'model-settings-form', 'users-table']:
             self.assertEqual(html.count(f'id="{identifier}"'), 1)

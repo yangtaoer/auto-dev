@@ -44,35 +44,45 @@ class WorkbenchRecoveryTests(unittest.TestCase):
         self.db.add_event(request_id, "release.failed", "部署失败", metadata=failed_release_metadata(result))
         return request_id, result
 
-    def test_home_includes_assigned_acceptance_and_separates_manual_waiting_from_system_work(self):
+    def test_handoff_routes_assignee_to_acceptance_and_clears_after_pass(self):
         from app.services import project_learning, task_workbench
 
         assigned = self.create(1001, owner=1, status="delivered", acceptance_owner_id=2)
-        private = self.create(1002, owner=3, status="delivered")
-        supplement = self.create(1003, status="waiting_input", current_step="clarify")
-        merge = self.create(1004, status="waiting_merge", current_step="deliver")
-        developing = self.create(1005, status="developing", current_step="develop")
-        online = {"yangtao-pc": True}
-        lanes = task_workbench.load(self.actor, {}, online, str)
-        self.assertEqual([item["id"] for item in lanes["acceptance"]], [assigned])
-        self.assertEqual([item["id"] for item in lanes["supplement"]], [supplement])
-        self.assertEqual([(item["id"], item["label"]) for item in lanes["waiting"]], [(merge, "查看 PR")])
-        self.assertEqual([item["id"] for item in lanes["executing"]], [developing])
-        self.assertNotIn(private, {row["id"] for group in lanes.values() for row in group})
+        record = self.db.request_detail(assigned)
+        pending = project_learning.acceptance_progress(record)
+        handoff = task_workbench.handoff(record, self.actor, acceptance=pending)
+        self.assertEqual((handoff["stage"], handoff["label"]), ("acceptance", "提交验收"))
+        self.assertIsNone(task_workbench.handoff(record, {"id": 3, "role": "pm"}, acceptance=pending))
         project_learning.get_acceptance(assigned)
-        project_learning.submit_feedback(assigned, self.actor, [], overall_status="passed", idempotency_key="workbench-feedback")
-        self.assertEqual(task_workbench.load(self.actor, {}, online, str)["acceptance"], [])
+        project_learning.submit_feedback(assigned, self.actor, [], overall_status="passed", idempotency_key="handoff-feedback")
+        record = self.db.request_detail(assigned)
+        self.assertIsNone(task_workbench.handoff(record, self.actor, acceptance=project_learning.acceptance_progress(record)))
 
-    def test_offline_work_is_in_the_system_queue_and_keeps_the_execution_checkpoint(self):
+    def test_offline_work_shows_the_execution_checkpoint(self):
         from app.services import task_workbench
 
         request_id = self.create(1001, status="developing", current_step="develop")
         heartbeat = "2026-11-20T00:00:00+00:00"
-        lanes = task_workbench.load(self.actor, {"yangtao-pc": {"last_seen_at": heartbeat}}, {}, str)
-        self.assertEqual(lanes["executing"], [])
-        item = lanes["queue"][0]
-        self.assertEqual((item["id"], item["display_status"], item["confirmed_at"]), (request_id, "runner_disconnected", heartbeat))
+        record = self.db.request_detail(request_id)
+        task_workbench.display_state(record, False, heartbeat)
+        action = task_workbench.handoff(record, self.actor)
+        self.assertEqual(record["display_status"], "runner_disconnected")
+        self.assertEqual((action["label"], action["confirmed_at"]), ("查看检查点", heartbeat))
         self.assertEqual(self.db.request_detail(request_id)["status"], "developing")
+
+    def test_overview_counts_only_online_running_tasks(self):
+        from app.main import dashboard
+
+        running = self.create(1001, status="developing", current_step="develop")
+        reviewing = self.create(1002, status="waiting_merge", current_step="deliver")
+        offline = self.create(1003, status="developing", current_step="develop", runner_id="offline")
+        with self.db.transaction() as conn:
+            conn.execute("INSERT INTO runners(runner_id,state,last_seen_at) VALUES('yangtao-pc','running',?)", (self.db.utc_now(),))
+        overview = dashboard(self.actor, compact=True)
+        self.assertNotIn("workbench", overview)
+        self.assertEqual(overview["stats"]["executing"], 1)
+        self.assertEqual({item["id"]: item["executing"] for item in overview["active"]},
+                         {running: True, reviewing: False, offline: False})
 
     def test_recovery_is_idempotent_and_older_runners_cannot_claim_it(self):
         from app.services import stage_recovery, task_controls

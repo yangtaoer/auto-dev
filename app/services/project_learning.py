@@ -10,7 +10,6 @@ import json
 import re
 import sqlite3
 import uuid
-from collections import defaultdict
 from contextlib import closing
 from html.parser import HTMLParser
 from typing import Any
@@ -231,29 +230,6 @@ def _verdict(total: int, passed: int, failed: int, rounds: list[dict]) -> str:
     if rounds and rounds[-1].get("overall_status") == "failed":
         return "changes_requested"
     return "accepted" if total and passed == total else "partial" if passed else "changes_requested" if failed else "pending"
-
-
-def acceptance_workbench_states(request_ids: list[str]) -> dict[str, dict]:
-    """Read only the human feedback necessary for the homepage queues."""
-    states = {}
-    with closing(db.connect()) as conn:
-        for offset in range(0, len(request_ids), 400):
-            batch = request_ids[offset:offset + 400]
-            marks = ",".join("?" for _ in batch)
-            items, rounds = defaultdict(list), defaultdict(list)
-            for row in conn.execute(f"SELECT request_id,item_id FROM acceptance_items WHERE request_id IN ({marks})", batch):
-                items[row["request_id"]].append(row["item_id"])
-            for row in conn.execute(f"""SELECT f.*,x.request_id repair_request_id FROM acceptance_feedback f
-                LEFT JOIN acceptance_repairs x ON x.feedback_id=f.id WHERE f.request_id IN ({marks}) ORDER BY f.id""", batch):
-                rounds[row["request_id"]].append(_round(row))
-            for request_id in batch:
-                history = rounds[request_id]
-                feedback = _current_feedback(history)
-                ids = items[request_id]
-                status = _verdict(len(ids), sum(feedback.get(key, {}).get("status") == "passed" for key in ids),
-                                  sum(feedback.get(key, {}).get("status") == "failed" for key in ids), history)
-                states[request_id] = {"status": status, "repair_request_id": history[-1].get("repair_request_id") if history else None}
-    return states
 
 
 def _acceptance(conn: sqlite3.Connection, request: dict[str, Any]) -> dict[str, Any]:

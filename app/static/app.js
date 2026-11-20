@@ -278,48 +278,6 @@ function deliveryTokenLabels(record){const labels=[];const aliases={sql:'SQL',co
 function releaseDeliveryTokens(target,record){if(orbMotionReduced()||!target?.isConnected)return;const rect=target.getBoundingClientRect(),layer=orbSignalLayer();deliveryTokenLabels(record).forEach((label,index)=>{const token=document.createElement('b');token.className='orb-delivery-token';token.textContent=label;token.style.left=`${rect.left+Math.min(rect.width*.24,106)+index*9}px`;token.style.top=`${rect.top+Math.min(rect.height*.48,42)}px`;layer.appendChild(token);const drift=(index-1)*34;const animation=token.animate([{transform:'translate3d(0,10px,0) scale(.6)',opacity:0},{transform:`translate3d(${drift*.35}px,-28px,0) scale(1)`,opacity:1,offset:.32},{transform:`translate3d(${drift}px,-7px,0) scale(.92)`,opacity:1,offset:.76},{transform:`translate3d(${drift}px,4px,0) scale(.82)`,opacity:0}],{duration:1250+index*90,delay:index*90,easing:'cubic-bezier(.2,.75,.24,1)',fill:'forwards'});animation.onfinish=()=>token.remove()})}
 function collectOrbTransitions(runs){const experience=state.orbExperience,current=new Map();runs.forEach(run=>{const key=activeRunKey(run),status=runVisualStatus(run);current.set(key,{status,record:run});if(!experience.initialized)return;const previous=experience.runs.get(key);const target=document.querySelector(`[data-run-key="${CSS.escape(key)}"]`);if(!previous)experience.pending.push({type:'dispatch',target,record:run});else if(previous.status!==status)experience.pending.push({type:status==='waiting_approval'?'blocked':'progress',target,record:run})});if(experience.initialized)experience.runs.forEach((previous,key)=>{if(current.has(key))return;const record=(state.dashboard.recent||[]).find(item=>activeRunKey(item)===key),status=record?runVisualStatus(record):'';if(status==='delivered')experience.pending.push({type:'success',key,record});else if(['failed','rejected'].includes(status))experience.pending.push({type:'blocked',key,record})});experience.runs=current;experience.initialized=true}
 function flushOrbTransitions(){const experience=state.orbExperience,character=window.sidebarCharacter;if(!character||!experience.pending.length)return;const priority={success:4,blocked:3,dispatch:2,progress:1},event=experience.pending.sort((a,b)=>priority[b.type]-priority[a.type])[0];experience.pending=[];requestAnimationFrame(()=>{const target=event.target?.isConnected?event.target:document.querySelector(`#recent-table [data-run-key="${CSS.escape(event.key||'')}"]`);if(event.type==='success'){character.celebrateOnce(target);launchOrbSignal(target,'success');releaseDeliveryTokens(target,event.record)}else if(event.type==='blocked'){character.alertOnce(target);launchOrbSignal(target,'blocked')}else if(event.type==='dispatch'){character.dispatchOnce(target);launchOrbSignal(target,'dispatch')}else{character.progressOnce(target);launchOrbSignal(target,'progress')}})}
-const WORKBENCH_LANES = {
-  acceptance:['待我验收','没有待你验收的任务'],
-  supplement:['待我补充','没有待你补充的任务'],
-  waiting:['等待他人','没有等待他人处理的任务'],
-  executing:['系统执行中','当前没有正在执行的任务'],
-  queue:['等待系统','当前没有等待系统的任务'],
-  attention:['待处理异常','当前没有待处理的异常'],
-};
-let workbenchLane='', workbenchSignature='';
-
-function renderWorkbench(){
-  const groups=state.dashboard.workbench||{};
-  const keys=Object.keys(WORKBENCH_LANES).filter(key=>key!=='attention'&&key!=='queue'||groups[key]?.length||key===workbenchLane);
-  if(!workbenchLane)workbenchLane=['acceptance','supplement','attention','waiting','executing','queue'].find(key=>groups[key]?.length)||'acceptance';
-  const signature=JSON.stringify([workbenchLane,groups]);
-  if(signature===workbenchSignature)return;
-  workbenchSignature=signature;
-  const host=document.querySelector('#task-workbench'), focus=document.activeElement;
-  const focusKey=host.contains(focus)&&{lane:focus.dataset.workbenchLane,id:focus.dataset.workbenchTask};
-  const visible=groups[workbenchLane]||[];
-  host.querySelector('#workbench-summary').textContent=`共 ${Object.values(groups).reduce((sum,list)=>sum+list.length,0)} 项`;
-  host.querySelector('#workbench-filters').innerHTML=keys.map(key=>
-    `<button class="workbench-filter" type="button" data-workbench-lane="${key}" aria-pressed="${key===workbenchLane}">${WORKBENCH_LANES[key][0]}<b>${groups[key]?.length||0}</b></button>`).join('');
-  host.querySelector('#workbench-list').innerHTML=visible.length?visible.map(item=>
-    `<li class="workbench-row"><div class="workbench-task"><small>#${escapeHtml(item.work_item_id)} · ${escapeHtml(item.project_name||'')}</small><b>${escapeHtml(item.title||'读取需求中')}</b></div>
-      <div class="workbench-state"><span class="status-dot" data-status="${escapeHtml(item.display_status)}">${escapeHtml(item.status_label)}</span><span>${escapeHtml(item.actor)} · ${item.confirmed_at?fmt(item.confirmed_at):'待确认'}</span></div>
-      <button type="button" class="btn ${['acceptance','supplement'].includes(workbenchLane)?'btn-primary':'btn-secondary'}" data-workbench-task="${escapeHtml(item.id)}">${escapeHtml(item.label)} ${editorialIcon('arrow-right')}</button></li>`).join('')
-    :`<li class="workbench-empty">${WORKBENCH_LANES[workbenchLane][1]}</li>`;
-  if(focusKey?.lane)host.querySelector(`[data-workbench-lane="${CSS.escape(focusKey.lane)}"]`)?.focus({preventScroll:true});
-  if(focusKey?.id)(host.querySelector(`[data-workbench-task="${CSS.escape(focusKey.id)}"]`)||host.querySelector('[aria-pressed="true"]'))?.focus({preventScroll:true});
-}
-
-document.querySelector('#task-workbench')?.addEventListener('click',event=>{
-  const lane=event.target.closest('[data-workbench-lane]')?.dataset.workbenchLane;
-  if(lane){workbenchLane=lane;renderWorkbench();return;}
-  const id=event.target.closest('[data-workbench-task]')?.dataset.workbenchTask;
-  const item=(state.dashboard.workbench?.[workbenchLane]||[]).find(record=>record.id===id);
-  if(!item)return;
-  if(item.record_type==='intake')openRoutingDetail(item.id,item.work_item_id,item.display_status,item.task_type);
-  else openDetail(item.id,item.stage,item.lane==='supplement');
-});
-
 function renderDashboard(){
   if(document.body.dataset.view&&document.body.dataset.view!=='dashboard'){
     document.body.classList.toggle('has-active-runs',state.dashboard.active.length>0);
@@ -327,15 +285,13 @@ function renderDashboard(){
   }
   const c=state.dashboard.counts;
   const delivered=c.delivered||0, waiting=c.waiting_merge||0, failed=c.failed||0;
-  const active=state.dashboard.workbench?.executing?.length||0;
   const stats=state.dashboard.stats||{};
+  const active=stats.executing||0;
   const metricData=USER.role==='admin'?[['当日任务',stats.today_total||0,'accent'],['任务总量',stats.total||0,''],['成功交付',stats.success||0,''],['失败 / 驳回',stats.failed||0,'danger'],['系统执行中',active,'accent'],['待补充',stats.waiting_input||0,'attention'],['等待合并',stats.waiting_merge||0,'warn']]:[['系统执行中',active,'accent'],['等待合并',waiting,'warn'],['已交付',delivered,''],['需要关注',failed+(c.waiting_approval||0)+(c.waiting_input||0),'attention']];
   const metrics=document.querySelector('#metrics');metrics.classList.toggle('admin-metrics',USER.role==='admin');metrics.innerHTML=metricData.map(([l,v,k])=>`<div class="metric ${k} ${l==='运行中'&&Number(v)>0?'live':''}"><span>${l}</span><div class="metric-value"><b>${String(v).padStart(2,'0')}</b><small>个</small></div></div>`).join('');
   renderDevCoreQuota();
-  renderWorkbench();
   const activeEl=document.querySelector('#active-runs'),activePipeline=document.querySelector('#active-pipeline');
-  const executingIds=new Set((state.dashboard.workbench?.executing||[]).map(item=>item.id));
-  const executing=state.dashboard.active.filter(item=>executingIds.has(item.id));
+  const executing=state.dashboard.active.filter(item=>item.executing);
   activePipeline.hidden=executing.length===0;
   renderActiveRuns(activeEl,executing);
   const capacity=state.dashboard.capacity||{limit:5,active:0,queued:0};
@@ -612,13 +568,12 @@ async function openRoutingDetail(intakeId,workItemId,initialStatus='routing',tas
     document.querySelector('#retry-new-run')?.addEventListener('click',()=>{closeDetail();openRequestModal(taskType)});
   }
 }
-async function openDetail(id,stage=null,focusSupplement=false){
+async function openDetail(id,stage=null){
   window.ProjectLearning?.willOpenRequest(id);state.routingGeneration+=1;state.selectedIntake=null;state.selectedRequest=id;state.selectedTerminal=false;
   showDetailDrawer();
   await refreshDetail(id);
   if(state.selectedRequest===id&&stage){
     TaskDialog.select(stage,true);
-    if(focusSupplement)document.querySelector('#supplement-form textarea')?.focus();
   }
 }
 async function refreshDetail(id,silent=false){

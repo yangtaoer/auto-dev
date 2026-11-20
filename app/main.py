@@ -79,7 +79,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.34",
+    version="1.0-Beta.35",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -955,7 +955,8 @@ def dashboard(user: Annotated[dict, Depends(current_user)], compact: bool = Fals
     online_by_runner = {runner["runner_id"]: runner_record_online(runner, now=now) for runner in runners}
     scope = "" if user["role"] == "admin" else "WHERE requester_id=?"
     params = () if user["role"] == "admin" else (user["id"],)
-    counts = rows(f"SELECT status,COUNT(*) count FROM visible_delivery_requests {scope} GROUP BY status", params)
+    counts = rows(f"""SELECT status,runner_id,COUNT(*) count FROM visible_delivery_requests
+        {scope} GROUP BY status,runner_id""", params)
     active_sql = "status NOT IN ('delivered','failed','rejected','cancelled','waiting_input')"
     active_scope = active_sql if not scope else f"requester_id=? AND {active_sql}"
     activity_select = """(SELECT e.message FROM delivery_events e
@@ -1013,6 +1014,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)], compact: bool = Fals
                 "task_type": intake.get("task_type", TaskType.DEVELOPMENT.value),
                 "status": display_status,
                 "runner_online": online,
+                "executing": online and intake["status"] == "claimed",
                 "delivery_options": intake.get("delivery_options") or list(DEFAULT_DELIVERY_OPTIONS),
                 "current_activity": (
                     activity.replace("任务", "分析任务", 1)
@@ -1077,6 +1079,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)], compact: bool = Fals
     for item in (*active_requests, *recent_requests):
         runner_id = item["runner_id"]
         add_runner_display_state(item, online_by_runner.get(runner_id, False), runners_by_id.get(runner_id, {}).get("last_seen_at"))
+        item["executing"] = item["display_status"] in task_workbench.EXECUTING
         item.pop("codex_thread_id", None)
         item.pop("analysis_result", None)
         item["current_activity"] = public_engine_text(item.get("current_activity"))
@@ -1174,38 +1177,28 @@ def dashboard(user: Annotated[dict, Depends(current_user)], compact: bool = Fals
     stats["today_total"] += pending_today + intake_failed_today
     stats["failed"] += intake_failed_total
     stats["running"] += pending_total
-    request_counts = {item["status"]: item["count"] for item in counts}
+    stats["executing"] = sum(
+        item["count"] for item in counts
+        if item["status"] in task_workbench.EXECUTING and online_by_runner.get(item["runner_id"], False)
+    ) + sum(item["executing"] for item in intake_items)
+    request_counts: dict[str, int] = {}
+    for item in counts:
+        status = item["status"]
+        request_counts[status] = request_counts.get(status, 0) + item["count"]
     waiting_runner_total = sum(1 for item in intake_items if item["status"] == "waiting_runner")
-    queued_scope = "" if user["role"] == "admin" else "AND requester_id=?"
-    queued_params: tuple[Any, ...] = () if user["role"] == "admin" else (user["id"],)
     offline_queued_total = sum(
-        1
-        for item in rows(
-            f"SELECT runner_id FROM visible_delivery_requests WHERE status='queued' {queued_scope}",
-            queued_params,
-        )
-        if not online_by_runner.get(item["runner_id"], False)
+        item["count"] for item in counts if item["status"] == "queued" and not online_by_runner.get(item["runner_id"], False)
     )
     request_counts["routing"] = max(0, pending_total - waiting_runner_total)
     request_counts["queued"] = max(0, int(request_counts.get("queued") or 0) - offline_queued_total)
     request_counts["waiting_runner"] = waiting_runner_total + offline_queued_total
     request_counts["failed"] = int(request_counts.get("failed") or 0) + intake_failed_total
-    workbench = task_workbench.load(user, runners_by_id, online_by_runner, public_engine_text)
-    for item, intake in zip(intake_items, pending_intakes):
-        lane = "executing" if item["runner_online"] and intake["status"] == "claimed" else "queue"
-        workbench[lane].append({
-            "id": item["id"], "record_type": "intake", "work_item_id": item["work_item_id"],
-            "task_type": item["task_type"], "title": item["title"], "project_name": item["project_name"],
-            "display_status": item["status"], "status_label": "识别需求中" if lane == "executing" else "等待识别需求",
-            "actor": "执行器", "label": "查看识别", "confirmed_at": item["updated_at"],
-        })
     return {
         "counts": request_counts,
         "active": active,
         "recent": recent,
         "runners": runners,
         "stats": stats,
-        "workbench": workbench,
         "capacity": {
             "limit": settings.runner_max_concurrency,
             "active": capacity_active,

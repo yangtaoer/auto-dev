@@ -210,41 +210,11 @@
 }
 .workflow-next-action > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 9px; }
 .workflow-next-action span { color: var(--skin-muted); font-size: 12px; }
-.workflow-next-action .btn svg, .workbench-row .btn svg { width: 12px; height: 12px; }
+.workflow-next-action .btn svg { width: 12px; height: 12px; }
 .status-dot[data-status="runner_disconnected"], .status-dot[data-status="waiting_stage_recovery"] {
   color: var(--skin-warning); background: var(--skin-warning-soft, var(--skin-surface-alt));
 }
 
-.task-workbench {
-  padding: 13px 16px; margin-bottom: 14px; min-width: 0;
-  border: 1px solid var(--skin-card-border, var(--skin-line)); border-radius: var(--skin-card-radius, 10px);
-  background: var(--skin-card-bg, var(--skin-surface)); color: var(--skin-card-ink, var(--skin-ink));
-}
-.workbench-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
-.workbench-heading h2 { margin: 0; font-size: 20px; }
-.workbench-heading > span, .workbench-empty { color: var(--skin-muted); font-size: 13px; }
-.workbench-filters { display: flex; flex-wrap: wrap; gap: 5px; margin-block: 10px 8px; }
-.workbench-filter {
-  display: flex; align-items: center; gap: 7px; padding: 5px 9px; color: inherit; font: inherit; font-size: 13px;
-  border: 1px solid var(--skin-line); border-radius: var(--skin-field-radius, 7px);
-  background: transparent; cursor: pointer;
-}
-.workbench-filter[aria-pressed="true"], .workbench-filter:hover { border-color: var(--skin-accent); background: var(--skin-surface-alt); }
-.workbench-filter[aria-pressed="true"] { font-weight: 700; }
-.workbench-filter b { font-variant-numeric: tabular-nums; color: var(--skin-muted); font-size: 12px; }
-.workbench-list {
-  list-style: none; padding: 0 3px 0 0; margin: 0; max-height: 300px;
-  overflow: auto; scrollbar-width: thin; overscroll-behavior: contain;
-}
-.workbench-row {
-  display: grid; grid-template-columns: minmax(0,1fr) minmax(174px,24%) auto; align-items: center;
-  gap: 8px 16px; padding: 8px 3px; border-top: 1px solid var(--skin-line);
-}
-.workbench-task { min-width: 0; display: grid; gap: 2px; }
-.workbench-task small, .workbench-state > span:last-child { color: var(--skin-muted); font-size: 12px; }
-.workbench-task b { font-size: 14px; overflow-wrap: anywhere; }
-.workbench-state { display: grid; justify-items: start; gap: 3px; }
-.workbench-empty { padding: 9px 3px 3px; }
 .workflow-receipt, .workflow-repo-line, .workflow-link { background: var(--skin-surface-alt); border: 1px solid var(--skin-line); border-radius: var(--skin-field-radius, 7px); padding: 9px 12px; margin-bottom: 8px; }
 .workflow-receipt { display: flex; gap: 7px 16px; flex-wrap: wrap; align-items: center; }
 .workflow-receipt p { margin: 0; }

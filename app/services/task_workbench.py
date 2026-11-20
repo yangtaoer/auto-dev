@@ -1,15 +1,10 @@
-"""Role-scoped work queues and a shared display status for task surfaces."""
+"""Shared status presentation and the next action for a task."""
 from __future__ import annotations
 
-from collections.abc import Callable
-
-from ..db import rows
 from ..domain import status_label
-from .project_learning import acceptance_workbench_states
 
 
 EXECUTING = {"validating", "developing", "submitting", "building", "releasing", "capturing", "delivering", "routing"}
-RECOVERY_ACTIONS = {"retry_deployment", "retry_delivery_sync"}
 STATUS_LABELS = {
     "waiting_runner": "等待执行器上线",
     "runner_disconnected": "执行器离线，待核对",
@@ -35,7 +30,7 @@ def display_state(item: dict, online: bool, last_seen: str | None) -> None:
 
 
 def handoff(item: dict, user: dict, *, acceptance: dict | None = None, recovery: dict | None = None) -> dict | None:
-    """Describe the current actor and action on both the homepage and the task."""
+    """Describe the current actor and action on a task."""
     actual = item["status"]
     shown = item.get("display_status") or actual
     mine = item.get("requester_id") == user["id"]
@@ -80,41 +75,3 @@ def handoff(item: dict, user: dict, *, acceptance: dict | None = None, recovery:
     if actual not in {"cancelled", "rejected"}:
         return assignment("queue", "执行器", "查看进度")
     return None
-
-
-def load(user: dict, runners: dict, online_by_runner: dict, clean: Callable[[str], str]) -> dict:
-    requests = rows(
-        """SELECT r.id,r.work_item_id,r.title,r.status,r.task_type,r.delivery_mode,r.current_step,
-                  r.requester_id,r.acceptance_owner_id,r.runner_id,r.updated_at,r.error_message,
-                  p.name project_name,u.display_name requester_name,a.display_name acceptance_owner_name,
-                  i.status joint_status
-           FROM visible_delivery_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.requester_id
-           LEFT JOIN users a ON a.id=r.acceptance_owner_id LEFT JOIN request_intakes i ON i.id=r.joint_group_id
-           WHERE (
-               (r.status='delivered' AND (r.requester_id=? OR r.acceptance_owner_id=?)
-                AND NOT EXISTS (SELECT 1 FROM request_controls c WHERE c.request_id=r.id AND c.action='rollback'
-                                AND c.status IN ('pending','running','waiting_merge','completed'))
-                AND NOT EXISTS (SELECT 1 FROM visible_delivery_requests n WHERE n.project_id=r.project_id
-                    AND n.work_item_id=r.work_item_id AND n.task_type=r.task_type AND n.status='delivered'
-                    AND n.created_at>r.created_at))
-               OR (r.status NOT IN ('delivered','cancelled','rejected') AND (? OR r.requester_id=?)
-                   AND (r.status!='failed' OR NOT EXISTS (SELECT 1 FROM visible_delivery_requests n
-                       WHERE n.project_id=r.project_id AND n.work_item_id=r.work_item_id AND n.task_type=r.task_type
-                       AND n.created_at>r.created_at)))
-           ) ORDER BY r.updated_at DESC,r.id DESC""",
-        (user["id"], user["id"], user["role"] == "admin", user["id"]),
-    )
-    verdicts = acceptance_workbench_states([item["id"] for item in requests if item["status"] == "delivered"])
-    lanes = {name: [] for name in ("acceptance", "supplement", "waiting", "executing", "queue", "attention")}
-    for item in requests:
-        runner_id = item["runner_id"]
-        display_state(item, online_by_runner.get(runner_id, False), runners.get(runner_id, {}).get("last_seen_at"))
-        action = handoff(item, user, acceptance=verdicts.get(item["id"]))
-        if not action:
-            continue
-        lanes[action["lane"]].append({
-            "id": item["id"], "work_item_id": item["work_item_id"], "title": clean(item["title"] or "") or "",
-            "project_name": item["project_name"], "display_status": item["display_status"], "status_label": item["status_label"],
-            **action,
-        })
-    return lanes
