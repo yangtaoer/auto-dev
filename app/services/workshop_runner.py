@@ -1,8 +1,6 @@
 """Run native Codex imagegen jobs; no API fallback, placeholder art, or source release."""
 from __future__ import annotations
-import base64
 import json
-import os
 import threading
 import time
 from datetime import UTC, datetime, timedelta
@@ -10,9 +8,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from app.config import ROOT,settings
-from .codex_runtime import resolve_codex_runtime
-from .codex_runner import CodexRunner
-from .process_env import sanitized_process_env
+from .native_imagegen import generate_native_images
 from .theme_workshop import COLOR_KEYS,SCENE_KEYS,validate_palette
 from .workshop_recovery import Failure, WorkshopGenerationError, generate_with_recovery, MAX_ATTEMPTS
 from .workshop_theme import COMPONENT_CHOICES,validate_components,COVERAGE,component_tokens
@@ -39,9 +35,6 @@ class WorkshopImagegen:
             raise failure from None
 
     def _generate(self, job, cwd, images, *, progress, cancelled, state):
-        from openai_codex import Codex,CodexConfig,ApprovalMode,Sandbox,TextInput,LocalImageInput,SkillInput
-        from openai_codex.generated.v2_all import ModelProviderCapabilitiesReadResponse
-        from .task_cancellation import interrupt_on_cancel
         stage=job['kind'];base=job['base_theme'];execution=job['model_config']
         palette_schema={'type':'object','properties':{key:{'type':'string','pattern':'^#[0-9a-fA-F]{6}$'} for key in sorted(COLOR_KEYS|SCENE_KEYS)},'required':sorted(COLOR_KEYS|SCENE_KEYS),'additionalProperties':False}
         component_schema={'type':'object','properties':{key:{'type':'string','enum':list(values)} for key,values in COMPONENT_CHOICES.items()},'required':list(COMPONENT_CHOICES),'additionalProperties':False}
@@ -64,51 +57,15 @@ class WorkshopImagegen:
             + '\n效果图中所有真实组件必须与最终 palette 和 components 一致；不能图中红色按钮而数据仍为橙色。palette包含独立的按钮文字/背景/边框、表单背景/文字/边框/焦点、卡片背景/边框、菜单与图标颜色。components填写按钮/表单/卡片形状、材质、图标风格与装饰、字体。不得输出CSS、脚本或外部图标。'
             + '\n最终回复按schema给出简体中文 Markdown answer（按上述六项逐项说明实际适配、变化、下一步）、palette（只允许#RRGGBB颜色；文字对比度至少4.5:1）以及 components。保存路径由工具负责，不把base64或本机路径写进answer。'
         )
-        runtime=resolve_codex_runtime(model=execution['model']);outputs=state['outputs'];calls=state['calls'];final=None;success=False;thread_id=''
-        with Codex(CodexConfig(codex_bin=runtime['path'],cwd=str(cwd),env=sanitized_process_env(),
-                              config_overrides=('mcp_servers={}','features.image_generation=true'))) as codex:
-            caps=codex._client.request('modelProvider/capabilities/read',{},response_model=ModelProviderCapabilitiesReadResponse)
-            if not caps.image_generation:raise RuntimeError('当前执行器的原生 imagegen 不可用；未切换其他图片服务，请管理员检查账户/运行器。')
-            thread=codex.thread_start(cwd=str(cwd),model=execution['model'],sandbox=Sandbox.workspace_write,
-                service_tier=execution.get('service_tier'),
-                approval_mode=ApprovalMode.deny_all,service_name='autodev-creative-workshop',
-                developer_instructions='仅调用原生图像生成工具设计此作品。不得使用shell、apply_patch、数据库、网络CLI、凭证、API图片服务或任何代码提交/发布工具。至少成功生成所要求的图片后才可宣告完成。')
-            thread_id=thread.id;state['thread_id']=thread_id;progress('设计对话已启动；正在调用原生 imagegen',thread_id)
-            inputs=[TextInput(prompt)]+[LocalImageInput(str(image)) for image in images]
-            codex_home=Path(os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))
-            skill=codex_home/'skills/.system/imagegen/SKILL.md'
-            if skill.is_file():inputs.insert(0,SkillInput(name='imagegen',path=str(skill)))
-            handle=thread.turn(inputs,model=execution['model'],effort=execution['effort'],
-                               service_tier=execution.get('service_tier'),output_schema=schema)
-            with interrupt_on_cancel(handle,cancelled):
-                for notification in handle.stream():
-                    method=notification.method;params=CodexRunner._dump(notification.payload)
-                    if method in {'item/started','item/completed'} and (params.get('item') or {}).get('type')=='imageGeneration':
-                        state['image_requested']=True
-                    if method=='item/completed':
-                        item=params.get('item') or {}
-                        if item.get('type')=='imageGeneration' and item.get('status')=='completed':
-                            calls.append({'id':item.get('id'),'revised_prompt':str(item.get('revisedPrompt') or '')[:12000]})
-                            path=item.get('savedPath');raw=item.get('result','')
-                            if path:
-                                candidate=Path(path).resolve();allowed=[cwd.resolve(),(codex_home/'generated_images').resolve()]
-                                if not any(root in candidate.parents for root in allowed):raise RuntimeError('imagegen 返回了生成目录之外的路径，拒绝读取')
-                                outputs.append(candidate.read_bytes())
-                            elif raw:
-                                outputs.append(base64.b64decode(raw.split(',',1)[-1],validate=True))
-                            progress(f'imagegen 已生成 {len(outputs)} 张图片',thread_id)
-                        if item.get('type')=='agentMessage' and item.get('phase')!='commentary':final=item.get('text')
-                    if method=='error' and not params.get('willRetry'):
-                        raise WorkshopGenerationError(params.get('error') or params,thread_id=thread_id,
-                            images=outputs,calls=calls,image_requested=state['image_requested'])
-                    if method=='turn/completed':
-                        turn=params.get('turn') or {};success=turn.get('status')=='completed'
-                        if not success:raise WorkshopGenerationError(turn.get('error') or {'message':'图像生成被中断'},
-                            thread_id=thread_id,images=outputs,calls=calls,image_requested=state['image_requested'])
-        required=1 if stage=='design' else 2
-        if not success or len(outputs)<required or not final:raise RuntimeError(f'未收到 {required} 张原生 imagegen 成功结果；记录保留，可再次修改或重试')
-        result=json.loads(final);validate_palette(result.get('palette',{}));components=validate_components(result.get('components',{}))
-        return {'answer':result['answer'],'palette':result['palette'],'components':components,'images':outputs[-required:],'thread_id':thread_id,'imagegen_verified':True,'imagegen_calls':calls}
+        result = generate_native_images(
+            cwd=cwd, prompt=prompt, execution=execution, schema=schema, required=1 if stage == 'design' else 2,
+            progress=progress, cancelled=cancelled, state=state, references=images,
+            service_name='autodev-creative-workshop',
+            developer_instructions='仅调用原生图像生成工具设计此作品。不得使用 shell、apply_patch、数据库、网络 CLI、凭证、API 图片服务或代码提交发布工具。',
+        )
+        validate_palette(result.get('palette',{}))
+        result['components']=validate_components(result.get('components',{}))
+        return result
 
 
 class WorkshopProcessor:

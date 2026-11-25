@@ -24,6 +24,22 @@ logger = logging.getLogger("autodev.remote_store")
 
 
 class LocalStore:
+    def claim_diagram(self):
+        from .services import business_logic_diagrams
+        return business_logic_diagrams.claim(settings.runner_id)
+
+    def update_diagram(self, job, **fields):
+        from .services import business_logic_diagrams
+        return business_logic_diagrams.generation_update(job["request_id"], settings.runner_id, job["claim_token"], **fields)
+
+    def complete_diagram(self, job, explanation, raw):
+        from .services import business_logic_diagrams
+        return business_logic_diagrams.complete(job["request_id"], settings.runner_id, job["claim_token"], explanation, raw)
+
+    def send_diagram_mail(self, job):
+        from .services import business_logic_diagrams
+        return business_logic_diagrams.send_claimed(job["request_id"], settings.runner_id, job["claim_token"])
+
     @staticmethod
     def record_verified_release(request_id: str, result: dict) -> dict:
         from .services.verified_release import record
@@ -162,6 +178,24 @@ class LocalStore:
 
 class RemoteStore:
     """Cloud control-plane adapter used by the outbound-only Windows runner."""
+    def claim_diagram(self):
+        response = self._request("POST", "/api/runner/business-logic-diagrams/claim", json={"runner_id": self.runner_id})
+        return None if response.status_code == 404 else self._json(response).get("job")
+
+    def update_diagram(self, job, **fields):
+        return self._json(self._request("PATCH", f'/api/runner/business-logic-diagrams/{job["request_id"]}', json={
+            "runner_id": self.runner_id, "claim_token": job["claim_token"], **fields,
+        }))
+
+    def complete_diagram(self, job, explanation, raw):
+        return self._json(self._request("POST", f'/api/runner/business-logic-diagrams/{job["request_id"]}/complete',
+            data={"runner_id": self.runner_id, "claim_token": job["claim_token"], "explanation": explanation},
+            files={"file": ("business-logic.png", raw, "image/png")}, timeout=httpx.Timeout(90, connect=15)))
+
+    def send_diagram_mail(self, job):
+        return self._json(self._request("POST", f'/api/runner/business-logic-diagrams/{job["request_id"]}/notify',
+            json={"runner_id": self.runner_id, "claim_token": job["claim_token"]}))
+
     def record_verified_release(self, request_id: str, result: dict) -> dict:
         return self._json(self._request("POST", f"/api/runner/requests/{request_id}/verified-release", json={"result": result}))
 

@@ -171,6 +171,12 @@ class Worker:
             self.workshop_active_count+=1
         claim=getattr(self.store,'workshop_claim',None)
         try:
+            claim_diagram = getattr(self.store, "claim_diagram", None)
+            diagram = claim_diagram() if callable(claim_diagram) else None
+            if isinstance(diagram, dict):
+                from .services.business_logic_runner import process_diagram
+                process_diagram(self.store, diagram, self.stop_event)
+                return True
             job=claim() if callable(claim) else None
             if not isinstance(job,dict):return False
             from .services.workshop_runner import WorkshopProcessor
@@ -316,6 +322,8 @@ class Worker:
         self._check_cancelled(request_id)
         project = enforce_artifact_policy(detail["policy_snapshot"])
         if recovery["action"] == stage_recovery.SYNC:
+            self.artifacts.consolidate_sql(request_id, detail)
+            detail = self.store.detail(request_id)
             blockers = self.artifacts.validate_artifact_policy(request_id, project)
             if blockers:
                 raise RuntimeError("交付物复核未通过：" + "；".join(blockers))
@@ -2268,6 +2276,7 @@ class Worker:
         blockers = self.artifacts.delivery_file_blockers(refreshed.get("artifacts") or [])
         if blockers:
             raise RuntimeError("交付文件复核未通过：" + "；".join(blockers))
+        self.artifacts.consolidate_sql(request_id, refreshed)
 
     def _validate_delivery_plan(self, request_id: str, detail: dict, project: dict) -> None:
         if detail.get("task_type") == TaskType.ANALYSIS.value:

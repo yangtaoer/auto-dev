@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 
 CHANGED_ASSET_KINDS = frozenset({"sql", "config", "rollback_note"})
-BUSINESS_ARTIFACT_KINDS = CHANGED_ASSET_KINDS | {"package", "release_artifact"}
+BUSINESS_ARTIFACT_KINDS = CHANGED_ASSET_KINDS | {"package", "release_artifact", "business_logic_diagram"}
 PACKAGE_EXTENSIONS = frozenset({".zip", ".jar", ".war", ".tar", ".gz", ".tgz", ".7z", ".exe", ".msi", ".apk", ".aab", ".deb", ".rpm"})
 SQL_PATTERNS = ["*.sql", "**/*.sql"]
 CONFIG_PATTERNS = [
@@ -20,6 +20,7 @@ CONFIG_PATTERNS = [
 DELIVERY_CONTRACT_INSTRUCTIONS = """
 全平台研发交付只包含业务系统包（或成功流水线的业务包产物链接）、SQL 脚本、必要部署配置和适用的旧数据回退说明。截图、普通说明报告、菜单链接、校验 JSON、测试程序不作为独立研发交付物。
 所有项目的正向和回退交付脚本一律禁止创建、修改、删除或调用存储过程，禁止用匿名过程块或动态执行包装部署 SQL。业务建表、改表、索引、初始化和可用直接 SQL 完成的存量数据迁移或修复，必须先保存为本需求仓库中的可执行 .sql 文件再执行。补齐顺序、适用 Schema、前置条件和重复执行保护。回退可用直接 SQL 时单独交付回退 SQL。临时测试造数与清理不得混入正式脚本。
+按实际交付基线整理 SQL，尽量使用一个脚本。仓库中确有多份脚本时逐项声明用途和执行顺序，平台会合为一个交付文件并保留各段。需要选择安装、升级或回退路径时，写清每段适用条件。
 旧数据无法安全使用直接 SQL 处理或回退时，将原因、影响范围、备份或恢复来源、人工回退步骤和验证方式写入独立 .txt 或 .md 文件，并按 rollback_note 交付。在 database_changes 使用 manual_rollback，script_paths 指向说明文件，evidence 说明无法使用直接 SQL 的原因。能够用 SQL 完成的正向变更仍交付 SQL；说明不能替代已经执行的业务写入脚本。
 运行配置新增/变更必须交付对应配置文件或可合并配置模板，写明配置项、目标文件、用途和占位符；不得包含真实密码、令牌、私钥或本机连接凭据。不要将 pom.xml、Mapper XML、TBP view.xml 等源码伪装成配置产物。配置删除也要提供明确的可应用配置模板。
 最终 delivery_assets 逐项填写 repository（当前仓库名）、path（仓库相对路径）、kind（sql/config/rollback_note）、purpose。交付文件必须保存在实际隔离仓库并纳入本次代码变更，不能只放 /tmp、被忽略的目录或测试目录；sql_changes/config_changes 同步列出对应路径，无变更则 []。database_changes 记录业务变更、临时验证和人工回退的交付路径及证据；业务脚本不得被标为临时验证以跳过交付。

@@ -1,13 +1,14 @@
 """Validate raster bytes, strip metadata and bound memory/decoding cost."""
 from __future__ import annotations
 from io import BytesIO
+from typing import Literal
 import warnings
 import threading
 
 _decoders=threading.BoundedSemaphore(2)
 
 
-def normalize_image(raw: bytes, *, reference=False) -> tuple[bytes,str,int,int]:
+def normalize_image(raw: bytes, *, reference=False, output_format: Literal["WEBP", "PNG"] = "WEBP") -> tuple[bytes,str,int,int]:
     from PIL import Image, ImageOps, UnidentifiedImageError
     try:
         with _decoders,warnings.catch_warnings():
@@ -20,8 +21,13 @@ def normalize_image(raw: bytes, *, reference=False) -> tuple[bytes,str,int,int]:
                 image.load();ImageOps.exif_transpose(image,in_place=True)
                 image.thumbnail(bounds,Image.Resampling.LANCZOS)
                 normalized=image.convert('RGB')
-                output=BytesIO();normalized.save(output,'WEBP',quality=92,method=6)
-                result=(output.getvalue(),'image/webp',normalized.width,normalized.height)
+                normalized.info.clear()
+                output=BytesIO()
+                if output_format == "PNG":
+                    normalized.save(output, "PNG")
+                else:
+                    normalized.save(output, "WEBP", quality=92, method=6)
+                result=(output.getvalue(),f'image/{output_format.lower()}',normalized.width,normalized.height)
                 normalized.close();return result
     except (UnidentifiedImageError,OSError,Image.DecompressionBombError,Image.DecompressionBombWarning) as exc:
         raise ValueError('无法读取这张图片，请上传有效的 PNG/JPEG/WebP') from exc

@@ -361,6 +361,23 @@ CREATE TABLE IF NOT EXISTS request_followups (
 CREATE INDEX IF NOT EXISTS ix_followups_request ON request_followups(request_id,created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_followups_active ON request_followups(request_id)
     WHERE status IN ('queued','running');
+CREATE TABLE IF NOT EXISTS business_logic_diagrams (
+    request_id TEXT PRIMARY KEY REFERENCES delivery_requests(id) ON DELETE CASCADE,
+    actor_id INTEGER NOT NULL REFERENCES users(id),
+    runner_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','running','completed','failed')),
+    claim_token TEXT NOT NULL DEFAULT '',
+    progress TEXT NOT NULL DEFAULT '',
+    explanation TEXT NOT NULL DEFAULT '',
+    artifact_id INTEGER REFERENCES delivery_artifacts(id) ON DELETE SET NULL,
+    error_message TEXT NOT NULL DEFAULT '',
+    mail_status TEXT NOT NULL DEFAULT '' CHECK(mail_status IN ('','queued','claimed','sending','sent','failed','uncertain')),
+    mail_token TEXT NOT NULL DEFAULT '',
+    mail_error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_business_logic_runner ON business_logic_diagrams(runner_id,status,mail_status,created_at);
 CREATE TABLE IF NOT EXISTS release_batches (
     id TEXT PRIMARY KEY, scope TEXT NOT NULL, project_id INTEGER NOT NULL,
     owner_id TEXT NOT NULL REFERENCES delivery_requests(id),
@@ -943,6 +960,8 @@ def _step_duration_seconds(step: dict[str, Any], current_time: datetime) -> int 
 
 
 def add_artifact(request_id: str, kind: str, name: str, local_path: str = "", external_url: str = "") -> int:
+    from .services.delivery_sql import JOINT_SQL_BUNDLE_NAME, SQL_BUNDLE_NAME
+
     size = 0
     if local_path:
         try:
@@ -950,6 +969,14 @@ def add_artifact(request_id: str, kind: str, name: str, local_path: str = "", ex
         except OSError:
             pass
     with transaction() as conn:
+        if (kind, name) in {("sql", SQL_BUNDLE_NAME), ("joint_sql", JOINT_SQL_BUNDLE_NAME)}:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT id FROM delivery_artifacts WHERE request_id=? AND kind=? AND name=? ORDER BY id LIMIT 1",
+                (request_id, kind, name),
+            ).fetchone()
+            if existing:
+                return int(existing["id"])
         cursor = conn.execute(
             """INSERT INTO delivery_artifacts(request_id,kind,name,local_path,external_url,size_bytes,created_at)
                VALUES(?,?,?,?,?,?,?)""",

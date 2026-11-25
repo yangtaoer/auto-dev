@@ -66,10 +66,10 @@ from .services.artifact_content import (
 )
 from .services.artifact_contract import changed_asset_kind
 from .services.delivery import ArtifactService, Mailer
-from .services.delivery_sql import delivery_script_problem
+from .services.delivery_sql import JOINT_SQL_BUNDLE_NAME, delivery_script_problem, prefer_consolidated_sql
 from .services.blocker_summary import summarize_blocker
 from .services.tfs import TfsClient, recoverable_preflight_failure
-from .services import project_learning, model_settings, release_coordination, stage_recovery, task_controls, task_workbench, request_followups, ui_preferences, ui_media
+from .services import business_logic_diagrams, project_learning, model_settings, release_coordination, stage_recovery, task_controls, task_workbench, request_followups, ui_preferences, ui_media
 
 
 @asynccontextmanager
@@ -85,7 +85,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.36",
+    version="1.0-Beta.37",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -485,7 +485,8 @@ def public_request_payload(detail: dict[str, Any]) -> dict[str, Any]:
         result['deployment_services']=services_for_request(detail)
     result["can_continue_in_place"] = recoverable_preflight_failure(detail)
     result.pop("codex_thread_id", None)
-    result["artifacts"] = [public_artifact(item) for item in detail.get("artifacts", [])]
+    result["artifacts"] = [public_artifact(item) for item in prefer_consolidated_sql(detail.get("artifacts") or [])
+                           if item.get("kind") != "joint_sql"]
     for key in ("title", "requirement_summary", "result_summary", "error_message"):
         result[key] = public_engine_text(result.get(key))
     result["supplement_requests"] = [
@@ -708,6 +709,10 @@ def joint_request_detail(joint_group_id: str) -> dict[str, Any]:
             for value in str(child.get("policy_snapshot", {}).get("notification_cc") or "").split(",")
             if value.strip()
         )
+    joint_sql = next((item for item in children[0].get("artifacts", [])
+                      if item["kind"] == "joint_sql" and item["name"] == JOINT_SQL_BUNDLE_NAME), None)
+    if joint_sql:
+        artifacts = prefer_consolidated_sql([*artifacts, {**joint_sql, "kind": "sql"}])
     started_values = [child.get("started_at") for child in children if child.get("started_at")]
     completed_values = [child.get("completed_at") for child in children if child.get("completed_at")]
     result_lines = [
@@ -1787,6 +1792,21 @@ def get_request(request_id: str, user: Annotated[dict, Depends(current_user)]) -
     detail["task_trace"]["stage_timings"] = stage_timings(detail)
     detail.update(acceptance_permissions(detail, user))
     detail["can_followup"] = detail["status"] == RunStatus.DELIVERED.value
+    detail["can_generate_business_logic"] = business_logic_diagrams.eligible(original)
+    if detail["can_generate_business_logic"]:
+        diagram = business_logic_diagrams.status(request_id)
+        detail["business_logic_diagram"] = diagram
+        if diagram and diagram["artifact_id"]:
+            image = next((item for item in detail["artifacts"] if item.get("id") == diagram["artifact_id"]), None)
+            if image is None:
+                # Generation may finish between reading artifacts and the job.
+                recorded = row("SELECT * FROM delivery_artifacts WHERE id=? AND request_id=?",
+                               (diagram["artifact_id"], request_id))
+                if recorded:
+                    image = public_artifact(recorded)
+                    detail["artifacts"].append(image)
+            if image:
+                image["explanation"] = diagram["explanation"]
     detail["task_type_label"] = TASK_TYPE_LABELS[TaskType(detail.get("task_type", TaskType.DEVELOPMENT.value))]
     detail["delivery_mode_label"] = DELIVERY_MODE_LABELS[DeliveryMode(detail["delivery_mode"])]
     joint_group_id = str(detail.get("joint_group_id") or "")
@@ -2914,7 +2934,10 @@ def runner_finalize_joint(request_id: str) -> dict:
             ).complete_analysis(aggregate["work_item_id"], manifest, actual_version="V1.0")
             tfs_result["task_type"] = TaskType.ANALYSIS.value
         else:
-            manifest = ArtifactService().delivery_manifest_html(aggregate)
+            service = ArtifactService()
+            if service.consolidate_sql(children[0]["id"], aggregate, joint=True):
+                aggregate = joint_request_detail(joint_group_id)
+            manifest = service.delivery_manifest_html(aggregate)
             tfs_result = TfsClient(aggregate["policy_snapshot"]["tfs_collection_url"]).complete_delivery(
                 aggregate["work_item_id"], manifest, actual_version="V1.0"
             )
@@ -2988,9 +3011,12 @@ def download_artifact(
     )
     if not artifact:
         raise HTTPException(status_code=404, detail="产物不存在")
-    if user["role"] != "admin" and user["id"] not in {artifact["requester_id"], artifact.get("acceptance_owner_id")}:
+    allowed = {artifact["requester_id"]}
+    if artifact["kind"] != "joint_sql":
+        allowed.add(artifact.get("acceptance_owner_id"))
+    if user["role"] != "admin" and user["id"] not in allowed:
         raise HTTPException(status_code=403, detail="无权访问该产物")
-    if preview and artifact["kind"] != "merge_screenshot":
+    if preview and artifact["kind"] not in {"merge_screenshot", business_logic_diagrams.ARTIFACT_KIND}:
         if not text_artifact_previewable(artifact):
             raise HTTPException(status_code=415, detail="该产物不支持在线预览")
         try:
@@ -3011,11 +3037,16 @@ def download_artifact(
         raise HTTPException(status_code=404, detail="产物文件不存在")
     if preview and artifact["kind"] == "merge_screenshot":
         return FileResponse(path)
+    if preview and artifact["kind"] == business_logic_diagrams.ARTIFACT_KIND:
+        return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, no-store",
+                                                                  "X-Content-Type-Options": "nosniff"})
     return FileResponse(path, filename=artifact["name"])
 
 
 from .workshop_api import router as workshop_router
+from .business_logic_api import router as business_logic_router
 app.include_router(workshop_router)
+app.include_router(business_logic_router)
 
 
 if __name__ == "__main__":

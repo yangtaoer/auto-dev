@@ -379,8 +379,8 @@
   overflow-wrap: anywhere;
 }
 .mint-workspace .artifact-file-link .artifact-file-arrow { color: var(--skin-muted,#759886); }
-.mint-workspace .artifact-text-preview-trigger,
-.mint-workspace .artifact-links .artifact-text-preview-trigger {
+.mint-workspace :is(.artifact-text-preview-trigger,.artifact-diagram-link),
+.mint-workspace .artifact-links :is(.artifact-text-preview-trigger,.artifact-diagram-link) {
   display: inline-grid;
   grid-template-columns: 12px minmax(0,1fr) auto;
   align-items: center;
@@ -389,6 +389,16 @@
   cursor: pointer;
 }
 .artifact-preview-label { color: var(--skin-success); font-size: 11px; }
+#artifact-preview-description {
+  margin: 8px 0 0;
+  max-width: 76ch;
+  max-height: 19dvh;
+  overflow: auto;
+  color: var(--skin-ink);
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
 
 body:has(#text-artifact-preview[open]) { overflow: hidden; }
 #text-artifact-preview {

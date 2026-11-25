@@ -12,7 +12,9 @@ from app.services.artifact_contract import (
 )
 from app.services.database_audit import DatabaseWriteJournal, database_write_receipt, sql_fingerprint
 from app.services.delivery_assets import reconcile_delivery_assets
-from app.services.delivery_sql import delivery_script_problem
+from app.services.delivery_sql import (
+    SQL_BUNDLE_NAME, bundle_delivery_sql, delivery_script_problem, sql_bundle_sections,
+)
 
 
 class DeliveryContractTests(unittest.TestCase):
@@ -54,7 +56,7 @@ class DeliveryContractTests(unittest.TestCase):
 
     def test_visibility_is_identical_for_all_modes_and_keeps_analysis_report_separate(self):
         from app.domain import visible_delivery_artifacts
-        kinds = ["package", "sql", "config", "rollback_note", "release_artifact", "delivery_manifest", "verification_report",
+        kinds = ["package", "sql", "config", "rollback_note", "release_artifact", "business_logic_diagram", "delivery_manifest", "verification_report",
                  "package_note", "license_request", "merge_screenshot", "menu_link", "report", "email_preview"]
         names = {"sql": "upgrade.sql", "config": "runtime.properties", "rollback_note": "rollback.txt"}
         artifacts = [{"kind": kind, "name": names.get(kind, kind)} for kind in kinds]
@@ -103,6 +105,44 @@ class DeliveryContractTests(unittest.TestCase):
         self.assertEqual(assets, [])
         self.assertTrue(any(".sql" in value for value in blockers))
         self.assertTrue(any("配置模板" in value for value in blockers))
+
+    def test_combined_sql_delivers_one_file_and_keeps_incompatible_paths_inactive(self):
+        from app.services.delivery import ArtifactService
+        from app.domain import visible_delivery_artifacts
+        statements = [("a/install.sql", "无表时新装", "CREATE TABLE example (ID INT);"),
+                      ("b/rollback.sql", "确认回退时", "DROP TABLE example;")]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            items = []
+            for index, (name, _purpose, sql) in enumerate(statements, start=1):
+                local = root / name
+                local.parent.mkdir()
+                local.write_text(sql, encoding="utf-8")
+                items.append({"id": index, "kind": "sql", "name": name, "local_path": str(local)})
+            detail = {"id": "task", "delivery_mode": "local_package", "artifacts": items,
+                      "quality_gate_result": {"delivery_assets": [
+                          {"kind": "sql", "repository": name.split("/")[0], "path": name.split("/")[1], "purpose": purpose}
+                          for name, purpose, _sql in statements]}}
+
+            def record(_request_id, kind, name, local_path, _external_url):
+                artifact_id = len(items) + 1
+                items.append({"id": artifact_id, "kind": kind, "name": name, "local_path": local_path})
+                return artifact_id
+
+            with patch("app.services.delivery.settings", SimpleNamespace(delivery_dir=root, max_artifact_mb=2)):
+                service = ArtifactService(recorder=record, detail_loader=lambda _id: detail, public_base_url="https://example.test")
+                first = service.consolidate_sql("task", detail)
+                self.assertEqual(service.consolidate_sql("task", detail), first)
+                self.assertIn(SQL_BUNDLE_NAME, service.delivery_manifest_html(detail))
+                self.assertNotIn("install.sql", service.delivery_manifest_html(detail))
+            self.assertEqual([item["name"] for item in visible_delivery_artifacts("local_package", items)], [SQL_BUNDLE_NAME])
+            content = Path(items[-1]["local_path"]).read_text(encoding="utf-8")
+            self.assertEqual(sql_bundle_sections(content), statements)
+            self.assertTrue(all(not line or line.startswith("-- ") for line in content.splitlines()))
+            self.assertIn("无表时新装", content)
+            self.assertFalse(delivery_script_problem("sql", content))
+            forbidden = bundle_delivery_sql([("p.sql", "", "CALL reinstall();")])
+            self.assertIn("存储过程", delivery_script_problem("sql", forbidden))
 
     def test_procedure_statements_are_blocked_and_direct_sql_is_allowed(self):
         blocked = [

@@ -24,7 +24,7 @@ const fmtDuration = value => {const seconds=Number(value);if(!Number.isFinite(se
 const stepTiming = step => {if(!step.started_at)return '<div class="timeline-times pending-time"><span>尚未开启</span></div>';const finished=step.finished_at?`<span>完成 <time>${escapeHtml(fmtStepTime(step.finished_at))}</time></span>`:'<span class="running-time">正在运行</span>';return `<div class="timeline-times"><span>开启 <time>${escapeHtml(fmtStepTime(step.started_at))}</time></span>${finished}<strong>耗时 ${escapeHtml(fmtDuration(step.duration_seconds))}</strong></div>`};
 const REVIEW_MODES = new Set(['sichuan_auto_review','product_manual_review']);
 const DELIVERY_OPTION_LABELS = {merge_screenshot:'代码合并截图',license_request:'License 申请',auto_release:'自动发版'};
-const visibleArtifacts = (artifacts,deliveryMode='',deliveryOptions=null) => {const allowed=new Set(['package','release_artifact','sql','config','rollback_note','analysis_report']);return (artifacts||[]).filter(a=>allowed.has(a.kind)&&String(a.name||'').split(/[\\/]/).pop().toLowerCase()!=='delivery-validation-manifest.json'&&!(a.kind==='config'&&/(?:^|[/\\])pom\.xml$|(?:mapper|mapping|\.view|\.form)\.xml$/i.test(String(a.name||''))))};
+const visibleArtifacts = (artifacts,deliveryMode='',deliveryOptions=null) => {const allowed=new Set(['package','release_artifact','sql','config','rollback_note','analysis_report','business_logic_diagram']);return (artifacts||[]).filter(a=>allowed.has(a.kind)&&String(a.name||'').split(/[\\/]/).pop().toLowerCase()!=='delivery-validation-manifest.json'&&!(a.kind==='config'&&/(?:^|[/\\])pom\.xml$|(?:mapper|mapping|\.view|\.form)\.xml$/i.test(String(a.name||''))))};
 const isMergeScreenshot = artifact => artifact?.kind==='merge_screenshot';
 const isReleaseArtifact = artifact => artifact?.kind==='release_artifact';
 const isAnalysisReport = artifact => artifact?.kind==='analysis_report';
@@ -34,9 +34,16 @@ const artifactOpenUrl = artifact => artifact.external_url||`/api/artifacts/${art
 const artifactRepository = artifact => {const name=String(artifact?.name||'');const marker=name.indexOf(' · PR #');return marker>0?name.slice(0,marker):'代码仓库'};
 const artifactPrNumber = artifact => String(artifact?.name||'').match(/PR #(\d+)/)?.[1]||'';
 const artifactFileName = artifact => String(artifact?.name||'').split(/[\\/]/).filter(Boolean).pop()||'交付文件';
+function diagramPreviewAttributes(id, explanation='') {
+  const url=`/api/artifacts/${encodeURIComponent(id)}`;
+  return `data-preview-kind="business-logic" data-preview-url="${url}?preview=true" data-download-url="${url}" data-preview-title="业务逻辑图" data-preview-description="${escapeHtml(explanation)}"`;
+}
 function artifactFileTag(artifact) {
   const title=escapeHtml(artifact.name), name=escapeHtml(artifactFileName(artifact));
   const icon=editorialIcon(artifact.kind==='sql'?'code':artifact.kind==='package'?'cube':'clipboard');
+  if (artifact.kind==='business_logic_diagram') {
+    return `<button type="button" class="artifact-link artifact-file-link artifact-preview-trigger artifact-diagram-link" ${diagramPreviewAttributes(artifact.id,artifact.explanation)} title="${title}" aria-haspopup="dialog">${icon}<span class="artifact-file-name">${name}</span><span class="artifact-preview-label" aria-hidden="true">预览</span></button>`;
+  }
   if (artifact.previewable && artifact.id) {
     return `<button type="button" class="artifact-link artifact-file-link artifact-text-preview-trigger" data-artifact-id="${escapeHtml(artifact.id)}" data-preview-title="${name}" title="${title}" aria-label="预览 ${title}" aria-haspopup="dialog">${icon}<span class="artifact-file-name">${name}</span><span class="artifact-preview-label" aria-hidden="true">预览</span></button>`;
   }
@@ -70,12 +77,34 @@ const taskStatus = (record,status=runVisualStatus(record)) => (status===runVisua
 const taskModeLabel = record => isAnalysisTask(record)?'问题分析':(MODE[record?.delivery_mode]?.[0]||record?.delivery_mode||'自主研发');
 
 function bindArtifactPreviews(root=document){
-  root.querySelectorAll('.artifact-preview-trigger').forEach(button=>{button.onclick=event=>{event.stopPropagation();openArtifactPreview(button.dataset.previewUrl,button.dataset.downloadUrl,button.dataset.previewTitle,button.dataset.previewRepository)}});
+  root.querySelectorAll('.artifact-preview-trigger').forEach(button=>{button.onclick=event=>{event.stopPropagation();openArtifactPreview(button.dataset)}});
   root.querySelectorAll('.artifact-text-preview-trigger').forEach(button=>{button.onclick=event=>{event.stopPropagation();openTextArtifactPreview(button)}});
 }
 function bindMenuLinks(root=document){root.querySelectorAll('.menu-link-copy').forEach(button=>{button.onclick=async event=>{event.stopPropagation();try{await navigator.clipboard.writeText(button.dataset.menuLink);toast('菜单链接已复制')}catch(_){toast(`菜单链接：${button.dataset.menuLink}`)}}})}
-function openArtifactPreview(url,downloadUrl,title,repository){const overlay=document.querySelector('#artifact-preview'),image=document.querySelector('#artifact-preview-image');document.querySelector('#artifact-preview-title').textContent=title||'PR 合并截图';document.querySelector('#artifact-preview-repository').textContent=repository||'代码仓库';document.querySelector('#artifact-preview-download').href=downloadUrl||url;image.alt=title||'PR 合并截图';image.classList.remove('loaded');image.onload=()=>image.classList.add('loaded');image.src=url;overlay.hidden=false;document.body.classList.add('preview-open');document.querySelector('#close-artifact-preview').focus()}
-function closeArtifactPreview(){const overlay=document.querySelector('#artifact-preview'),image=document.querySelector('#artifact-preview-image');if(overlay.hidden)return;overlay.hidden=true;image.onload=null;image.classList.remove('loaded');image.removeAttribute('src');document.body.classList.remove('preview-open')}
+function openArtifactPreview({previewUrl,downloadUrl,previewTitle,previewRepository,previewKind,previewDescription}) {
+  const overlay=document.querySelector('#artifact-preview'),image=document.querySelector('#artifact-preview-image');
+  const diagram=previewKind==='business-logic';
+  const title=previewTitle||(diagram?'业务逻辑图':'PR 合并截图');
+  const status=document.querySelector('#artifact-preview-loading-text');
+  document.querySelector('#artifact-preview-kicker').hidden=diagram;
+  document.querySelector('#artifact-preview-title').textContent=title;
+  document.querySelector('#artifact-preview-repository').textContent=diagram?'':(previewRepository||'代码仓库');
+  const description=document.querySelector('#artifact-preview-description');
+  description.textContent=diagram?(previewDescription||''):'';
+  description.hidden=!description.textContent;
+  document.querySelector('#artifact-preview-note').textContent=diagram?'': '截图由本机执行器在 PR 已合并页面生成';
+  document.querySelector('#artifact-preview-download').href=downloadUrl||previewUrl;
+  status.textContent=diagram?'正在加载业务逻辑图':'正在加载真实 PR 页面截图';
+  image.alt=title;
+  image.classList.remove('loaded');
+  image.onload=()=>image.classList.add('loaded');
+  image.onerror=()=>{status.textContent='图片暂时无法预览，可重试或下载原图。'};
+  image.src=previewUrl;
+  overlay.hidden=false;
+  document.body.classList.add('preview-open');
+  document.querySelector('#close-artifact-preview').focus();
+}
+function closeArtifactPreview(){const overlay=document.querySelector('#artifact-preview'),image=document.querySelector('#artifact-preview-image');if(overlay.hidden)return;overlay.hidden=true;image.onload=null;image.onerror=null;image.classList.remove('loaded');image.removeAttribute('src');document.body.classList.remove('preview-open')}
 
 let textPreviewRequest;
 async function openTextArtifactPreview(button) {
@@ -748,6 +777,46 @@ function renderCompletionItems(detail) {
 
 const TASK_BRIEF_LIMIT = 120;
 
+function businessLogicAction(detail) {
+  if (!detail.can_generate_business_logic) return '';
+  const job=detail.business_logic_diagram||{};
+  if (job.status==='completed' && job.artifact_id) {
+    return `<button class="btn btn-secondary artifact-preview-trigger" type="button" aria-haspopup="dialog" ${diagramPreviewAttributes(job.artifact_id,job.explanation)}>查看业务逻辑图</button>`;
+  }
+  const busy=['queued','running'].includes(job.status);
+  const label=job.status==='failed'?'重新生成业务逻辑图':job.status==='queued'?'业务逻辑图已排队':busy?'正在生成业务逻辑图':'生成业务逻辑图';
+  return `<button class="btn btn-secondary" type="button" data-business-logic-request ${busy?'disabled aria-busy="true"':''}>${label}</button>`;
+}
+
+function businessLogicExplanation(job) {
+  if (!job) return '';
+  if (job.status==='failed') return `<p class="workflow-diagram-message" role="status">${escapeHtml(job.error_message||'业务逻辑图生成失败，可重新生成。')}</p>`;
+  if (job.status!=='completed') return '';
+  const failed=['failed','uncertain'].includes(job.mail_status);
+  return `<div class="workflow-diagram-description"><b>业务逻辑说明</b><p>${escapeHtml(job.explanation)}</p>
+    ${failed?`<div class="workflow-diagram-mail"><span role="status">${escapeHtml(job.mail_error||'邮件通知未完成')}</span><button type="button" class="btn btn-secondary" data-business-logic-request="mail">重发邮件</button></div>`:''}</div>`;
+}
+
+function bindBusinessLogicActions(detail) {
+  document.querySelectorAll('#detail-content [data-business-logic-request]:not([disabled])').forEach(button=>{
+    button.onclick=async ()=>{
+      button.disabled=true;
+      const retryMail=button.dataset.businessLogicRequest==='mail';
+      try {
+        await api(`/api/requests/${encodeURIComponent(detail.id)}/business-logic-diagram`,
+          {method:'POST',body:JSON.stringify({retry_mail:retryMail})});
+        if (state.selectedRequest===detail.id) {
+          state.selectedTerminal=false;
+          await refreshDetail(detail.id,true);
+          toast(retryMail?'邮件已排队':'业务逻辑图已排队');
+        }
+      } catch(error) {
+        if (state.selectedRequest===detail.id) toast(error.message);
+      } finally { button.disabled=false; }
+    };
+  });
+}
+
 function renderTaskBrief(detail, note, {analysis, isDelivered, isJoint, current, artifactCount, services}) {
   const status = detail.display_status || detail.status;
   const attention = ['failed','rejected','waiting_approval','waiting_input','runner_disconnected','waiting_stage_recovery'].includes(status);
@@ -776,6 +845,7 @@ function renderTaskBrief(detail, note, {analysis, isDelivered, isJoint, current,
   ].join('');
   const next = detail.handoff;
   const showNext = next && next.lane !== 'executing';
+  const diagramAction = businessLogicAction(detail);
   const target = next?.stage || current?.id;
   const actionAttributes=next?.operation?`data-stage-recovery="${escapeHtml(next.operation)}"`:
     `data-task-switch="${escapeHtml(target||'')}" ${next?.label==='补充信息'?'data-focus-supplement':''}`;
@@ -789,10 +859,10 @@ function renderTaskBrief(detail, note, {analysis, isDelivered, isJoint, current,
       </div>
     </div>
     ${facts?`<div class="workflow-brief-facts">${facts}</div>`:''}
-    ${showNext?`<div class="workflow-next-action"><div>
+    ${showNext||diagramAction?`<div class="workflow-next-action"><div>
         <b>${escapeHtml(detail.status_label||taskStatus(detail))}</b>
-        <span>处理人 ${escapeHtml(next.actor)}${next.confirmed_at?` · 最近确认 ${fmtStepTime(next.confirmed_at)}`:''}</span>
-      </div>${target||next.operation?`<button type="button" class="btn btn-primary" ${actionAttributes}>${escapeHtml(next.label)} ${editorialIcon('arrow-right')}</button>`:''}</div>`:''}
+        ${showNext?`<span>处理人 ${escapeHtml(next.actor)}${next.confirmed_at?` · 最近确认 ${fmtStepTime(next.confirmed_at)}`:''}</span>`:''}
+      </div><div class="workflow-brief-actions">${diagramAction}${showNext&&(target||next.operation)?`<button type="button" class="btn btn-primary" ${actionAttributes}>${escapeHtml(next.label)} ${editorialIcon('arrow-right')}</button>`:''}</div></div>`:''}
   </section>`;
 }
 
@@ -812,7 +882,9 @@ function renderDetail(d){
   const analysis=isAnalysisTask(d);
   const isDelivered=d.status==='delivered';
   const controlBusy=(d.controls||[]).some(control=>['pending','running','waiting_merge'].includes(control.status));
-  state.selectedTerminal=!controlBusy&&(TERMINAL.has(jointStatus)||jointStatus==='waiting_input');
+  const diagram=d.business_logic_diagram||{};
+  const diagramBusy=['queued','running'].includes(diagram.status)||['queued','claimed','sending'].includes(diagram.mail_status);
+  state.selectedTerminal=!controlBusy&&!diagramBusy&&(TERMINAL.has(jointStatus)||jointStatus==='waiting_input');
   if(d.status!=='waiting_approval')state.continuationDrafts.delete(d.id);
 
   const phases=TaskWorkflow.stages(d), selected=TaskWorkflow.currentStage(d);
@@ -890,7 +962,7 @@ function renderDetail(d){
   const merge=`${prLinks}${taskReceipt(events['pr.merged'])}${d.status==='waiting_merge'?taskReceipt(events['pr.validation_failed']):''}${taskDisclosure('合并记录与目标分支',taskRepositoryList(repositories.filter(repo=>repo.merge_commit),'merge'),'merge-commits')}${taskDisclosure('PR 合并截图',mergeScreenshots(d.artifacts||[]),'merge-screenshots')}${simulate}`;
   const build=release.build_id?`<div class="workflow-receipt"><b>Build #${escapeHtml(release.build_id)}</b><span>${release.result==='succeeded'?'构建成功':release.result==='failed'?'构建失败':''}</span>${release.results_url?`<a class="workflow-link" href="${escapeHtml(release.results_url)}" target="_blank" rel="noopener">查看构建 ↗</a>`:''}</div>`:taskReceipt(events['build.completed']||events['release.started']);
   const deployment=deploymentServices;
-  const delivery=`${deliveryArtifacts.length?`<section class="workflow-panel"><h3>${analysis?'分析报告':'交付产物'}</h3><div class="workflow-artifacts">${artifactLinks(deliveryArtifacts,d.delivery_mode,d.delivery_options)}</div></section>`:''}
+  const delivery=`${deliveryArtifacts.length||d.business_logic_diagram?`<section class="workflow-panel"><h3>${analysis?'分析报告':'交付产物'}</h3><div class="workflow-artifacts">${artifactLinks(deliveryArtifacts,d.delivery_mode,d.delivery_options)}</div>${businessLogicExplanation(d.business_logic_diagram)}</section>`:''}
     ${taskReceipt(events['tfs.delivery_completed'])}${taskReceipt(events['mail.delivery_sent'])}
     ${taskDisclosure('通知收件人',(d.notification_emails||[]).length?`<p>${d.notification_emails.map(escapeHtml).join('、')}</p>`:'','notification')}`;
   const maps={intake,requirement:requirements,development,submit,merge,release:build,deploy:deployment,delivery,acceptance:'<div id="task-acceptance-mount"></div>'};
@@ -916,6 +988,7 @@ function renderDetail(d){
   window.ProjectLearning?.renderContext(d);
   loadTaskStage(document.querySelector('[data-task-tab][aria-selected="true"]')?.dataset.taskTab);
   bindArtifactPreviews(document.querySelector('#detail-content'));
+  bindBusinessLogicActions(d);
   bindMenuLinks(document.querySelector('#detail-content'));
   document.querySelectorAll('[data-joint-child-id]').forEach(button=>button.onclick=()=>openDetail(button.dataset.jointChildId));
   document.querySelector('#open-devcore-stream')?.addEventListener('click',()=>openDevCoreStream(d.id,d.work_item_id,d));

@@ -10,7 +10,7 @@ import httpx
 
 
 PREVIEW_MAX_BYTES = 512 * 1024
-TEXT_ARTIFACT_KINDS = {"sql", "config", "rollback_note", "analysis_report"}
+TEXT_ARTIFACT_KINDS = {"sql", "joint_sql", "config", "rollback_note", "analysis_report"}
 TEXT_SUFFIXES = {
     ".sql", ".txt", ".yaml", ".yml", ".md", ".markdown", ".json", ".xml",
     ".properties", ".conf", ".ini", ".cfg", ".toml", ".csv", ".tsv", ".log",
@@ -83,19 +83,21 @@ def decode_artifact_text(content: bytes, *, truncated: bool = False) -> str:
     raise ArtifactContentError("文件无法按文本读取")
 
 
-def read_text_preview(artifact: dict, delivery_root: Path) -> tuple[str, bool]:
-    data = None
+def read_artifact_bytes(artifact: dict, delivery_root: Path, limit: int) -> bytes:
     if artifact.get("local_path"):
         path = Path(artifact["local_path"]).resolve()
         try:
             if path.is_relative_to(delivery_root.resolve()) and path.is_file():
                 with path.open("rb") as file:
-                    data = file.read(PREVIEW_MAX_BYTES + 1)
+                    return file.read(limit)
         except OSError:
             pass
-    if data is None:
-        if not artifact.get("external_url"):
-            raise ArtifactContentError("产物文件不存在", 404)
-        data = read_oss_artifact(artifact["external_url"], PREVIEW_MAX_BYTES + 1)
+    if not artifact.get("external_url"):
+        raise ArtifactContentError("产物文件不存在", 404)
+    return read_oss_artifact(artifact["external_url"], limit)
+
+
+def read_text_preview(artifact: dict, delivery_root: Path) -> tuple[str, bool]:
+    data = read_artifact_bytes(artifact, delivery_root, PREVIEW_MAX_BYTES + 1)
     truncated = len(data) > PREVIEW_MAX_BYTES
     return decode_artifact_text(data[:PREVIEW_MAX_BYTES], truncated=truncated), truncated

@@ -211,6 +211,16 @@
 .workflow-next-action > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 9px; }
 .workflow-next-action span { color: var(--skin-muted); font-size: 12px; }
 .workflow-next-action .btn svg { width: 12px; height: 12px; }
+.workflow-next-action > .workflow-brief-actions { align-items: center; justify-content: flex-end; gap: 7px; }
+.workflow-diagram-description {
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--skin-line);
+  overflow-wrap: anywhere;
+}
+.workflow-diagram-description > p { margin: 5px 0; white-space: pre-wrap; line-height: 1.6; }
+.workflow-diagram-mail { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.workflow-diagram-mail span,.workflow-diagram-message { color: var(--skin-muted); }
 .status-dot[data-status="runner_disconnected"], .status-dot[data-status="waiting_stage_recovery"] {
   color: var(--skin-warning); background: var(--skin-warning-soft, var(--skin-surface-alt));
 }

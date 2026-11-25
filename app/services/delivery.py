@@ -28,9 +28,12 @@ from ..domain import DELIVERY_MODE_LABELS, STATUS_LABELS, DeliveryMode, RunStatu
 from .blocker_summary import summarize_blocker
 from .process_env import sanitized_process_env
 from .command_logs import clean_log, decode_output, command_failure
-from .artifact_content import ArtifactContentError, decode_artifact_text, read_oss_artifact
+from .artifact_content import ArtifactContentError, decode_artifact_text, read_artifact_bytes, read_oss_artifact
 from .artifact_contract import CHANGED_ASSET_KINDS, PACKAGE_EXTENSIONS, changed_asset_kind, configuration_template, enforce_artifact_policy, matches_patterns
-from .delivery_sql import delivery_script_problem
+from .delivery_sql import (
+    JOINT_SQL_BUNDLE_NAME, SQL_BUNDLE_HEADER, SQL_BUNDLE_NAME, bundle_delivery_sql,
+    delivery_script_problem, sql_bundle_sections,
+)
 
 
 BRAND_MARK_CID = "autodev-brand-mark"
@@ -261,6 +264,51 @@ class ArtifactService:
     def artifact_url(self, artifact: dict) -> str:
         return str(artifact.get("external_url") or f"{self.public_base_url}/api/artifacts/{artifact['id']}")
 
+    def consolidate_sql(self, request_id: str, detail: dict, *, joint: bool = False) -> int | None:
+        kind, name = ("joint_sql", JOINT_SQL_BUNDLE_NAME) if joint else ("sql", SQL_BUNDLE_NAME)
+        items = detail.get("artifacts") or []
+        existing = next((item for item in items if item.get("kind") == kind and item.get("name") == name), None)
+        if existing:
+            return int(existing["id"])
+        scripts = [item for item in visible_delivery_artifacts("", items) if item["kind"] == "sql"]
+        if len(scripts) < 2:
+            return None
+        declarations = (detail.get("quality_gate_result") or {}).get("delivery_assets") or []
+        purposes = {f"{item['repository']}/{item['path']}": str(item.get("purpose") or "")
+                    for item in declarations if item.get("kind") == "sql"}
+        limit = settings.max_artifact_mb * 1024 * 1024
+        remaining = limit
+        sources = []
+        for script in scripts:
+            source_name = str(script["name"])
+            # The Windows runner has the task's frozen source copy even if the
+            # cloud record points at OSS or the backend's filesystem.
+            local = (settings.delivery_dir / request_id / "sql" / source_name).resolve()
+            source = script
+            if local.is_relative_to(settings.delivery_dir.resolve()) and local.is_file():
+                source = {**script, "local_path": str(local)}
+            try:
+                raw = read_artifact_bytes(source, settings.delivery_dir, remaining)
+                if len(raw) >= remaining:
+                    raise ArtifactContentError("SQL 合并文件超出交付大小限制")
+                remaining -= len(raw)
+                content = decode_artifact_text(raw).replace("\r\n", "\n").replace("\r", "\n")
+            except ArtifactContentError as exc:
+                raise RuntimeError(f"无法合并交付 SQL {source_name}：{exc}") from exc
+            if problem := delivery_script_problem("sql", content):
+                raise RuntimeError(f"{source_name}：{problem}")
+            if content.partition("\n")[0] == SQL_BUNDLE_HEADER:
+                sources.extend((f"{source_name} / {label}", purpose, sql)
+                               for label, purpose, sql in sql_bundle_sections(content))
+            else:
+                sources.append((source_name, purposes.get(source_name, ""), content))
+        bundled = bundle_delivery_sql(sources).encode("utf-8")
+        if len(bundled) >= limit:
+            raise RuntimeError("SQL 合并文件超出交付大小限制")
+        target = self.request_dir(request_id) / name
+        target.write_bytes(bundled)
+        return self.record(request_id, kind, name, str(target))
+
     def delivery_manifest_html(self, detail: dict) -> str:
         kind_labels = {
             "package": "安装包",
@@ -268,6 +316,7 @@ class ArtifactService:
             "sql": "SQL 脚本",
             "config": "配置文件",
             "rollback_note": "旧数据回退说明",
+            "business_logic_diagram": "业务逻辑图",
             "merge_screenshot": "PR 合并截图",
             "menu_link": "新增视图菜单链接",
             "license_request": "License 授权申请",
@@ -607,7 +656,8 @@ class Mailer:
         return f"【AutoDev · {status}】TFS #{detail['work_item_id']}｜{title}"
 
     def build_message(
-        self, *, to: list[str], subject: str, html_body: str, attachments: list[Path] | None = None, include_admin_copy: bool = True
+        self, *, to: list[str], subject: str, html_body: str, attachments: list[Path] | None = None,
+        include_admin_copy: bool = True, inline_images: dict[str, Path] | None = None, text_body: str = "",
     ) -> EmailMessage:
         recipients = self._deduplicate_emails(to)
         if not recipients:
@@ -622,12 +672,12 @@ class Mailer:
         message["Date"] = format_rfc_datetime(datetime.now(timezone(timedelta(hours=8))))
         message["Message-ID"] = make_msgid(domain=settings.smtp_from.rsplit("@", 1)[-1])
         message["Auto-Submitted"] = "auto-generated"
-        message.set_content(
+        message.set_content(text_body or
             "AutoDev 自主研发交付通知。请使用支持 HTML 的邮件客户端查看需求说明、代码信息和交付产物。"
         )
         message.add_alternative(html_body, subtype="html")
+        html_part = message.get_payload()[-1]
         if f"cid:{BRAND_MARK_CID}" in html_body and BRAND_MARK_PATH.is_file():
-            html_part = message.get_payload()[-1]
             html_part.add_related(
                 BRAND_MARK_PATH.read_bytes(),
                 maintype="image",
@@ -636,6 +686,12 @@ class Mailer:
                 filename=BRAND_MARK_PATH.name,
                 disposition="inline",
             )
+        for cid, path in (inline_images or {}).items():
+            mime, _ = mimetypes.guess_type(path.name)
+            if not mime or not mime.startswith("image/") or not path.is_file() or path.stat().st_size > 10 * 1024 * 1024:
+                raise ValueError("邮件内嵌图片不可读取或超出容量限制")
+            html_part.add_related(path.read_bytes(), maintype="image", subtype=mime.split("/", 1)[1],
+                                  cid=f"<{cid}>", filename=path.name, disposition="inline")
         for path in attachments or []:
             if not path.exists() or path.stat().st_size > 10 * 1024 * 1024:
                 continue
@@ -644,10 +700,14 @@ class Mailer:
             message.add_attachment(path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name)
         return message
 
-    def send(self, *, to: list[str], subject: str, html_body: str, attachments: list[Path] | None = None, include_admin_copy: bool = True) -> None:
+    def send(
+        self, *, to: list[str], subject: str, html_body: str, attachments: list[Path] | None = None,
+        include_admin_copy: bool = True, inline_images: dict[str, Path] | None = None, text_body: str = "",
+    ) -> None:
         if not self.configured():
             raise RuntimeError("未配置 SMTP_HOST/SMTP_FROM")
-        message = self.build_message(to=to, subject=subject, html_body=html_body, attachments=attachments, include_admin_copy=include_admin_copy)
+        message = self.build_message(to=to, subject=subject, html_body=html_body, attachments=attachments,
+                                     include_admin_copy=include_admin_copy, inline_images=inline_images, text_body=text_body)
         use_smtps = settings.smtp_protocol == "smtps" or settings.smtp_port == 465
         if use_smtps:
             smtp_client = smtplib.SMTP_SSL(
@@ -663,7 +723,9 @@ class Mailer:
                 smtp.starttls(context=ssl.create_default_context())
             if settings.smtp_username:
                 smtp.login(settings.smtp_username, settings.smtp_password)
-            smtp.send_message(message)
+            refused = smtp.send_message(message)
+            if inline_images and refused:
+                raise RuntimeError("邮件服务器只接受了部分收件人")
 
     def delivery_html(
         self,
@@ -750,6 +812,7 @@ class Mailer:
             "sql": "SQL 脚本",
             "config": "配置文件",
             "rollback_note": "旧数据回退说明",
+            "business_logic_diagram": "业务逻辑图",
             "merge_screenshot": "合并截图",
             "menu_link": "新增视图菜单链接",
             "license_request": "License 授权申请",
