@@ -17,6 +17,9 @@ from app.services.delivery_sql import (
 )
 
 
+ANNOTATED_TABLE_SQL = "CREATE TABLE T (ID INT);\nCOMMENT ON COLUMN T.ID IS '记录编号';"
+
+
 class DeliveryContractTests(unittest.TestCase):
     def test_all_presets_include_root_sql_config_and_global_policy(self):
         from app.project_experience import apply_project_experience
@@ -72,7 +75,7 @@ class DeliveryContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "repo"
             root.mkdir()
-            files = {"upgrade.sql": "CREATE TABLE T (ID INT);", "sql/fix.sql": "UPDATE T SET ID=1;",
+            files = {"upgrade.sql": ANNOTATED_TABLE_SQL, "sql/fix.sql": "UPDATE T SET ID=1;",
                      "application.properties": "feature.enabled=true\ndb.password=secret-for-test\n",
                      "web.view.xml": "<view/>", "pom.xml": "<project/>", "tests/seed.sql": "DELETE FROM T;",
                      "runtime-settings.xml": "<config><feature enabled='true'/></config>",
@@ -109,8 +112,8 @@ class DeliveryContractTests(unittest.TestCase):
     def test_combined_sql_delivers_one_file_and_keeps_incompatible_paths_inactive(self):
         from app.services.delivery import ArtifactService
         from app.domain import visible_delivery_artifacts
-        statements = [("a/install.sql", "无表时新装", "CREATE TABLE example (ID INT);"),
-                      ("b/rollback.sql", "确认回退时", "DROP TABLE example;")]
+        statements = [("a/install.sql", "无表时新装", ANNOTATED_TABLE_SQL),
+                      ("b/rollback.sql", "确认回退时", "DROP TABLE T;")]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             items = []
@@ -176,6 +179,71 @@ class DeliveryContractTests(unittest.TestCase):
             with self.subTest(sql=sql):
                 self.assertFalse(delivery_script_problem("sql", sql))
 
+    def test_new_table_fields_need_database_comments_even_with_nested_types_and_constraints(self):
+        sql = '''CREATE TABLE IF NOT EXISTS ${BIZ_SCHEMA}."Order State" (
+            "Unit ID" INT NOT NULL,
+            AMOUNT DECIMAL(12,2) DEFAULT 1.0,
+            NOTE VARCHAR(50) DEFAULT 'a,b; c',
+            CONSTRAINT PK_ORDER_STATE PRIMARY KEY ("Unit ID"),
+            CHECK (AMOUNT IN (1, 2))
+        );
+        COMMENT ON TABLE ${BIZ_SCHEMA}."Order State" IS '订单状态';
+        COMMENT ON COLUMN ${BIZ_SCHEMA}."Order State"."Unit ID" IS '所属机组';
+        COMMENT ON COLUMN ${BIZ_SCHEMA}."Order State".NOTE IS '';'''
+        problem = delivery_script_problem("sql", sql)
+        self.assertIn('${BIZ_SCHEMA}.Order State.AMOUNT', problem)
+        self.assertIn('${BIZ_SCHEMA}.Order State.NOTE', problem)
+        self.assertNotIn("PK_ORDER_STATE", problem)
+        self.assertNotIn("Unit ID", problem)
+        self.assertFalse(delivery_script_problem("sql", sql + '''
+        COMMENT ON COLUMN ${BIZ_SCHEMA}."Order State".AMOUNT IS '订单金额';
+        COMMENT ON COLUMN ${BIZ_SCHEMA}."Order State".NOTE IS '处理备注';'''))
+
+    def test_alter_checks_affected_fields_and_accepts_mysql_inline_comments(self):
+        sql = '''ALTER TABLE SCWLXL_OPCARD.ALARM_UNIT_OVER_STATE
+          ADD (SAMPLE_GAP_SECONDS INT, CHANNEL VARCHAR(20)),
+          ADD CONSTRAINT CK_GAP CHECK (SAMPLE_GAP_SECONDS BETWEEN 1 AND 299);
+        COMMENT ON COLUMN SCWLXL_OPCARD.ALARM_UNIT_OVER_STATE.SAMPLE_GAP_SECONDS IS '最大采样间隔（秒）';'''
+        problem = delivery_script_problem("sql", sql)
+        self.assertIn("SCWLXL_OPCARD.ALARM_UNIT_OVER_STATE.CHANNEL", problem)
+        self.assertNotIn("CK_GAP", problem)
+        self.assertNotIn("SAMPLE_GAP_SECONDS", problem)
+        self.assertFalse(delivery_script_problem("sql", sql +
+            "COMMENT ON COLUMN SCWLXL_OPCARD.ALARM_UNIT_OVER_STATE.CHANNEL IS '采样渠道';"))
+        self.assertFalse(delivery_script_problem("sql", """CREATE TABLE `orders` (
+            `id` INT COMMENT '流水号', `remark` VARCHAR(60) COMMENT '备注，如 A;B'
+        ) COMMENT='订单'; ALTER TABLE `orders` CHANGE COLUMN `remark` `note` VARCHAR(80) COMMENT '说明';"""))
+
+    def test_comments_on_other_tables_and_comment_only_text_do_not_satisfy_schema_delivery(self):
+        bundle = bundle_delivery_sql([
+            ("install.sql", "首次上线", ANNOTATED_TABLE_SQL),
+            ("upgrade.sql", "旧库升级", "ALTER TABLE S.T ADD GAP INT; -- GAP 采样间隔\n"
+                                      "COMMENT ON COLUMN S.U.GAP IS '其他表的采样间隔';"),
+        ])
+        self.assertIn("upgrade.sql：表结构 SQL 缺少字段注释：S.T.GAP", delivery_script_problem("sql", bundle))
+        self.assertFalse(delivery_script_problem("sql", """INSERT INTO T VALUES ('CREATE TABLE Fake (ID INT)');
+            ALTER TABLE T ADD CONSTRAINT CK_ID CHECK (ID > 0);
+            ALTER TABLE T DROP COLUMN UNUSED; CREATE INDEX IX_T ON T(ID);"""))
+        quoted = """CREATE TABLE T ("Status" INT, "status" INT);
+            COMMENT ON COLUMN T."status" IS '审批状态';"""
+        self.assertIn("缺少字段注释：T.Status", delivery_script_problem("sql", quoted))
+
+    def test_schema_note_is_checked_before_collection_and_for_delivered_scripts_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sql = Path(directory) / "schema.sql"
+            sql.write_text("CREATE TABLE T (ID INT);", encoding="utf-8")
+            state = {"name": "repo", "worktree_path": directory, "changed_files": ["schema.sql"]}
+            assets, blockers = reconcile_delivery_assets({}, [state], {})
+            self.assertFalse(assets)
+            self.assertIn("repo/schema.sql：表结构 SQL 缺少字段注释：T.ID", blockers[0])
+            temporary = {"classification": "temporary_verification", "script_paths": ["repo/schema.sql"],
+                         "evidence": "临时测试表已清理"}
+            self.assertEqual(reconcile_delivery_assets({}, [state], {"database_changes": [temporary]}), ([], []))
+            sql.write_text(ANNOTATED_TABLE_SQL, encoding="utf-8")
+            assets, blockers = reconcile_delivery_assets({}, [state], {})
+            self.assertFalse(blockers)
+            self.assertEqual(assets[0]["path"], "schema.sql")
+
     def test_changed_procedure_cannot_be_delivered_or_excluded_as_temporary(self):
         from app.services.delivery import ArtifactService
         with tempfile.TemporaryDirectory() as directory:
@@ -229,7 +297,7 @@ class DeliveryContractTests(unittest.TestCase):
 
     def test_one_saved_sql_does_not_hide_another_missing_script(self):
         with tempfile.TemporaryDirectory() as directory:
-            (Path(directory) / "first.sql").write_text("CREATE TABLE T (ID INT);", encoding="utf-8")
+            (Path(directory) / "first.sql").write_text(ANNOTATED_TABLE_SQL, encoding="utf-8")
             state = {"name": "repo", "worktree_path": directory, "changed_files": ["first.sql"]}
             _, blockers = reconcile_delivery_assets({}, [state], {"sql_changes": ["first.sql", "second.sql"]})
             self.assertTrue(any("second.sql" in item for item in blockers))
@@ -255,7 +323,7 @@ class DeliveryContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "repo"
             root.mkdir()
-            (root / "upgrade.sql").write_text("CREATE TABLE T (ID INT);", encoding="utf-8")
+            (root / "upgrade.sql").write_text(ANNOTATED_TABLE_SQL, encoding="utf-8")
             (root / "application.yml").write_text("feature: true\n", encoding="utf-8")
             detail = {"id": "task", "work_item_id": 1, "delivery_mode": "sichuan_auto_review",
                       "delivery_options": ["auto_release"], "status": "delivering", "artifacts": [],
@@ -320,7 +388,7 @@ class DeliveryContractTests(unittest.TestCase):
     def test_business_sql_file_fingerprint_or_explicit_mapping_satisfies_observed_write(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            sql = "CREATE TABLE T (ID INT);"
+            sql = ANNOTATED_TABLE_SQL
             (root / "upgrade.sql").write_text(sql, encoding="utf-8")
             state = {"name": "repo", "worktree_path": directory, "changed_files": ["upgrade.sql"]}
             call = {"call_id": "write-1", "purpose": "migration", "status": "completed", "sql_sha256": sql_fingerprint(sql)}
@@ -353,7 +421,7 @@ class DeliveryContractTests(unittest.TestCase):
 
     def test_existing_executed_migration_can_be_declared_without_rewriting_it(self):
         with tempfile.TemporaryDirectory() as directory:
-            (Path(directory) / "existing.sql").write_text("CREATE TABLE T (ID INT);", encoding="utf-8")
+            (Path(directory) / "existing.sql").write_text(ANNOTATED_TABLE_SQL, encoding="utf-8")
             state = {"name": "repo", "worktree_path": directory, "changed_files": []}
             result = {"delivery_assets": [{"repository": "repo", "path": "existing.sql", "kind": "sql"}], "sql_changes": ["existing.sql"]}
             assets, blockers = reconcile_delivery_assets({}, [state], result)
@@ -486,9 +554,13 @@ class ArtifactPreviewTests(unittest.TestCase):
             self.assertIn("存储过程", result.json()["detail"])
             result = self.client.post(url, data={**data, "kind": "config"}, files=files)
             self.assertEqual(result.status_code, 422)
+            files = {"file": ("rollback.sql", b"ALTER TABLE T ADD GAP INT;")}
+            result = self.client.post(url, data=data, files=files)
+            self.assertEqual(result.status_code, 422)
+            self.assertIn("字段注释", result.json()["detail"])
             self.assertFalse(list(self.root.rglob("*.sql")))
             add.assert_not_called()
-            files = {"file": ("rollback.sql", b"UPDATE T SET ID=1;")}
+            files = {"file": ("rollback.sql", ANNOTATED_TABLE_SQL.encode("utf-8"))}
             self.assertEqual(self.client.post(url, data=data, files=files).json(), {"artifact_id": 9})
             add.assert_called_once()
 

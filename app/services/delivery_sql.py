@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
+from .sql_column_comments import missing_column_comments
+
 
 SQL_BUNDLE_NAME = "数据库交付.sql"
 JOINT_SQL_BUNDLE_NAME = "联合数据库交付.sql"
@@ -89,16 +91,22 @@ def _sql_code(sql: str) -> str:
     return _SQL_NON_CODE.sub(replace, sql)
 
 
-def _sql_problem(content: str) -> str:
+def _sql_problem(content: str, *, require_column_comments: bool) -> str:
     code = _sql_code(content)
     if not code.strip().strip(";").strip():
         return "SQL 脚本为空或只有注释"
     if _PROCEDURE.search(code) or _ANONYMOUS_BLOCK.search(code):
         return "交付脚本禁止定义、修改、删除或调用存储过程，也禁止使用匿名过程块或动态执行。请改用直接 SQL，旧数据无法安全回退时交付人工回退说明"
+    if require_column_comments and re.search(r"\b(?:CREATE|ALTER)\b", code, re.IGNORECASE):
+        missing = missing_column_comments(content, _SQL_NON_CODE)
+        if missing:
+            fields = "、".join(missing[:12])
+            more = f"等 {len(missing)} 个字段" if len(missing) > 12 else ""
+            return f"表结构 SQL 缺少字段注释：{fields}{more}。请在同一脚本中用数据库支持的字段注释语法补充非空业务说明"
     return ""
 
 
-def delivery_script_problem(kind: str, content: str) -> str:
+def delivery_script_problem(kind: str, content: str, *, require_column_comments: bool = True) -> str:
     if kind == "rollback_note":
         if not content.strip():
             return "旧数据回退说明为空"
@@ -109,8 +117,8 @@ def delivery_script_problem(kind: str, content: str) -> str:
             if not sections or any(line.strip() and not line.startswith("-- ") for line in normalized.split("\n")):
                 return "SQL 合并文件须保留可分段提取的脚本及注释前缀"
             for source, _purpose, sql in sections:
-                if problem := _sql_problem(sql):
+                if problem := _sql_problem(sql, require_column_comments=require_column_comments):
                     return f"{source}：{problem}"
             return ""
-        return _sql_problem(content)
+        return _sql_problem(content, require_column_comments=require_column_comments)
     return ""

@@ -46,7 +46,8 @@ def reconcile_delivery_assets(project: dict, states: list[dict], result: dict) -
         except (OSError, ArtifactContentError):
             blockers.append(f"交付文件无法按文本读取：{path_key}")
             return
-        problem = delivery_script_problem(kind, content)
+        temporary_sql = kind == "sql" and (path_key in temporary_paths or relative in temporary_paths)
+        problem = delivery_script_problem(kind, content, require_column_comments=not temporary_sql)
         if problem:
             blockers.append(f"{path_key}：{problem}")
             return
@@ -54,7 +55,7 @@ def reconcile_delivery_assets(project: dict, states: list[dict], result: dict) -
             blockers.append(f"交付配置为空或只有注释：{path_key}")
             return
         if kind == "sql":
-            if path_key in temporary_paths or relative in temporary_paths:
+            if temporary_sql:
                 return
             file_contents[path_key] = content
         assets[(name, relative)] = {"repository": name, "path": relative, "kind": kind, "purpose": purpose}
