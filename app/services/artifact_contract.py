@@ -8,7 +8,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 
-BUSINESS_ARTIFACT_KINDS = frozenset({"package", "release_artifact", "sql", "config"})
+CHANGED_ASSET_KINDS = frozenset({"sql", "config", "rollback_note"})
+BUSINESS_ARTIFACT_KINDS = CHANGED_ASSET_KINDS | {"package", "release_artifact"}
 PACKAGE_EXTENSIONS = frozenset({".zip", ".jar", ".war", ".tar", ".gz", ".tgz", ".7z", ".exe", ".msi", ".apk", ".aab", ".deb", ".rpm"})
 SQL_PATTERNS = ["*.sql", "**/*.sql"]
 CONFIG_PATTERNS = [
@@ -17,10 +18,11 @@ CONFIG_PATTERNS = [
     "deploy/*.sh", "deploy/*.ps1", "**/*.template", "**/*.example",
 ]
 DELIVERY_CONTRACT_INSTRUCTIONS = """
-全平台研发交付只包含业务系统包（或成功流水线的业务包产物链接）、SQL 脚本、必要部署配置。截图、说明报告、菜单链接、校验 JSON、测试程序不是独立研发交付物，相关说明写入任务结果。
-业务数据库的建表、改表、索引、菜单/权限/字典初始化、存量数据迁移或修复，必须先保存为本需求仓库中的可执行 .sql 文件再执行；不要只在 DM7/命令窗口执行后丢失脚本。即使 SQL 已在开发库执行，部署环境仍需要同一份脚本。补齐执行顺序、适用 Schema、前置条件、幂等/重复执行保护；必要时另存回滚 SQL，说明无法无损回滚的限制。临时测试造数与清理不作为业务迁移交付，不得混入正式脚本。
+全平台研发交付只包含业务系统包（或成功流水线的业务包产物链接）、SQL 脚本、必要部署配置和适用的旧数据回退说明。截图、普通说明报告、菜单链接、校验 JSON、测试程序不作为独立研发交付物。
+所有项目的正向和回退交付脚本一律禁止创建、修改、删除或调用存储过程，禁止用匿名过程块或动态执行包装部署 SQL。业务建表、改表、索引、初始化和可用直接 SQL 完成的存量数据迁移或修复，必须先保存为本需求仓库中的可执行 .sql 文件再执行。补齐顺序、适用 Schema、前置条件和重复执行保护。回退可用直接 SQL 时单独交付回退 SQL。临时测试造数与清理不得混入正式脚本。
+旧数据无法安全使用直接 SQL 处理或回退时，将原因、影响范围、备份或恢复来源、人工回退步骤和验证方式写入独立 .txt 或 .md 文件，并按 rollback_note 交付。在 database_changes 使用 manual_rollback，script_paths 指向说明文件，evidence 说明无法使用直接 SQL 的原因。能够用 SQL 完成的正向变更仍交付 SQL；说明不能替代已经执行的业务写入脚本。
 运行配置新增/变更必须交付对应配置文件或可合并配置模板，写明配置项、目标文件、用途和占位符；不得包含真实密码、令牌、私钥或本机连接凭据。不要将 pom.xml、Mapper XML、TBP view.xml 等源码伪装成配置产物。配置删除也要提供明确的可应用配置模板。
-最终 delivery_assets 逐项填写 repository（当前仓库名）、path（仓库相对路径）、kind（sql/config）、purpose。SQL/config 文件必须保存在实际隔离仓库并纳入本次代码变更，不能只放 /tmp、被忽略的目录或测试目录；sql_changes/config_changes 同步列出路径，无变更则 []。database_changes 记录业务变更与临时验证的分类、脚本路径、执行记录及清理证据；业务脚本不得被标为临时验证以跳过交付。
+最终 delivery_assets 逐项填写 repository（当前仓库名）、path（仓库相对路径）、kind（sql/config/rollback_note）、purpose。交付文件必须保存在实际隔离仓库并纳入本次代码变更，不能只放 /tmp、被忽略的目录或测试目录；sql_changes/config_changes 同步列出对应路径，无变更则 []。database_changes 记录业务变更、临时验证和人工回退的交付路径及证据；业务脚本不得被标为临时验证以跳过交付。
 """.strip()
 
 
@@ -53,6 +55,8 @@ def changed_asset_kind(path: str, project: dict[str, Any] | None = None, *, decl
     project = project or {}
     if name.endswith(".sql"):
         return "sql"
+    if declared_kind == "rollback_note" and Path(name).suffix in {".txt", ".md"}:
+        return "rollback_note"
     if re.search(r"(?:^|/)docs?/.*\.json$", normalized):
         return ""
     if name in {"pom.xml", "package.json", "package-lock.json", "tsconfig.json"} or re.search(
@@ -64,7 +68,7 @@ def changed_asset_kind(path: str, project: dict[str, Any] | None = None, *, decl
     if suffix == ".xml":
         # Existing presets used **/*.xml: that must not turn every source file into a deployment file.
         patterns = [pattern for pattern in patterns if str(pattern).casefold() not in {"*.xml", "**/*.xml"}]
-    if declared_kind == "config" and suffix in {".xml", ".json", ".js", ".sh", ".ps1"}:
+    if declared_kind == "config" and suffix in {".xml", ".json", ".js", ".sh", ".ps1", ".txt", ".toml"}:
         return "config"
     if matches_patterns(normalized, patterns):
         return "config"
@@ -76,7 +80,7 @@ def enforce_artifact_policy(project: dict[str, Any]) -> dict[str, Any]:
     result = dict(project)
     policy = dict(result.get("artifact_policy") or {})
     policy.update(
-        allowed_changed_asset_kinds=["sql", "config"],
+        allowed_changed_asset_kinds=sorted(CHANGED_ASSET_KINDS),
         allowed_user_facing_kinds=sorted(BUSINESS_ARTIFACT_KINDS),
     )
     if result.get("project_key") and not result.get("simulation_mode"):

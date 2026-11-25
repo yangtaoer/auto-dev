@@ -24,10 +24,8 @@ const fmtDuration = value => {const seconds=Number(value);if(!Number.isFinite(se
 const stepTiming = step => {if(!step.started_at)return '<div class="timeline-times pending-time"><span>尚未开启</span></div>';const finished=step.finished_at?`<span>完成 <time>${escapeHtml(fmtStepTime(step.finished_at))}</time></span>`:'<span class="running-time">正在运行</span>';return `<div class="timeline-times"><span>开启 <time>${escapeHtml(fmtStepTime(step.started_at))}</time></span>${finished}<strong>耗时 ${escapeHtml(fmtDuration(step.duration_seconds))}</strong></div>`};
 const REVIEW_MODES = new Set(['sichuan_auto_review','product_manual_review']);
 const DELIVERY_OPTION_LABELS = {merge_screenshot:'代码合并截图',license_request:'License 申请',auto_release:'自动发版'};
-const visibleArtifacts = (artifacts,deliveryMode='',deliveryOptions=null) => {const allowed=new Set(['package','release_artifact','sql','config','analysis_report']);return (artifacts||[]).filter(a=>allowed.has(a.kind)&&String(a.name||'').split(/[\\/]/).pop().toLowerCase()!=='delivery-validation-manifest.json'&&!(a.kind==='config'&&/(?:^|[/\\])pom\.xml$|(?:mapper|mapping|\.view|\.form)\.xml$/i.test(String(a.name||''))))};
+const visibleArtifacts = (artifacts,deliveryMode='',deliveryOptions=null) => {const allowed=new Set(['package','release_artifact','sql','config','rollback_note','analysis_report']);return (artifacts||[]).filter(a=>allowed.has(a.kind)&&String(a.name||'').split(/[\\/]/).pop().toLowerCase()!=='delivery-validation-manifest.json'&&!(a.kind==='config'&&/(?:^|[/\\])pom\.xml$|(?:mapper|mapping|\.view|\.form)\.xml$/i.test(String(a.name||''))))};
 const isMergeScreenshot = artifact => artifact?.kind==='merge_screenshot';
-const isMenuLink = artifact => artifact?.kind==='menu_link';
-const isLicenseRequest = artifact => artifact?.kind==='license_request';
 const isReleaseArtifact = artifact => artifact?.kind==='release_artifact';
 const isAnalysisReport = artifact => artifact?.kind==='analysis_report';
 const isGovernanceReport = artifact => ['verification_report','delivery_manifest'].includes(artifact?.kind);
@@ -36,8 +34,26 @@ const artifactOpenUrl = artifact => artifact.external_url||`/api/artifacts/${art
 const artifactRepository = artifact => {const name=String(artifact?.name||'');const marker=name.indexOf(' · PR #');return marker>0?name.slice(0,marker):'代码仓库'};
 const artifactPrNumber = artifact => String(artifact?.name||'').match(/PR #(\d+)/)?.[1]||'';
 const artifactFileName = artifact => String(artifact?.name||'').split(/[\\/]/).filter(Boolean).pop()||'交付文件';
-const artifactFileTag = artifact => `<a class="artifact-link artifact-file-link" href="${escapeHtml(artifactOpenUrl(artifact))}" target="_blank" rel="noopener" title="${escapeHtml(artifact.name)}" aria-label="下载 ${escapeHtml(artifact.name)}" onclick="event.stopPropagation()">${editorialIcon(artifact.kind==='sql'?'code':artifact.kind==='package'?'cube':'clipboard')}<span class="artifact-file-name">${escapeHtml(artifactFileName(artifact))}</span><span class="artifact-file-arrow" aria-hidden="true">↗</span></a>`;
-const artifactLinks = (artifacts,deliveryMode='',deliveryOptions=null) => visibleArtifacts(artifacts,deliveryMode,deliveryOptions).map(a=>isMergeScreenshot(a)?`<span class="artifact-action-pair"><button type="button" class="artifact-link artifact-preview-trigger" data-preview-url="${escapeHtml(artifactPreviewUrl(a))}" data-download-url="${escapeHtml(artifactOpenUrl(a))}" data-preview-title="${escapeHtml(a.name)}" data-preview-repository="${escapeHtml(artifactRepository(a))}">预览 ${escapeHtml(artifactRepository(a))} ↗</button><a class="artifact-link artifact-download-link" href="${escapeHtml(artifactOpenUrl(a))}" target="_blank" rel="noopener" download title="下载 ${escapeHtml(a.name)}" onclick="event.stopPropagation()">下载 ↘</a></span>`:isMenuLink(a)?`<button type="button" class="artifact-link menu-link-copy" data-menu-link="${escapeHtml(a.name)}" title="复制 ${escapeHtml(a.name)}">新增视图 · ${escapeHtml(a.name)}</button>`:isLicenseRequest(a)?`<a class="artifact-link license-link" href="${escapeHtml(artifactOpenUrl(a))}" target="_blank" rel="noopener" title="${escapeHtml(a.name)}" onclick="event.stopPropagation()">License 申请 ↗</a>`:isReleaseArtifact(a)?`<a class="artifact-link release-link" href="${escapeHtml(artifactOpenUrl(a))}" target="_blank" rel="noopener" title="${escapeHtml(a.name)}" onclick="event.stopPropagation()">发版产物 ↗</a>`:isAnalysisReport(a)?`<a class="artifact-link analysis-report-link" href="${escapeHtml(artifactOpenUrl(a))}" target="_blank" rel="noopener" title="${escapeHtml(a.name)}" onclick="event.stopPropagation()">问题分析报告 ↗</a>`:artifactFileTag(a)).join('');
+function artifactFileTag(artifact) {
+  const title=escapeHtml(artifact.name), name=escapeHtml(artifactFileName(artifact));
+  const icon=editorialIcon(artifact.kind==='sql'?'code':artifact.kind==='package'?'cube':'clipboard');
+  if (artifact.previewable && artifact.id) {
+    return `<button type="button" class="artifact-link artifact-file-link artifact-text-preview-trigger" data-artifact-id="${escapeHtml(artifact.id)}" data-preview-title="${name}" title="${title}" aria-label="预览 ${title}" aria-haspopup="dialog">${icon}<span class="artifact-file-name">${name}</span><span class="artifact-preview-label" aria-hidden="true">预览</span></button>`;
+  }
+  return `<a class="artifact-link artifact-file-link" href="${escapeHtml(artifactOpenUrl(artifact))}" target="_blank" rel="noopener" title="${title}" aria-label="下载 ${title}" onclick="event.stopPropagation()">${icon}<span class="artifact-file-name">${name}</span><span class="artifact-file-arrow" aria-hidden="true">↗</span></a>`;
+}
+function artifactLinks(artifacts, deliveryMode='', deliveryOptions=null) {
+  return visibleArtifacts(artifacts,deliveryMode,deliveryOptions).map(artifact=>{
+    const url=escapeHtml(artifactOpenUrl(artifact)), title=escapeHtml(artifact.name);
+    if (isReleaseArtifact(artifact)) {
+      return `<a class="artifact-link release-link" href="${url}" target="_blank" rel="noopener" title="${title}" onclick="event.stopPropagation()">发版产物 ↗</a>`;
+    }
+    if (isAnalysisReport(artifact) && !artifact.previewable) {
+      return `<a class="artifact-link analysis-report-link" href="${url}" target="_blank" rel="noopener" title="${title}" onclick="event.stopPropagation()">问题分析报告 ↗</a>`;
+    }
+    return artifactFileTag(artifact);
+  }).join('');
+}
 const requestDuration = record => {if(!record.created_at&&!record.started_at)return Number.isFinite(Number(record.duration_seconds))?Number(record.duration_seconds):null;const start=new Date(record.created_at||record.started_at).getTime(),end=new Date(record.completed_at||Date.now()).getTime();return Number.isFinite(start)&&Number.isFinite(end)?Math.max(0,(end-start)/1000):null};
 const requestPullRequests = record => {const states=Array.isArray(record.repository_states)?record.repository_states:[];const items=states.filter(item=>item.pr_url).map(item=>({repository:item.repository_short_name||item.name||'代码仓库',id:item.pr_id,url:item.pr_url,merged:!!item.merge_commit}));if(!items.length&&record.pr_url)items.push({repository:'主仓库',id:record.pr_id,url:record.pr_url,merged:!!record.merge_commit});return items};
 const pendingPrLinks = record => record.status==='waiting_merge'?requestPullRequests(record).map(item=>`<a class="artifact-link pr-link" href="${escapeHtml(item.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escapeHtml(item.repository)} · PR #${escapeHtml(item.id)} ↗</a>`).join(''):'';
@@ -53,10 +69,46 @@ const taskTypeLabel = record => isAnalysisTask(record)?'问题分析':'自主研
 const taskStatus = (record,status=runVisualStatus(record)) => (status===runVisualStatus(record)&&record.status_label)||(isAnalysisTask(record)?ANALYSIS_STATUS:STATUS)[status]||status;
 const taskModeLabel = record => isAnalysisTask(record)?'问题分析':(MODE[record?.delivery_mode]?.[0]||record?.delivery_mode||'自主研发');
 
-function bindArtifactPreviews(root=document){root.querySelectorAll('.artifact-preview-trigger').forEach(button=>{button.onclick=event=>{event.stopPropagation();openArtifactPreview(button.dataset.previewUrl,button.dataset.downloadUrl,button.dataset.previewTitle,button.dataset.previewRepository)}})}
+function bindArtifactPreviews(root=document){
+  root.querySelectorAll('.artifact-preview-trigger').forEach(button=>{button.onclick=event=>{event.stopPropagation();openArtifactPreview(button.dataset.previewUrl,button.dataset.downloadUrl,button.dataset.previewTitle,button.dataset.previewRepository)}});
+  root.querySelectorAll('.artifact-text-preview-trigger').forEach(button=>{button.onclick=event=>{event.stopPropagation();openTextArtifactPreview(button)}});
+}
 function bindMenuLinks(root=document){root.querySelectorAll('.menu-link-copy').forEach(button=>{button.onclick=async event=>{event.stopPropagation();try{await navigator.clipboard.writeText(button.dataset.menuLink);toast('菜单链接已复制')}catch(_){toast(`菜单链接：${button.dataset.menuLink}`)}}})}
 function openArtifactPreview(url,downloadUrl,title,repository){const overlay=document.querySelector('#artifact-preview'),image=document.querySelector('#artifact-preview-image');document.querySelector('#artifact-preview-title').textContent=title||'PR 合并截图';document.querySelector('#artifact-preview-repository').textContent=repository||'代码仓库';document.querySelector('#artifact-preview-download').href=downloadUrl||url;image.alt=title||'PR 合并截图';image.classList.remove('loaded');image.onload=()=>image.classList.add('loaded');image.src=url;overlay.hidden=false;document.body.classList.add('preview-open');document.querySelector('#close-artifact-preview').focus()}
 function closeArtifactPreview(){const overlay=document.querySelector('#artifact-preview'),image=document.querySelector('#artifact-preview-image');if(overlay.hidden)return;overlay.hidden=true;image.onload=null;image.classList.remove('loaded');image.removeAttribute('src');document.body.classList.remove('preview-open')}
+
+let textPreviewRequest;
+async function openTextArtifactPreview(button) {
+  const dialog=document.querySelector('#text-artifact-preview');
+  const content=document.querySelector('#text-artifact-content');
+  const status=document.querySelector('#text-artifact-status');
+  const url=`/api/artifacts/${encodeURIComponent(button.dataset.artifactId)}`;
+  textPreviewRequest?.abort();
+  const request=textPreviewRequest=new AbortController();
+  document.querySelector('#text-artifact-title').textContent=button.dataset.previewTitle;
+  document.querySelector('#text-artifact-download').href=url;
+  content.textContent='';
+  content.hidden=true;
+  status.textContent='正在读取文件…';
+  dialog.showModal();
+  try {
+    const response=await fetch(`${url}?preview=true`,{signal:request.signal});
+    if (!response.ok) {
+      const error=await response.json().catch(()=>({}));
+      throw new Error(error.detail||'暂时无法读取文件');
+    }
+    if (!response.headers.get('Content-Type')?.startsWith('text/plain')) throw new Error('暂时无法读取文件');
+    const text=await response.text();
+    if (request.signal.aborted || !dialog.open) return;
+    content.textContent=text;
+    content.hidden=!text;
+    content.scrollTop=0;
+    status.textContent=response.headers.get('X-AutoDev-Preview-Truncated')==='true'
+      ? '仅显示文件开头，下载可查看完整内容。' : (text?'':'文件内容为空');
+  } catch(error) {
+    if (!request.signal.aborted && dialog.open) status.textContent=error.message||'暂时无法读取文件';
+  }
+}
 
 async function api(url, options={}) {
   // Bound read requests only. A timeout must not imply a write was cancelled.
@@ -1019,6 +1071,9 @@ document.querySelector('#detail-backdrop').onclick=closeDetail;document.querySel
 document.querySelector('#close-devcore-stream').onclick=closeDevCoreStream;
 document.querySelector('#close-artifact-preview').onclick=closeArtifactPreview;
 document.querySelector('#artifact-preview').onclick=event=>{if(event.target===event.currentTarget)closeArtifactPreview()};
+const textPreviewDialog=document.querySelector('#text-artifact-preview');
+document.querySelector('#close-text-artifact-preview').onclick=()=>textPreviewDialog.close();
+textPreviewDialog.addEventListener('close',()=>{if(!textPreviewDialog.open)textPreviewRequest?.abort()});
 function setRequestTaskType(taskType='development'){
   const form=document.querySelector('#request-form'),analysis=taskType==='analysis',radio=form.querySelector(`[name="task_type"][value="${taskType}"]`);
   if(radio)radio.checked=true;
@@ -1071,4 +1126,4 @@ scheduleWorkspacePoll();
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh({background:true}).catch(()=>{});scheduleWorkspacePoll();});
 window.addEventListener('pagehide',()=>clearTimeout(workspacePoll));
 window.addEventListener('beforeunload',()=>{const live=state.live;if(live.requestId&&live.watcherId)fetch(`/api/requests/${live.requestId}/devcore-watch/${live.watcherId}/stop`,{method:'POST',keepalive:true})});
-window.addEventListener('keydown',event=>{if(event.key!=='Escape')return;if(!document.querySelector('#artifact-preview').hidden)closeArtifactPreview();else closeLedgerPopovers()});
+window.addEventListener('keydown',event=>{if(event.key!=='Escape'||textPreviewDialog.open)return;if(!document.querySelector('#artifact-preview').hidden)closeArtifactPreview();else closeLedgerPopovers()});

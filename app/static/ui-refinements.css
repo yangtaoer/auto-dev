@@ -379,6 +379,69 @@
   overflow-wrap: anywhere;
 }
 .mint-workspace .artifact-file-link .artifact-file-arrow { color: var(--skin-muted,#759886); }
+.mint-workspace .artifact-text-preview-trigger,
+.mint-workspace .artifact-links .artifact-text-preview-trigger {
+  display: inline-grid;
+  grid-template-columns: 12px minmax(0,1fr) auto;
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+  cursor: pointer;
+}
+.artifact-preview-label { color: var(--skin-success); font-size: 11px; }
+
+body:has(#text-artifact-preview[open]) { overflow: hidden; }
+#text-artifact-preview {
+  width: min(56rem, calc(100vw - 24px));
+  height: min(43rem, calc(100dvh - 28px));
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 1px solid var(--skin-line);
+  border-radius: var(--skin-radius);
+  background: var(--skin-surface);
+  color: var(--skin-ink);
+  box-shadow: 0 20px 70px #0003;
+}
+#text-artifact-preview[open] {
+  display: grid;
+  grid-template: auto minmax(0,1fr) auto / minmax(0,1fr);
+}
+#text-artifact-preview::backdrop { background: #12272374; }
+.text-artifact-header {
+  position: relative;
+  padding: 18px 65px 16px 20px;
+  border-bottom: 1px solid var(--skin-line);
+}
+.text-artifact-header h2 {
+  margin: 0;
+  max-height: 20vh;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  font-size: clamp(15px,2.2vw,20px);
+}
+#text-artifact-content {
+  grid-row: 2;
+  min-height: 0;
+  margin: 0;
+  padding: 18px 20px;
+  overflow: auto;
+  background: var(--skin-surface-alt);
+  font: 13px/1.65 "Cascadia Mono", Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+}
+.text-artifact-footer {
+  grid-row: 3;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--skin-line);
+}
+#text-artifact-status { margin: 0; color: var(--skin-muted); font-size: 12px; }
+#text-artifact-download { margin-inline-start: auto; white-space: nowrap; text-decoration: none; }
 
 .mint-workspace .recent-task-table :is(th, td):first-child {
   padding-left: 7px;

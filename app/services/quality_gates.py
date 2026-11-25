@@ -137,8 +137,8 @@ def evaluate_development_quality(
            "；".join(scope_blockers) if scope_blockers else f"已核对 {len(registered)} 个登记仓库、{len(changed_paths)} 个实际变更文件")
     delivery_assets, asset_blockers = reconcile_delivery_assets(project, repository_states, result)
     blockers.extend(asset_blockers)
-    _check(checks, "delivery-scripts", "SQL / 配置交付完整性", "blocked" if asset_blockers else "passed",
-           "；".join(asset_blockers) if asset_blockers else f"已核对 {len(delivery_assets)} 个部署脚本/配置与本任务数据库写入记录",
+    _check(checks, "delivery-scripts", "SQL、配置与回退说明", "blocked" if asset_blockers else "passed",
+           "；".join(asset_blockers) if asset_blockers else f"已核对 {len(delivery_assets)} 个交付文件与本任务数据库写入记录",
            [f"{item['repository']}/{item['path']}" for item in delivery_assets])
 
     if profile.get("require_acceptance_ledger"):

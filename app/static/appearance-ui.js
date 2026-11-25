@@ -1,4 +1,4 @@
-import {AppearanceSession,DEFAULT_APPEARANCE,normalizeAppearance,selectedTheme} from './theme-core.js?v=1.0-Beta.35';
+import {AppearanceSession,DEFAULT_APPEARANCE,normalizeAppearance,selectedTheme} from './theme-core.js?v=1.0-Beta.36';
 
 const root=document.documentElement,trigger=document.getElementById('open-appearance');
 const authenticated=Boolean(window.__USER__?.id);

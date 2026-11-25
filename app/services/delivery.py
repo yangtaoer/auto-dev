@@ -28,7 +28,9 @@ from ..domain import DELIVERY_MODE_LABELS, STATUS_LABELS, DeliveryMode, RunStatu
 from .blocker_summary import summarize_blocker
 from .process_env import sanitized_process_env
 from .command_logs import clean_log, decode_output, command_failure
-from .artifact_contract import PACKAGE_EXTENSIONS, changed_asset_kind, configuration_template, enforce_artifact_policy, matches_patterns
+from .artifact_content import ArtifactContentError, decode_artifact_text, read_oss_artifact
+from .artifact_contract import CHANGED_ASSET_KINDS, PACKAGE_EXTENSIONS, changed_asset_kind, configuration_template, enforce_artifact_policy, matches_patterns
+from .delivery_sql import delivery_script_problem
 
 
 BRAND_MARK_CID = "autodev-brand-mark"
@@ -218,12 +220,20 @@ class ArtifactService:
             if repository_name and Path(repository_name).name != repository_name:
                 raise RuntimeError("交付仓库名称必须是单层目录名")
             delivery_relative = Path(repository_name) / relative if repository_name else Path(relative)
+            data = source.read_bytes()
+            try:
+                content = decode_artifact_text(data)
+            except ArtifactContentError as exc:
+                raise RuntimeError(f"{delivery_relative.as_posix()}：{exc}") from exc
+            problem = delivery_script_problem(kind, content)
+            if problem:
+                raise RuntimeError(f"{delivery_relative.as_posix()}：{problem}")
             target = self.request_dir(request_id) / kind / delivery_relative
             target.parent.mkdir(parents=True, exist_ok=True)
             if kind == "config":
-                target.write_text(configuration_template(source.read_text(encoding="utf-8-sig")), encoding="utf-8")
+                target.write_text(configuration_template(content), encoding="utf-8")
             else:
-                shutil.copy2(source, target)
+                target.write_bytes(data)
             key = (kind, delivery_relative.as_posix())
             if key in existing:
                 ids.append(int(existing[key]["id"]))
@@ -257,6 +267,7 @@ class ArtifactService:
             "package_note": "构建说明",
             "sql": "SQL 脚本",
             "config": "配置文件",
+            "rollback_note": "旧数据回退说明",
             "merge_screenshot": "PR 合并截图",
             "menu_link": "新增视图菜单链接",
             "license_request": "License 授权申请",
@@ -349,15 +360,38 @@ class ArtifactService:
             blockers.append("存在禁止独立交付的文件：" + "、".join(forbidden))
         if policy.get("require_packages") and not any(item.get("kind") in {"package", "release_artifact"} for item in visible):
             blockers.append("项目要求正式前后端交付包，但当前没有 package 产物")
-        for item in visible:
-            if item.get("kind") in {"sql", "config"}:
-                path = Path(str(item.get("local_path") or ""))
-                # RemoteStore returns cloud filesystem paths, not paths on this runner.
-                # Files are checked before upload; only recheck local delivery storage here.
-                if item.get("local_path") and path.resolve().is_relative_to(settings.delivery_dir.resolve()) and (
-                    not path.is_file() or not path.stat().st_size
-                ):
-                    blockers.append("交付脚本或配置不存在或为空：" + str(item.get("name") or ""))
+        return blockers + self.delivery_file_blockers(visible)
+
+    @staticmethod
+    def delivery_file_blockers(artifacts: list[dict]) -> list[str]:
+        blockers: list[str] = []
+        for item in artifacts:
+            kind = item.get("kind")
+            if kind not in CHANGED_ASSET_KINDS:
+                continue
+            path = Path(item["local_path"]).resolve() if item.get("local_path") else None
+            name = str(item.get("name") or "")
+            try:
+                data = None
+                if path and path.is_relative_to(settings.delivery_dir.resolve()):
+                    if not path.is_file() or not path.stat().st_size:
+                        blockers.append(f"{name}：交付文件不存在或为空")
+                        continue
+                    if kind != "config":
+                        data = path.read_bytes()
+                elif kind != "config" and item.get("external_url"):
+                    # An older task may have saved the OSS link before script validation existed.
+                    limit = settings.max_artifact_mb * 1024 * 1024
+                    data = read_oss_artifact(item["external_url"], limit)
+                    if len(data) == limit:
+                        blockers.append(f"{name}：交付文件超出核验大小限制")
+                        continue
+                if data is not None:
+                    problem = delivery_script_problem(kind, decode_artifact_text(data))
+                    if problem:
+                        blockers.append(f"{name}：{problem}")
+            except (OSError, ArtifactContentError) as exc:
+                blockers.append(f"{name}：无法核验交付文件（{exc}）")
         return blockers
 
     def create_delivery_validation_manifest(self, request_id: str, detail: dict[str, Any]) -> int:
@@ -715,6 +749,7 @@ class Mailer:
             "package_note": "构建说明",
             "sql": "SQL 脚本",
             "config": "配置文件",
+            "rollback_note": "旧数据回退说明",
             "merge_screenshot": "合并截图",
             "menu_link": "新增视图菜单链接",
             "license_request": "License 授权申请",

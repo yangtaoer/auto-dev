@@ -3557,7 +3557,8 @@ else:
                 self.assertTrue(project["artifact_policy"]["allowed_user_facing_kinds"])
         app_project = next(item for item in projects if item["project_key"] == "network-command-app")
         self.assertFalse(app_project["artifact_policy"]["require_manifest"])
-        self.assertEqual(set(app_project["artifact_policy"]["allowed_user_facing_kinds"]), {"package", "release_artifact", "sql", "config"})
+        self.assertEqual(set(app_project["artifact_policy"]["allowed_user_facing_kinds"]),
+                         {"package", "release_artifact", "sql", "config", "rollback_note"})
         self.assertEqual(app_project["artifact_policy"]["allowed_package_extensions"], [".zip", ".jar"])
         self.assertIn(".xml", app_project["artifact_policy"]["forbidden_standalone_extensions"])
         self.assertFalse(app_project["quality_profile"]["visual"]["required_for_frontend"])

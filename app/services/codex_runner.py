@@ -182,7 +182,7 @@ RESULT_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "repository": {"type": "string"}, "path": {"type": "string"},
-                    "kind": {"type": "string", "enum": ["sql", "config"]}, "purpose": {"type": "string"},
+                    "kind": {"type": "string", "enum": ["sql", "config", "rollback_note"]}, "purpose": {"type": "string"},
                 },
                 "required": ["repository", "path", "kind", "purpose"], "additionalProperties": False,
             },
@@ -191,7 +191,7 @@ RESULT_SCHEMA = {
             "type": "array", "items": {
                 "type": "object",
                 "properties": {
-                    "classification": {"type": "string", "enum": ["business_change", "temporary_verification"]},
+                    "classification": {"type": "string", "enum": ["business_change", "temporary_verification", "manual_rollback"]},
                     "call_ids": {"type": "array", "items": {"type": "string"}},
                     "script_paths": {"type": "array", "items": {"type": "string"}},
                     "evidence": {"type": "string"},
@@ -682,6 +682,7 @@ TFS 附件与关联元数据：{tfs_relations or '无'}
                 "你是全自主研发执行器。修改应最小、可审计、可回滚。"
                 "所有可展示给用户的分析摘要、计划与最终回复必须使用简体中文。"
                 "优先自主查明并解决问题；仅在关键事实无法获得且继续开发必然不可靠时进入待补充。"
+                "全平台禁止在交付中使用存储过程，旧数据优先使用直接 SQL，无法安全回退时必须交付人工回退说明。"
             )
         )
         developer_instructions += (

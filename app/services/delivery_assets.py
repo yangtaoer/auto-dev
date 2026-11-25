@@ -5,8 +5,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .artifact_contract import changed_asset_kind, safe_asset_path
+from .artifact_content import ArtifactContentError, decode_artifact_text
+from .artifact_contract import CHANGED_ASSET_KINDS, changed_asset_kind
 from .database_audit import sql_fingerprint
+from .delivery_sql import delivery_script_problem
 
 
 def _has_changes(values: list) -> bool:
@@ -34,19 +36,27 @@ def reconcile_delivery_assets(project: dict, states: list[dict], result: dict) -
     def add_asset(state: dict, relative: str, kind: str, purpose: str = "") -> None:
         name = str(state.get("name") or "")
         path_key = f"{name}/{relative}"
-        if kind == "sql" and (path_key in temporary_paths or relative in temporary_paths):
-            return
         root = Path(str(state.get("worktree_path") or "")).resolve()
         source = (root / relative).resolve()
         if not source.is_relative_to(root) or not source.is_file():
             blockers.append(f"已声明的交付脚本/配置不在仓库内或不存在：{path_key}")
             return
-        content = source.read_text(encoding="utf-8-sig", errors="replace")
-        executable = re.sub(r"(?s)/\*.*?\*/|(?m:--[^\n]*)", "", content).strip()
-        if not executable:
-            blockers.append(f"交付脚本/配置为空或只有注释：{path_key}")
+        try:
+            content = decode_artifact_text(source.read_bytes())
+        except (OSError, ArtifactContentError):
+            blockers.append(f"交付文件无法按文本读取：{path_key}")
             return
-        file_contents[path_key] = content
+        problem = delivery_script_problem(kind, content)
+        if problem:
+            blockers.append(f"{path_key}：{problem}")
+            return
+        if kind == "config" and not re.sub(r"(?s)/\*.*?\*/|(?m:--[^\n]*)", "", content).strip():
+            blockers.append(f"交付配置为空或只有注释：{path_key}")
+            return
+        if kind == "sql":
+            if path_key in temporary_paths or relative in temporary_paths:
+                return
+            file_contents[path_key] = content
         assets[(name, relative)] = {"repository": name, "path": relative, "kind": kind, "purpose": purpose}
 
     for state in states:
@@ -60,8 +70,8 @@ def reconcile_delivery_assets(project: dict, states: list[dict], result: dict) -
         name, relative, kind = (str(item.get(key) or "") for key in ("repository", "path", "kind"))
         relative = relative.replace("\\", "/")
         state = states_by_name.get(name)
-        if kind not in {"sql", "config"} or not state or not safe_asset_path(relative) or changed_asset_kind(relative, project, declared_kind=kind) != kind:
-            blockers.append(f"交付文件声明不合法（仅 SQL/必要配置，不能是源码/测试文件）：{name}/{relative}")
+        if kind not in CHANGED_ASSET_KINDS or not state or changed_asset_kind(relative, project, declared_kind=kind) != kind:
+            blockers.append(f"交付文件声明不合法（仅 SQL、必要配置与旧数据回退说明）：{name}/{relative}")
             continue
         add_asset(state, relative, kind, str(item.get("purpose") or ""))
 
@@ -87,17 +97,25 @@ def reconcile_delivery_assets(project: dict, states: list[dict], result: dict) -
         blockers.append("数据库操作记录包含业务写入/建表，但没有正式 SQL 交付文件；不能只在开发库执行")
 
     sql_keys = {f"{item['repository']}/{item['path']}" for item in sql_assets}
-    def has_sql(path: object) -> bool:
+    rollback_keys = {f"{item['repository']}/{item['path']}" for item in assets.values() if item["kind"] == "rollback_note"}
+
+    def has_asset(path: object, keys: set[str]) -> bool:
         value = str(path).replace("\\", "/")
-        return bool(value) and (value in sql_keys or sum(key.endswith("/" + value) for key in sql_keys) == 1)
+        return bool(value) and (value in keys or sum(key.endswith("/" + value) for key in keys) == 1)
+
+    def has_mapped_assets(record: dict, keys: set[str]) -> bool:
+        paths = record.get("script_paths") or []
+        return bool(paths) and all(has_asset(path, keys) for path in paths)
 
     for record in records:
-        if record.get("classification") == "business_change" and (
-            not record.get("script_paths") or not all(has_sql(path) for path in record["script_paths"])
-        ):
+        classification = record.get("classification")
+        evidence = str(record.get("evidence") or "").strip()
+        if classification == "business_change" and not has_mapped_assets(record, sql_keys):
             blockers.append("业务数据库变更没有对应的正式 SQL 文件（包括建表、改表及迁移），请补齐 script_paths")
-        if record.get("classification") == "temporary_verification" and not str(record.get("evidence") or "").strip():
+        if classification == "temporary_verification" and not evidence:
             blockers.append("临时数据库验证缺少清理或事务回滚证据，不能据此排除业务脚本")
+        if classification == "manual_rollback" and (not evidence or not has_mapped_assets(record, rollback_keys)):
+            blockers.append("旧数据人工回退必须说明无法使用直接 SQL 的原因，并在 script_paths 关联已声明的 .txt 或 .md 回退说明")
 
     fingerprints = {sql_fingerprint(file_contents[key]) for key in sql_keys}
     for call in result.get("database_write_calls") or []:
@@ -105,8 +123,7 @@ def reconcile_delivery_assets(project: dict, states: list[dict], result: dict) -
         matched = [record for record in records if call_id in record.get("call_ids", [])]
         business = call.get("purpose") in {"production_change", "migration"}
         valid_record = any(
-            (record.get("classification") == "business_change" and record.get("script_paths")
-             and all(has_sql(path) for path in record["script_paths"]))
+            (record.get("classification") == "business_change" and has_mapped_assets(record, sql_keys))
             or (not business and record.get("classification") == "temporary_verification" and record.get("evidence"))
             for record in matched
         )

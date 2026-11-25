@@ -13,9 +13,10 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, field_validator
 
@@ -60,7 +61,12 @@ from .domain import (
 from .orchestrator import worker
 from .live_stream import live_codex_streams
 from .security import hash_password, verify_password
+from .services.artifact_content import (
+    ArtifactContentError, decode_artifact_text, read_oss_artifact, read_text_preview, text_artifact_previewable,
+)
+from .services.artifact_contract import changed_asset_kind
 from .services.delivery import ArtifactService, Mailer
+from .services.delivery_sql import delivery_script_problem
 from .services.blocker_summary import summarize_blocker
 from .services.tfs import TfsClient, recoverable_preflight_failure
 from .services import project_learning, model_settings, release_coordination, stage_recovery, task_controls, task_workbench, request_followups, ui_preferences, ui_media
@@ -79,7 +85,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AutoDev · 自主研发交付",
-    version="1.0-Beta.35",
+    version="1.0-Beta.36",
     lifespan=lifespan,
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
@@ -468,6 +474,10 @@ def public_engine_text(value: Any) -> Any:
     )
 
 
+def public_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
+    return {**artifact, "previewable": text_artifact_previewable(artifact)}
+
+
 def public_request_payload(detail: dict[str, Any]) -> dict[str, Any]:
     result = dict(detail)
     if detail.get('joint_children'):
@@ -475,6 +485,7 @@ def public_request_payload(detail: dict[str, Any]) -> dict[str, Any]:
         result['deployment_services']=services_for_request(detail)
     result["can_continue_in_place"] = recoverable_preflight_failure(detail)
     result.pop("codex_thread_id", None)
+    result["artifacts"] = [public_artifact(item) for item in detail.get("artifacts", [])]
     for key in ("title", "requirement_summary", "result_summary", "error_message"):
         result[key] = public_engine_text(result.get(key))
     result["supplement_requests"] = [
@@ -1071,7 +1082,7 @@ def dashboard(user: Annotated[dict, Depends(current_user)], compact: bool = Fals
                 ORDER BY id""",
             tuple(request_ids),
         ):
-            artifact_map.setdefault(artifact["request_id"], []).append(artifact)
+            artifact_map.setdefault(artifact["request_id"], []).append(public_artifact(artifact))
     terminal_statuses = {"delivered", "failed", "rejected", "cancelled"}
     current_time = datetime.now(UTC)
     from .services.task_trace import dashboard_previews
@@ -1303,7 +1314,7 @@ def delivery_records(
                 ORDER BY id""",
             tuple(request_ids),
         ):
-            artifact_map.setdefault(artifact["request_id"], []).append(artifact)
+            artifact_map.setdefault(artifact["request_id"], []).append(public_artifact(artifact))
 
     current_time = datetime.now(UTC)
     terminal_statuses = {item.value for item in TERMINAL_STATUSES}
@@ -2715,6 +2726,23 @@ async def runner_upload_artifact(
     runner_request(request_id)
     if file is None and not external_url:
         raise HTTPException(status_code=400, detail="必须上传文件或提供外部链接")
+    script_kind = kind if kind in {"sql", "rollback_note"} else ""
+    if name.casefold().endswith(".sql"):
+        script_kind = "sql"
+    if script_kind and (changed_asset_kind(name, declared_kind=kind) != script_kind or kind != script_kind):
+        raise HTTPException(status_code=422, detail="交付脚本或回退说明的类型与文件名不符")
+    if script_kind and file is not None and external_url:
+        raise HTTPException(status_code=400, detail="交付脚本或回退说明只接受一个文件来源")
+    max_bytes = settings.max_artifact_mb * 1024 * 1024
+
+    def check_script(content: bytes) -> None:
+        try:
+            problem = delivery_script_problem(script_kind, decode_artifact_text(content))
+        except ArtifactContentError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if problem:
+            raise HTTPException(status_code=422, detail=problem)
+
     local_path = ""
     if file is not None:
         safe_name = re.sub(r"[^\w.()\-\u4e00-\u9fff]+", "_", Path(name).name, flags=re.UNICODE)[:220] or "artifact.bin"
@@ -2722,7 +2750,6 @@ async def runner_upload_artifact(
         target_dir.mkdir(parents=True, exist_ok=True)
         target = target_dir / f"{uuid.uuid4().hex[:12]}-{safe_name}"
         size = 0
-        max_bytes = settings.max_artifact_mb * 1024 * 1024
         try:
             with target.open("xb") as stream:
                 while chunk := await file.read(1024 * 1024):
@@ -2730,12 +2757,22 @@ async def runner_upload_artifact(
                     if size >= max_bytes:
                         raise HTTPException(status_code=413, detail=f"单个产物必须小于 {settings.max_artifact_mb} MB")
                     stream.write(chunk)
+            if script_kind:
+                await run_in_threadpool(lambda: check_script(target.read_bytes()))
         except Exception:
             target.unlink(missing_ok=True)
             raise
         finally:
             await file.close()
         local_path = str(target)
+    elif script_kind:
+        try:
+            content = await run_in_threadpool(read_oss_artifact, external_url, max_bytes)
+        except ArtifactContentError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        if len(content) == max_bytes:
+            raise HTTPException(status_code=413, detail=f"单个产物必须小于 {settings.max_artifact_mb} MB")
+        await run_in_threadpool(check_script, content)
     artifact_id = add_artifact(request_id, kind, name, local_path, external_url)
     return {"artifact_id": artifact_id}
 
@@ -2952,7 +2989,20 @@ def download_artifact(
     if not artifact:
         raise HTTPException(status_code=404, detail="产物不存在")
     if user["role"] != "admin" and user["id"] not in {artifact["requester_id"], artifact.get("acceptance_owner_id")}:
-        raise HTTPException(status_code=403, detail="无权下载该产物")
+        raise HTTPException(status_code=403, detail="无权访问该产物")
+    if preview and artifact["kind"] != "merge_screenshot":
+        if not text_artifact_previewable(artifact):
+            raise HTTPException(status_code=415, detail="该产物不支持在线预览")
+        try:
+            content, truncated = read_text_preview(artifact, settings.delivery_dir)
+        except ArtifactContentError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return PlainTextResponse(content, headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "X-AutoDev-Preview-Truncated": "true" if truncated else "false",
+        })
     if artifact["external_url"]:
         return RedirectResponse(artifact["external_url"])
     path = Path(artifact["local_path"]).resolve()

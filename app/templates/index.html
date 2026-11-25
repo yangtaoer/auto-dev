@@ -206,10 +206,10 @@
         </fieldset>
         <fieldset class="field-block delivery-option-block" id="request-delivery-block" aria-labelledby="request-delivery-label">
           <legend class="field-label" id="request-delivery-label">交付内容 <small>统一规则</small></legend>
-          <p class="request-field-caption">仅交付业务系统包、SQL 脚本和必要配置；脚本与配置有变更时自动随附，无需另选。</p>
+          <p class="request-field-caption">SQL 脚本、必要配置和适用的旧数据回退说明会随业务系统包自动交付。</p>
           <div class="delivery-choice-grid" id="request-delivery-options">
             <label class="delivery-choice featured"><input type="checkbox" name="delivery_options" value="auto_release" checked><span class="choice-index" aria-hidden="true"><svg class="ui-icon"><use href="/static/editorial-icons.svg#cube"></use></svg></span><span><b>业务系统包 / 自动发版</b><small>按项目执行本地打包或交付流水线</small></span><i aria-hidden="true">✓</i></label>
-            <div class="delivery-choice"><span class="choice-index" aria-hidden="true"><svg class="ui-icon"><use href="/static/editorial-icons.svg#layers"></use></svg></span><span><b>SQL 脚本</b><small>建表、改表、数据迁移等业务脚本自动归集</small></span></div>
+            <div class="delivery-choice"><span class="choice-index" aria-hidden="true"><svg class="ui-icon"><use href="/static/editorial-icons.svg#layers"></use></svg></span><span><b>SQL 脚本</b><small>使用直接 SQL，禁止存储过程</small></span></div>
             <div class="delivery-choice"><span class="choice-index" aria-hidden="true"><svg class="ui-icon"><use href="/static/editorial-icons.svg#clipboard"></use></svg></span><span><b>必要配置</b><small>交付配置项或模板，凭据使用占位符</small></span></div>
           </div>
         </fieldset>
@@ -271,6 +271,18 @@
       </footer>
     </section>
   </div>
+
+  <dialog id="text-artifact-preview" aria-labelledby="text-artifact-title">
+    <header class="text-artifact-header">
+      <h2 id="text-artifact-title"></h2>
+      <button type="button" class="modal-close" id="close-text-artifact-preview" aria-label="关闭文件预览" autofocus>×</button>
+    </header>
+    <pre id="text-artifact-content" aria-label="文件内容" tabindex="0" hidden></pre>
+    <footer class="text-artifact-footer">
+      <p id="text-artifact-status" role="status"></p>
+      <a class="btn btn-secondary" id="text-artifact-download" href="#" target="_blank" rel="noopener" download>下载原文件 ↘</a>
+    </footer>
+  </dialog>
 
   <div class="toast" id="toast"></div>
   {% if user.role == 'admin' %}<div class="modal-backdrop" id="experience-modal" hidden>

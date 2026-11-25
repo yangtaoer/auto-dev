@@ -48,7 +48,7 @@ DELIVERY_OPTIONS = {
     DELIVERY_OPTION_LICENSE_REQUEST,
     DELIVERY_OPTION_AUTO_RELEASE,
 }
-REVIEW_DELIVERABLE_KINDS = {"package", "release_artifact", "sql", "config"}
+REVIEW_DELIVERABLE_KINDS = {"package", "release_artifact", "sql", "config", "rollback_note"}
 
 
 def visible_delivery_artifacts(
@@ -61,7 +61,7 @@ def visible_delivery_artifacts(
     Analysis reports are a separate task type's sole output, not development extras.
     Options control whether a pipeline runs, never whether its SQL/config is visible.
     """
-    from .services.artifact_contract import BUSINESS_ARTIFACT_KINDS, changed_asset_kind
+    from .services.artifact_contract import BUSINESS_ARTIFACT_KINDS, CHANGED_ASSET_KINDS, changed_asset_kind
 
     del delivery_mode, delivery_options
     return [
@@ -70,7 +70,7 @@ def visible_delivery_artifacts(
         and (item.get("kind") == "analysis_report" or (
             item.get("kind") in BUSINESS_ARTIFACT_KINDS
             and (
-                item.get("kind") not in {"sql", "config"}
+                item.get("kind") not in CHANGED_ASSET_KINDS
                 or changed_asset_kind(str(item.get("name") or ""), declared_kind=str(item["kind"])) == item["kind"]
             )
         ))

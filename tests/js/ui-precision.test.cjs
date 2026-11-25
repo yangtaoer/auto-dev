@@ -39,6 +39,15 @@ test('external files keep their external URL and filename markup is escaped', ()
   assert.ok(!tag.includes('<report'));
 });
 
+test('previewable text opens the file dialog without navigating the delivery record', () => {
+  const tag = artifactFileTag({id: 77, kind: 'rollback_note', name: 'docs/回退说明.txt', previewable: true});
+  assert.ok(tag.startsWith('<button'));
+  assert.ok(tag.includes('data-artifact-id="77"'));
+  assert.ok(tag.includes('data-preview-title="回退说明.txt"'));
+  assert.ok(tag.includes('aria-label="预览 docs/回退说明.txt"'));
+  assert.ok(tag.includes('aria-haspopup="dialog"'));
+});
+
 test('file-label improvements preserve report actions and artifact policy filtering', () => {
   const rendered = artifactLinks([
     {id: 1, kind: 'analysis_report', name: 'TFS-1700200-问题分析报告.md'},

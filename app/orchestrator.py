@@ -325,6 +325,7 @@ class Worker:
             self._synchronize_development_delivery(request_id, detail, project, resume=True)
             return
 
+        self._collect_delivery_assets(request_id, detail, project)
         self.store.update_request(request_id, status=RunStatus.RELEASING.value, current_step="release",
                                   completed_at=None, error_message="", progress=93)
         self.store.update_step(request_id, "release", "running", recovery["description"])
@@ -2264,6 +2265,9 @@ class Worker:
                    if (item["kind"], f"{item['repository']}/{item['path']}") not in found]
         if missing:
             raise RuntimeError("交付文件归集不完整，保留当前现场：" + "、".join(missing))
+        blockers = self.artifacts.delivery_file_blockers(refreshed.get("artifacts") or [])
+        if blockers:
+            raise RuntimeError("交付文件复核未通过：" + "；".join(blockers))
 
     def _validate_delivery_plan(self, request_id: str, detail: dict, project: dict) -> None:
         if detail.get("task_type") == TaskType.ANALYSIS.value:

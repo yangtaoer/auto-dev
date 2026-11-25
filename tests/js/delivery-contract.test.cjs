@@ -3,9 +3,10 @@ const source=fs.readFileSync('app/static/app.js','utf8');
 const expression=source.split('\n').find(line=>line.startsWith('const visibleArtifacts = ')).replace('const visibleArtifacts = ','').replace(/;\s*$/,'');
 const visible=vm.runInNewContext(expression);
 test('business deliverables include SQL and config in every mode, regardless of old options',()=>{
- const artifacts=['package','sql','config','release_artifact','menu_link','merge_screenshot','license_request','verification_report','delivery_manifest','package_note'].map(kind=>({kind,name:kind==='sql'?'upgrade.sql':kind==='config'?'application.yml':kind}));
+ const names={sql:'upgrade.sql',config:'application.yml',rollback_note:'rollback.txt'};
+ const artifacts=['package','sql','config','rollback_note','release_artifact','menu_link','merge_screenshot','license_request','verification_report','delivery_manifest','package_note'].map(kind=>({kind,name:names[kind]||kind}));
  for(const mode of ['local_package','sichuan_auto_review','sichuan_review_local_package','product_manual_review']){
-  assert.deepEqual(Array.from(visible(artifacts,mode,[]),item=>item.kind),['package','sql','config','release_artifact']);
+  assert.deepEqual(Array.from(visible(artifacts,mode,[]),item=>item.kind),['package','sql','config','rollback_note','release_artifact']);
  }
 });
 test('internal manifests and source XML cannot masquerade as config, analysis download remains',()=>{
