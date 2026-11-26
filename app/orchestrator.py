@@ -42,7 +42,7 @@ from .services.delivery import (
     run_command,
 )
 from .services.tfs import TfsClient, TfsConnectionError
-from .services import pr_validation_recovery
+from .services import java_code_checks, pr_validation_recovery, tfs_merge_checks
 from .services.analysis_sync import report_ready
 from .services.command_logs import bounded_log
 from .services.pipeline_release import TfsPipelineReleaseError, TfsPipelineReleaseService
@@ -701,6 +701,10 @@ class Worker:
             self.store.add_event(request_id, "development.completed", summary or "DevCore 自动研发完成", metadata=result)
             self._check_cancelled(request_id)
 
+            if mode == DeliveryMode.LOCAL_PACKAGE and not project.get("simulation_mode") and any(
+                java_code_checks.required_merge_builds(project, state) for state in changed_states
+            ):
+                raise RuntimeError("已配置 TFS 合并验证的仓库需要使用 PR 交付")
             self.store.update_request(request_id, status=RunStatus.SUBMITTING.value, current_step="submit", progress=62)
             submit_message = (
                 "本地交付策略已锁定：正在提交代码并同步至最新目标分支"
@@ -720,8 +724,9 @@ class Worker:
                 commits: list[str] = []
                 for state in changed_states:
                     state_worktree = Path(state["worktree_path"])
+                    scanned = {"java_report": state["java_code_check"]} if state.get("java_code_check") else {}
                     commit_hash = self._commit_and_push(
-                        state_worktree, detail, work_item, project, state["branch"], base_commit=state["base_commit"]
+                        state_worktree, detail, work_item, project, state["branch"], base_commit=state["base_commit"], **scanned
                     )
                     state["commit_hash"] = commit_hash
                     state["status"] = "pushed"
@@ -793,6 +798,7 @@ class Worker:
                         work_item,
                         state["branch"],
                         target_branch=state["base_branch"],
+                        defer_auto_complete=bool(java_code_checks.required_merge_builds(project, state)),
                     )
                     state.update({"pr_id": pr["id"], "pr_url": pr["url"], "status": "waiting_merge"})
                     self.store.update_request(request_id, repository_states=repository_states)
@@ -888,8 +894,14 @@ class Worker:
             run.result["database_write_calls"] = list(audit.entries.values())
             from .services.repository_composition import unregistered_workspaces
             run.result["workspace_scope_errors"] = unregistered_workspaces(repository_states)
+            reports = []
             for state in repository_states:
                 state["changed_files"] = committable_changes(Path(state["worktree_path"]), state["base_commit"])
+                state.pop("java_code_check", None)
+                if report := java_code_checks.scan(kwargs["project"], state):
+                    state["java_code_check"] = report
+                    reports.append(report)
+            run.result["java_code_checks"] = reports
             frozen = (kwargs.get("acceptance_context") or {}).get("items") or []
             if frozen:
                 mapped = {str(item.get("id")): item for item in normalize_acceptance_ledger(run.result)}
@@ -900,6 +912,8 @@ class Worker:
             _, blockers = development_risks(run.result)
             gate = evaluate_development_quality(kwargs["project"], repository_states, run.result)
             blockers.extend(gate["blockers"])
+            if any(report["status"] == "unavailable" and report["mode"] == "enforce" for report in reports):
+                return run  # An unavailable runner tool is not a code repair.
             if run.result.get("decision") == "needs_input":
                 blockers.extend(str(item.get("question") or "") + " " + str(item.get("reason") or "") for item in run.result.get("supplement_requests") or [])
                 if not blockers:
@@ -994,6 +1008,8 @@ class Worker:
                         self, detail, repository_states, state, pr.get("source_commit"),
                     )
                 if pr["status"] == "completed" and pr.get("merge_commit"):
+                    if state.get("java_code_check") and not state.get("java_merge_check"):
+                        pr_validation_recovery.record_java_merge_checks(self, detail, state, pr, tfs)
                     state["status"] = "completed"
                     state["merge_commit"] = pr["merge_commit"]
                     completed.append((state, pr))
@@ -1014,8 +1030,25 @@ class Worker:
                             validation_notes.append(f"PR #{pr_id} 正在等待自动审核和自动完成")
                         else:
                             auto_complete_waiting.append(pr_id)
-                    elif auto_complete_enabled:
-                        auto_complete_waiting.append(pr_id)
+                    else:
+                        definitions = java_code_checks.required_merge_builds(project, state)
+                        if definitions:
+                            if pr.get("source_commit") != state.get("commit_hash"):
+                                validation_notes.append(f"PR #{pr_id} 的源提交已变化，等待重新核对")
+                                continue
+                            receipt = pr_validation_recovery.record_java_merge_checks(
+                                self, detail, state, pr, tfs, definitions,
+                            )
+                            if receipt["status"] != "passed":
+                                validation_notes.append(tfs_merge_checks.waiting_message(receipt))
+                                continue
+                            if not auto_complete_enabled:
+                                tfs.enable_checked_pull_request(
+                                    state["repository_path"], pr_id, expected_source=pr["source_commit"],
+                                    expected_merge=pr["merge_commit"],
+                                )
+                        if auto_complete_enabled:
+                            auto_complete_waiting.append(pr_id)
             if pending:
                 self.store.update_request(request_id, repository_states=repository_states)
                 if auto_complete_waiting:
@@ -1384,7 +1417,10 @@ class Worker:
             # 只移除本次创建后已为空的任务根目录，绝不清理预先存在的未知内容。
             pass
 
-    def _commit_and_push(self, worktree: Path, detail: dict, work_item: dict, project: dict, branch: str, *, base_commit: str | None = None) -> str:
+    def _commit_and_push(
+        self, worktree: Path, detail: dict, work_item: dict, project: dict, branch: str, *,
+        base_commit: str | None = None, java_report: dict | None = None,
+    ) -> str:
         self._check_cancelled(detail['id'])
         title = re.sub(r"[\r\n]+", " ", work_item["title"]).strip()[:72]
         area = work_item.get("area_path", "").split("\\")[-1] or project.get("name", "项目")
@@ -1394,6 +1430,10 @@ class Worker:
         if base_commit:
             assert_delivery_history(worktree, base_commit)
         included, excluded = stage_delivery_changes(worktree)
+        if java_report:
+            java_code_checks.verify_staged(java_report, {
+                "worktree_path": str(worktree), "base_commit": base_commit,
+            })
         if excluded:
             self.store.add_event(detail["id"], "git.validation_excluded", "本地验证文件不进入代码提交：" + "、".join(excluded[:20]), metadata={"paths": excluded, "preserved_locally": True})
         if not included:
@@ -1580,6 +1620,7 @@ class Worker:
         branch: str,
         *,
         target_branch: str | None = None,
+        defer_auto_complete: bool = False,
     ) -> dict:
         self._check_cancelled(request_id)
         if project.get("simulation_mode"):
@@ -1590,7 +1631,7 @@ class Worker:
         description = f"自动研发任务：{request_id}\n需求：#{work_item['id']}\n\n{detail.get('result_summary','')}"
         result = TfsClient(project["tfs_collection_url"]).create_pull_request(
             str(worktree), branch, target_branch or project.get("base_branch", "dev"), title, work_item["id"], description,
-            auto_complete=detail.get("delivery_mode") not in SICHUAN_APPROVAL_DELIVERY_MODES,
+            auto_complete=not defer_auto_complete and detail.get("delivery_mode") not in SICHUAN_APPROVAL_DELIVERY_MODES,
         )
         return {"id": int(result["PullRequestId"]), "url": result["WebUrl"], "status": result.get("Status")}
 
@@ -1602,6 +1643,10 @@ class Worker:
             self._check_cancelled(request_id)
             pr_id = pr["id"]
             metadata = {"pr_id": pr_id, "repository": state["name"]}
+            if pr.get("status") != "completed" and java_code_checks.required_merge_builds(project, state):
+                self.store.add_event(request_id, "pr.merge_checks_waiting",
+                                     f"PR #{pr_id} 等待合并预览的正式构建扫描回执", metadata=metadata)
+                continue
             if pr.get("status") != "completed" and tfs.approve_pull_request(state["repository_path"], pr_id):
                 self.store.add_event(request_id, "pr.approved", f"四川审核人 {reviewer} 已批准 PR #{pr_id}", metadata=metadata)
             else:

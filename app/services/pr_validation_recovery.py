@@ -18,6 +18,7 @@ from .delivery import git, protected_changes, run_command
 from .process_env import git_authenticated_env
 from .task_cancellation import TaskCancelled
 from .tfs import TfsClient
+from . import java_code_checks, tfs_merge_checks
 
 
 MAX_REPAIRS = 2
@@ -60,22 +61,11 @@ class RepairSource:
 
 
 def failed_checks(tfs: TfsClient, pr: dict) -> list[FailedCheck]:
-    checks = []
-    for item in tfs.pull_request_policies(pr):
-        config = item.get("configuration") or {}
-        context = item.get("context") or {}
-        build_id = str(context.get("buildId") or "")
-        definition_id = str((config.get("settings") or {}).get("buildDefinitionId") or "")
-        if (item.get("status") == "rejected" and config.get("isEnabled") and config.get("isBlocking")
-                and context.get("lastMergeSourceCommitId") == pr["source_commit"]
-                and context.get("lastMergeCommitId") == pr["merge_commit"]
-                and not context.get("buildIsNotCurrent") and not context.get("isExpired")
-                and build_id.isdecimal() and definition_id.isdecimal()):
-            checks.append(FailedCheck(
-                str(context.get("buildDefinitionName") or "TFS 构建验证"),
-                str(item.get("evaluationId") or ""), int(build_id), int(definition_id),
-            ))
-    return checks
+    return [
+        FailedCheck(item["name"], item["evaluation_id"], item["build_id"], item["definition_id"])
+        for item in tfs_merge_checks.current_build_policies(tfs, pr)
+        if item["status"] == "rejected"
+    ]
 
 
 def _safe_text(value: str, limit: int) -> str:
@@ -311,15 +301,25 @@ def maintain(worker, detail: dict, states: list[dict], state: dict, pr: dict, tf
                 worker.store.update_request(request_id, repository_states=states)
         return repair["message"]
 
-    if pr.get("reviewer_approved") is False or not pr.get("auto_complete_enabled"):
-        if repair.get("approval_source") != current:
-            repair.update(approval_source=current, approval_attempts=0, approval_error="")
+    definitions = java_code_checks.required_merge_builds(detail.get("policy_snapshot") or {}, state)
+    gate = record_java_merge_checks(worker, detail, state, pr, tfs, definitions)
+    if definitions and gate["status"] == "pending":
+        return tfs_merge_checks.waiting_message(gate)
+
+    ready = not definitions or gate["status"] == "passed"
+    if ready and (pr.get("reviewer_approved") is False or not pr.get("auto_complete_enabled")):
+        approval_source = current + ":" + pr["merge_commit"] if definitions else current
+        if repair.get("approval_source") != approval_source:
+            repair.update(approval_source=approval_source, approval_attempts=0, approval_error="")
         attempts = int(repair.get("approval_attempts") or 0)
         if attempts < 2 and (not attempts or repair.get("approval_error")):
             repair["approval_attempts"] = attempts + 1
             worker.store.update_request(request_id, repository_states=states)
             try:
-                if tfs.approve_pull_request(state["repository_path"], pr_id, expected_source=current):
+                expected = {"expected_source": current}
+                if definitions:
+                    expected["expected_merge"] = pr["merge_commit"]
+                if tfs.approve_pull_request(state["repository_path"], pr_id, **expected):
                     repair["approval_error"] = ""
                     worker.store.update_request(request_id, repository_states=states)
                     worker.store.add_event(request_id, "pr.approved", f"PR #{pr_id} 已由审核账号确认，继续自动完成")
@@ -333,7 +333,7 @@ def maintain(worker, detail: dict, states: list[dict], state: dict, pr: dict, tf
         return f"PR #{pr_id} 正在等待 TFS 生成合并预检提交"
     checks = failed_checks(tfs, pr)
     if not checks:
-        return ""
+        return tfs_merge_checks.waiting_message(gate) if definitions and not ready else ""
     check = checks[0]
     label = f"PR #{pr_id} 的必需检查 {check.name}（构建 #{check.build_id}）失败"
     if repair.get("build_id") == check.build_id:
@@ -370,6 +370,25 @@ def maintain(worker, detail: dict, states: list[dict], state: dict, pr: dict, tf
         worker.store.add_event(request_id, "pr.validation_repair_blocked", repair["message"], level="warning")
     worker.store.update_request(request_id, repository_states=states)
     return repair["message"]
+
+
+def record_java_merge_checks(worker, detail: dict, state: dict, pr: dict, tfs: TfsClient,
+                             definitions: tuple[int, ...] = ()) -> dict:
+    if not definitions and not state.get("java_code_check"):
+        return {}
+    try:
+        receipt = tfs_merge_checks.evaluate(tfs, pr, definitions)
+    except Exception as exc:
+        if definitions:
+            raise
+        receipt = {"pr_id": pr["id"], "source_commit": pr.get("source_commit"), "merge_commit": pr.get("merge_commit"),
+                   "status": "unavailable", "error": _safe_text(str(exc), 500)}
+    if receipt != state.get("java_merge_check"):
+        state["java_merge_check"] = receipt
+        if receipt.get("builds") or receipt["status"] == "passed":
+            worker.store.add_event(detail["id"], "pr.java_merge_check",
+                                   f"已核对 PR #{pr['id']} 当前合并预览的 TFS 构建检查", metadata=receipt)
+    return receipt
 
 
 def _repair_source(worker, detail: dict, states: list[dict], state: dict, pr: dict,
@@ -420,6 +439,13 @@ def _repair_source(worker, detail: dict, states: list[dict], state: dict, pr: di
         raise RuntimeError("暂存区存在修复范围之外的改动")
     if CHECK_SUPPRESSION.search(git(root, "diff", "--cached", "--unified=0")):
         raise RuntimeError("修复改动压制了 Sonar 检查规则")
+    scan_state = {**state, "changed_files": committable_changes(root, state["base_commit"])} if state.get("base_commit") else {}
+    if scan_state and (report := java_code_checks.scan(project, scan_state)):
+        repair["java_code_check"] = report
+        if report["mode"] == "enforce":
+            java_code_checks.verify_staged(report, scan_state)
+        worker.store.add_event(request_id, "pr.java_repair_check", java_code_checks.report_message(report),
+                               metadata=report, level="info" if report["status"] == "passed" else "warning")
     git(root, "commit", "--no-verify", "-m", f"fix(#{detail['work_item_id']}): 修复 PR 必需构建检查")
     candidate = git(root, "rev-parse", "HEAD")
     def check_build():

@@ -8,6 +8,7 @@ from urllib.parse import quote
 from ..config import settings
 from ..domain import SICHUAN_APPROVAL_DELIVERY_MODES
 from .artifact_contract import enforce_artifact_policy
+from .java_code_checks import required_merge_builds
 from .delivery import git, run_command
 from .execution_recovery import submission_ready
 from .tfs import TfsClient
@@ -106,7 +107,7 @@ def resume(worker, request_id: str) -> None:
         worker._check_cancelled(request_id)
         pr = reconcile_pr(
             tfs, state, detail['work_item_id'], f"自动研发任务 {request_id} 中断恢复\n{detail.get('result_summary','')}",
-            auto_complete=not automatic_review,
+            auto_complete=not automatic_review and not required_merge_builds(project, state),
         )
         state.update(pr_id=pr['id'],pr_url=pr['url'],status='waiting_merge')
         worker.store.update_request(request_id,repository_states=states)

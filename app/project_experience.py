@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 from .services.artifact_contract import DELIVERY_CONTRACT_INSTRUCTIONS, enforce_artifact_policy
+from .services.java_code_checks import JAVA_INSTRUCTIONS
 
 
 NETWORK_COMMON_INSTRUCTIONS = """
@@ -155,12 +156,15 @@ def apply_project_experience(project: dict[str, Any]) -> dict[str, Any]:
 
     from .services.commit_policy import COMMIT_POLICY_INSTRUCTIONS
     instructions = [COMMIT_POLICY_INSTRUCTIONS, DELIVERY_CONTRACT_INSTRUCTIONS]
+    if quality_profile.get("java_code_checks"):
+        instructions.append(JAVA_INSTRUCTIONS)
     if key not in {"network-command-app", "bazhong-self-developed", "aba-self-developed"}:
         instructions.append(NETWORK_COMMON_INSTRUCTIONS)
     if PROJECT_SPECIFIC_INSTRUCTIONS.get(key):
         instructions.append(PROJECT_SPECIFIC_INSTRUCTIONS[key])
     if str(result.get("development_instructions") or "").strip():
-        instructions.append(str(result["development_instructions"]).replace(COMMIT_POLICY_INSTRUCTIONS, "").strip())
+        instructions.append(str(result["development_instructions"]).replace(COMMIT_POLICY_INSTRUCTIONS, "")
+                            .replace(JAVA_INSTRUCTIONS, "").strip())
     result["development_instructions"] = "\n\n".join(dict.fromkeys(instructions))
     if not str(result.get("verification_command") or "").strip() and str(result.get("build_command") or "").strip():
         result["verification_command"] = result["build_command"]

@@ -7,6 +7,7 @@ from typing import Any
 
 from .delivery import added_files, menu_link_from_view_path
 from .delivery_assets import reconcile_delivery_assets
+from .java_code_checks import report_message
 from .commit_policy import is_local_validation_file
 
 
@@ -140,6 +141,36 @@ def evaluate_development_quality(
     _check(checks, "delivery-scripts", "SQL、配置与回退说明", "blocked" if asset_blockers else "passed",
            "；".join(asset_blockers) if asset_blockers else f"已核对 {len(delivery_assets)} 个交付文件与本任务数据库写入记录",
            [f"{item['repository']}/{item['path']}" for item in delivery_assets])
+    java_reports = result.get("java_code_checks") or []
+    for report in java_reports:
+        if report["status"] == "skipped":
+            continue
+        message = report_message(report)
+        locations = [
+            f"{item['tool']} {item['rule']} {item['path']}:{item['line']} {item['message']}"
+            for item in report.get("findings") or []
+        ]
+        status = report["status"]
+        if status == "blocked":
+            blockers.extend(f"{report['repository']} {location}" for location, item in
+                            zip(locations, report["findings"]) if item["blocking"])
+        elif status == "unavailable" and report["mode"] == "enforce":
+            status = "blocked"
+            blockers.append(message)
+        elif status in {"warning", "unavailable"}:
+            status = "warning"
+            warnings.append(message)
+        detail = f"{message}。{locations[0]}" if locations else message
+        _check(checks, f"java-code-{report['repository']}", "Java 提交前扫描", status, detail, locations)
+        tests = report.get("unit_tests")
+        if tests:
+            test_status = "passed"
+            if tests["status"] == "failed":
+                test_status = "blocked" if report["mode"] == "enforce" else "warning"
+                (blockers if test_status == "blocked" else warnings).append(
+                    f"{report['repository']} Java 单测未通过：{tests['message']}")
+            _check(checks, f"java-tests-{report['repository']}", "Java 单元测试", test_status,
+                   tests["message"], tests.get("classes") or [])
 
     if profile.get("require_acceptance_ledger"):
         if not result.get("acceptance_ledger"):
@@ -357,6 +388,7 @@ def evaluate_development_quality(
         "database_changes": result.get("database_changes") or [],
         "database_write_calls": result.get("database_write_calls") or [],
         "companion_reviews": result.get("companion_reviews") or [],
+        "java_code_checks": java_reports,
     }
 
 

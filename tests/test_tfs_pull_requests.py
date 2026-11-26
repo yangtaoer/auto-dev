@@ -128,6 +128,29 @@ class TfsPullRequestTests(unittest.TestCase):
             ("GET", self.pr_path), ("PUT", self.reviewer_path), ("PATCH", self.pr_path), ("GET", self.pr_path),
         )
 
+    def test_after_voting_auto_complete_revalidates_the_merge_preview(self) -> None:
+        source, preview = "a" * 40, "b" * 40
+        reviewed = {**self.active, "lastMergeSourceCommit": {"commitId": source},
+                    "lastMergeCommit": {"commitId": preview}}
+        changed = {**reviewed, "lastMergeCommit": {"commitId": "c" * 40}}
+        self.respond((200, reviewed), (200, {"vote": 10}), (200, changed))
+        with self.assertRaisesRegex(self.tfs_module.TfsError, "合并预览已变化"):
+            self.tfs.approve_pull_request("repo", 123, expected_source=source, expected_merge=preview)
+        self.assert_requests(("GET", self.pr_path), ("PUT", self.reviewer_path), ("GET", self.pr_path))
+
+    def test_successful_build_must_match_the_pr_ref_commit_and_definition(self) -> None:
+        preview = "a" * 40
+        pr = {"id": 123, "project": "DCS", "merge_commit": preview}
+        build = {"status": "completed", "result": "succeeded", "sourceBranch": "refs/pull/123/merge",
+                 "sourceVersion": preview, "definition": {"id": 17}}
+        for changes in (
+            {"sourceBranch": "refs/heads/dev"}, {"sourceVersion": "b" * 40}, {"definition": {"id": 18}},
+            {"result": "partiallySucceeded"}, {},
+        ):
+            with self.subTest(changes=changes):
+                self.respond((200, {**build, **changes}))
+                self.assertEqual(self.tfs.successful_pull_request_build(pr, 21, 17), not changes)
+
     def test_unconfirmed_vote_or_permission_failure_never_enables_auto_complete(self) -> None:
         for response, error in (((200, {"vote": 0}), "未确认"), ((403, {"message": "Forbidden"}), "403")):
             with self.subTest(response=response):

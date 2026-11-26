@@ -50,6 +50,9 @@
   },
   "repository_expectations": {"webservice-scczp-sd": "webservice-scczp"},
   "quality_profile": {
+    "java_code_checks": [
+      {"repository": "webservice-scczp-sd", "target_branch": "dev_sd", "mode": "observe"}
+    ],
     "companion_repositories": [
       {"name": "webservice-scczp-sd", "repository": "webservice-scczp", "target_branch": "dev_sd", "role": "interface", "module": "四川省调接口程序", "maven_profile": "sd"}
     ]

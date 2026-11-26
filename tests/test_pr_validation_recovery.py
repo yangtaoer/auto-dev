@@ -139,6 +139,29 @@ class PullRequestValidationRecoveryTests(unittest.TestCase):
         self.tfs.approve_pull_request.assert_called_once_with("main-repo", 12, expected_source=self.original)
         self.tfs.pull_request_policies.assert_not_called()
 
+    def test_configured_merge_gate_waits_for_current_official_build_before_approval(self) -> None:
+        self.detail["policy_snapshot"]["quality_profile"] = {"java_code_checks": [
+            {"repository": "repo", "target_branch": "dev", "mode": "enforce", "required_merge_builds": [17]},
+        ]}
+        self.pr.update(reviewer_approved=False, auto_complete_enabled=False)
+        self.policy["status"] = "approved"
+        self.policy["context"]["lastMergeCommitId"] = "f" * 40
+        self.assertIn("等待当前源提交和合并预览", self.maintain())
+        self.tfs.successful_pull_request_build.assert_not_called()
+        self.tfs.approve_pull_request.assert_not_called()
+
+        self.policy["context"]["lastMergeCommitId"] = self.preview
+        self.tfs.successful_pull_request_build.return_value = False
+        self.assertIn("等待当前源提交和合并预览", self.maintain())
+        self.tfs.approve_pull_request.assert_not_called()
+
+        self.tfs.successful_pull_request_build.return_value = True
+        self.maintain()
+        self.assertEqual(self.state["java_merge_check"]["status"], "passed")
+        self.tfs.approve_pull_request.assert_called_once_with(
+            "main-repo", 12, expected_source=self.original, expected_merge=self.preview,
+        )
+
     def test_changed_remote_source_stays_read_only(self) -> None:
         self.pr["source_commit"] = "d" * 40
         self.assertIn("核对", self.maintain())

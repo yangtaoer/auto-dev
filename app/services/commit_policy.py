@@ -38,9 +38,11 @@ def _paths(worktree: Path, *args: str) -> list[str]:
     return [path for path in _git(worktree, *args).split("\0") if path]
 
 
-def committable_changes(worktree: Path, base_commit: str) -> list[str]:
-    paths = _paths(worktree, "diff", "--no-renames", "--name-only", "-z", base_commit, "--")
-    paths += _paths(worktree, "ls-files", "--others", "--exclude-standard", "-z")
+def committable_changes(worktree: Path, base_commit: str, *, staged: bool = False) -> list[str]:
+    index_only = ("--cached",) if staged else ()
+    paths = _paths(worktree, "diff", *index_only, "--no-renames", "--name-only", "-z", base_commit, "--")
+    if not staged:
+        paths += _paths(worktree, "ls-files", "--others", "--exclude-standard", "-z")
     return list(dict.fromkeys(path for path in paths if not is_local_validation_file(path)))
 
 
